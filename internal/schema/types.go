@@ -14,11 +14,12 @@ type Report struct {
 
 // Input captures the parameters used for this run.
 type Input struct {
-	SpecFile     string   `json:"spec_file"`
-	SpecHash     string   `json:"spec_hash"`
-	ContextFiles []string `json:"context_files"`
-	Profile      string   `json:"profile"`
-	Strict       bool     `json:"strict"`
+	SpecFile          string   `json:"spec_file"`
+	SpecHash          string   `json:"spec_hash"`
+	ContextFiles      []string `json:"context_files"`
+	Profile           string   `json:"profile"`
+	Strict            bool     `json:"strict"`
+	SeverityThreshold string   `json:"severity_threshold"`
 }
 
 // Summary holds the computed verdict and issue counts.
