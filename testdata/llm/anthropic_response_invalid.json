@@ -1,0 +1,14 @@
+{
+  "id": "msg_test_invalid",
+  "model": "claude-sonnet-4-6",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "This is not valid JSON at all!"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 100, "output_tokens": 10}
+}

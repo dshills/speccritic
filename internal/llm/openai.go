@@ -9,7 +9,8 @@ import (
 	"net/http"
 )
 
-const openaiAPIURL = "https://api.openai.com/v1/chat/completions"
+// openaiAPIURL is a var to allow test overrides via httptest.
+var openaiAPIURL = "https://api.openai.com/v1/chat/completions"
 
 type openaiProvider struct {
 	model  string

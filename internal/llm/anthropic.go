@@ -9,7 +9,17 @@ import (
 	"net/http"
 )
 
-const anthropicAPIURL = "https://api.anthropic.com/v1/messages"
+// anthropicAPIURL is a var to allow test overrides via httptest.
+var anthropicAPIURL = "https://api.anthropic.com/v1/messages"
+
+// AnthropicAPIURL returns the current Anthropic API endpoint URL.
+// Exposed for use by integration tests via httptest servers.
+func AnthropicAPIURL() string { return anthropicAPIURL }
+
+// SetAnthropicAPIURL overrides the Anthropic API endpoint URL.
+// Intended for use in tests only.
+func SetAnthropicAPIURL(u string) { anthropicAPIURL = u }
+
 const anthropicVersion = "2023-06-01"
 
 type anthropicProvider struct {

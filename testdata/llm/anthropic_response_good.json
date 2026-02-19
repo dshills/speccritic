@@ -1,0 +1,14 @@
+{
+  "id": "msg_test_good",
+  "model": "claude-sonnet-4-6",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"tool\": \"speccritic\",\n  \"version\": \"dev\",\n  \"issues\": [],\n  \"questions\": [],\n  \"patches\": []\n}"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 100, "output_tokens": 50}
+}

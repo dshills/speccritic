@@ -1,0 +1,90 @@
+{
+  "tool": "speccritic",
+  "version": "dev",
+  "issues": [
+    {
+      "id": "ISSUE-0001",
+      "severity": "CRITICAL",
+      "category": "NON_TESTABLE_REQUIREMENT",
+      "title": "Performance requirement uses vague term 'fast'",
+      "description": "The spec requires the system to be 'fast' without defining a measurable metric.",
+      "evidence": [
+        {
+          "path": "bad_spec.md",
+          "line_start": 5,
+          "line_end": 5,
+          "quote": "This system must perform well and be fast."
+        }
+      ],
+      "impact": "Cannot verify the requirement in any test.",
+      "recommendation": "Replace 'fast' with a specific latency target, e.g. 'P99 < 200 ms'.",
+      "blocking": true,
+      "tags": []
+    },
+    {
+      "id": "ISSUE-0002",
+      "severity": "CRITICAL",
+      "category": "CONTRADICTION",
+      "title": "Authentication requirement contradicts itself",
+      "description": "Requirement 2 states users must be authenticated but then allows unauthenticated access.",
+      "evidence": [
+        {
+          "path": "bad_spec.md",
+          "line_start": 10,
+          "line_end": 10,
+          "quote": "Users must be authenticated. The system also allows unauthenticated access."
+        }
+      ],
+      "impact": "Implementers cannot determine which rule takes precedence.",
+      "recommendation": "Clarify the authentication policy and remove the contradiction.",
+      "blocking": true,
+      "tags": []
+    },
+    {
+      "id": "ISSUE-0003",
+      "severity": "WARN",
+      "category": "AMBIGUOUS_BEHAVIOR",
+      "title": "Response requirement uses imprecise term 'quickly'",
+      "description": "Requirement 1 says the system shall respond 'quickly' without defining a measurable latency.",
+      "evidence": [
+        {
+          "path": "bad_spec.md",
+          "line_start": 9,
+          "line_end": 9,
+          "quote": "The system shall respond quickly to all requests."
+        }
+      ],
+      "impact": "Cannot write a passing performance test.",
+      "recommendation": "Specify a numeric latency budget.",
+      "blocking": false,
+      "tags": []
+    },
+    {
+      "id": "ISSUE-0004",
+      "severity": "WARN",
+      "category": "ORDERING_UNDEFINED",
+      "title": "Cache and database update ordering unspecified",
+      "description": "Requirement 3 says both cache and database shall be updated but does not define which happens first or atomicity guarantees.",
+      "evidence": [
+        {
+          "path": "bad_spec.md",
+          "line_start": 11,
+          "line_end": 11,
+          "quote": "The cache shall be updated. The database shall also be updated."
+        }
+      ],
+      "impact": "Race conditions or partial updates could occur.",
+      "recommendation": "Define the update order and atomicity requirements.",
+      "blocking": false,
+      "tags": []
+    }
+  ],
+  "questions": [],
+  "patches": [
+    {
+      "issue_id": "ISSUE-0001",
+      "before": "This system must perform well and be fast.",
+      "after": "This system SHALL respond to requests with P99 latency ≤ 200 ms under 500 concurrent users."
+    }
+  ]
+}

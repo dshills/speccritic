@@ -1,0 +1,14 @@
+{
+  "id": "msg_test_bad",
+  "model": "claude-sonnet-4-6",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "{\n  \"tool\": \"speccritic\",\n  \"version\": \"dev\",\n  \"issues\": [\n    {\n      \"id\": \"ISSUE-0001\",\n      \"severity\": \"CRITICAL\",\n      \"category\": \"NON_TESTABLE_REQUIREMENT\",\n      \"title\": \"Performance requirement uses vague term\",\n      \"description\": \"The spec requires the system to be 'fast' without a measurable metric.\",\n      \"evidence\": [\n        {\n          \"path\": \"bad_spec.md\",\n          \"line_start\": 5,\n          \"line_end\": 5,\n          \"quote\": \"must perform well and be fast\"\n        }\n      ],\n      \"impact\": \"Cannot verify requirement in a test.\",\n      \"recommendation\": \"Replace 'fast' with a numeric latency budget.\",\n      \"blocking\": true,\n      \"tags\": []\n    },\n    {\n      \"id\": \"ISSUE-0002\",\n      \"severity\": \"CRITICAL\",\n      \"category\": \"CONTRADICTION\",\n      \"title\": \"Authentication requirement contradicts itself\",\n      \"description\": \"Requirement 2 mandates authentication but also permits unauthenticated access.\",\n      \"evidence\": [\n        {\n          \"path\": \"bad_spec.md\",\n          \"line_start\": 10,\n          \"line_end\": 10,\n          \"quote\": \"Users must be authenticated. The system also allows unauthenticated access.\"\n        }\n      ],\n      \"impact\": \"Implementers cannot determine the correct access policy.\",\n      \"recommendation\": \"Remove the contradiction and define a single authentication policy.\",\n      \"blocking\": true,\n      \"tags\": []\n    }\n  ],\n  \"questions\": [],\n  \"patches\": []\n}"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 100, "output_tokens": 200}
+}
