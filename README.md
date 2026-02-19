@@ -1,5 +1,7 @@
 # SpecCritic
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/dshills/speccritic.svg)](https://pkg.go.dev/github.com/dshills/speccritic)
+
 SpecCritic evaluates software specifications as formal contracts, identifying defects before implementation begins. It behaves like a hostile contract lawyer—not a collaborator—treating vague language, unverifiable requirements, and missing failure modes as bugs.
 
 ```
