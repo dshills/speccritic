@@ -26,7 +26,7 @@ func makeQuestions(severities ...schema.Severity) []schema.Question {
 
 func TestScore_ThreeCritical(t *testing.T) {
 	issues := makeIssues(schema.SeverityCritical, schema.SeverityCritical, schema.SeverityCritical)
-	got := Score(issues)
+	got := Score(issues, nil)
 	want := 100 - 3*20 // 40
 	if got != want {
 		t.Errorf("Score = %d, want %d", got, want)
@@ -39,7 +39,7 @@ func TestScore_ClampsAtZero(t *testing.T) {
 		schema.SeverityCritical, schema.SeverityCritical, schema.SeverityCritical,
 		schema.SeverityCritical, schema.SeverityCritical, schema.SeverityCritical,
 	)
-	got := Score(issues)
+	got := Score(issues, nil)
 	if got != 0 {
 		t.Errorf("Score = %d, want 0 (clamped)", got)
 	}
@@ -48,16 +48,32 @@ func TestScore_ClampsAtZero(t *testing.T) {
 func TestScore_Mixed(t *testing.T) {
 	// 1 CRITICAL(-20) + 2 WARN(-14) + 1 INFO(-2) = 100-36 = 64
 	issues := makeIssues(schema.SeverityCritical, schema.SeverityWarn, schema.SeverityWarn, schema.SeverityInfo)
-	got := Score(issues)
+	got := Score(issues, nil)
 	if got != 64 {
 		t.Errorf("Score = %d, want 64", got)
 	}
 }
 
 func TestScore_NoIssues(t *testing.T) {
-	got := Score(nil)
+	got := Score(nil, nil)
 	if got != 100 {
 		t.Errorf("Score = %d, want 100", got)
+	}
+}
+
+func TestScore_QuestionsDeducted(t *testing.T) {
+	// 1 CRITICAL question = -20 → 80; no issues
+	got := Score(nil, makeQuestions(schema.SeverityCritical))
+	if got != 80 {
+		t.Errorf("Score = %d, want 80", got)
+	}
+}
+
+func TestScore_MixedIssuesAndQuestions(t *testing.T) {
+	// 1 CRITICAL issue(-20) + 1 WARN question(-7) = 73
+	got := Score(makeIssues(schema.SeverityCritical), makeQuestions(schema.SeverityWarn))
+	if got != 73 {
+		t.Errorf("Score = %d, want 73", got)
 	}
 }
 
@@ -102,6 +118,21 @@ func TestVerdict_CriticalQuestionPlusWarnIssue_Invalid(t *testing.T) {
 	v := Verdict(makeIssues(schema.SeverityWarn), makeQuestions(schema.SeverityCritical))
 	if v != schema.VerdictInvalid {
 		t.Errorf("Verdict = %q, want INVALID", v)
+	}
+}
+
+func TestVerdict_WarnQuestion_ValidWithGaps(t *testing.T) {
+	// WARN question with no issues must not return VALID (BUG-1 regression test)
+	v := Verdict(nil, makeQuestions(schema.SeverityWarn))
+	if v != schema.VerdictValidWithGaps {
+		t.Errorf("Verdict = %q, want VALID_WITH_GAPS for WARN question", v)
+	}
+}
+
+func TestVerdict_InfoQuestion_ValidWithGaps(t *testing.T) {
+	v := Verdict(nil, makeQuestions(schema.SeverityInfo))
+	if v != schema.VerdictValidWithGaps {
+		t.Errorf("Verdict = %q, want VALID_WITH_GAPS for INFO question", v)
 	}
 }
 

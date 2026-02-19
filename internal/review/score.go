@@ -2,13 +2,24 @@ package review
 
 import "github.com/dshills/speccritic/internal/schema"
 
-// Score computes the deterministic score from all issues.
+// Score computes the deterministic score from all issues and questions.
 // Score is always computed before any --severity-threshold filtering.
 // Start: 100, -20 per CRITICAL, -7 per WARN, -2 per INFO, clamped at 0.
-func Score(issues []schema.Issue) int {
+// Questions contribute the same deductions as issues of equal severity.
+func Score(issues []schema.Issue, questions []schema.Question) int {
 	score := 100
 	for _, issue := range issues {
 		switch issue.Severity {
+		case schema.SeverityCritical:
+			score -= 20
+		case schema.SeverityWarn:
+			score -= 7
+		case schema.SeverityInfo:
+			score -= 2
+		}
+	}
+	for _, q := range questions {
+		switch q.Severity {
 		case schema.SeverityCritical:
 			score -= 20
 		case schema.SeverityWarn:
@@ -43,7 +54,12 @@ func Verdict(issues []schema.Issue, questions []schema.Question) schema.Verdict 
 			return schema.VerdictValidWithGaps
 		}
 	}
-	if len(issues) > 0 { // INFO-only
+	for _, q := range questions {
+		if q.Severity == schema.SeverityWarn {
+			return schema.VerdictValidWithGaps
+		}
+	}
+	if len(issues) > 0 || len(questions) > 0 { // INFO-only
 		return schema.VerdictValidWithGaps
 	}
 	return schema.VerdictValid

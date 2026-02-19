@@ -15,8 +15,9 @@ var pemPattern = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]+KEY-----.*?-----END [
 var patterns = []*regexp.Regexp{
 	// AWS access key IDs
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-	// OpenAI / Anthropic secret keys — word-boundary aware
-	regexp.MustCompile(`(?:^|\s|["'])sk-[a-zA-Z0-9]{20,}`),
+	// OpenAI / Anthropic secret keys — \b ensures we match the key without
+	// consuming any surrounding separator character.
+	regexp.MustCompile(`\bsk-[a-zA-Z0-9]{20,}`),
 	// JWT tokens (three base64url segments)
 	regexp.MustCompile(`eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+`),
 	// Bearer tokens — require minimum 20-char token to avoid false positives
@@ -25,10 +26,26 @@ var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)password\s*[:=]\s*\S+`),
 }
 
+// secretTriggers are fast substring checks used to short-circuit redaction
+// for content that cannot possibly contain a secret.
+var secretTriggers = []string{"-----BEGIN", "AKIA", "sk-", "eyJ", "Bearer", "bearer", "password", "PASSWORD"}
+
 // Redact replaces known secret patterns in input with [REDACTED].
 // Line structure is preserved — the number of newlines in the output
 // always equals the number of newlines in the input.
 func Redact(input string) string {
+	// Fast path: skip all regex work when no potential triggers are present.
+	hasTrigger := false
+	for _, t := range secretTriggers {
+		if strings.Contains(input, t) {
+			hasTrigger = true
+			break
+		}
+	}
+	if !hasTrigger {
+		return input
+	}
+
 	// Handle PEM blocks first: replace each line within the block individually
 	// so that line count is preserved.
 	input = pemPattern.ReplaceAllStringFunc(input, func(match string) string {

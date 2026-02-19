@@ -56,9 +56,10 @@ type checkFlags struct {
 
 func main() {
 	root := &cobra.Command{
-		Use:   "speccritic",
-		Short: "Evaluate software specifications for defects",
-		Long:  "SpecCritic evaluates SPEC.md files as formal contracts, identifying defects before implementation begins.",
+		Use:          "speccritic",
+		Short:        "Evaluate software specifications for defects",
+		Long:         "SpecCritic evaluates SPEC.md files as formal contracts, identifying defects before implementation begins.",
+		SilenceErrors: true,
 	}
 
 	var flags checkFlags
@@ -173,7 +174,7 @@ func runCheck(specPath string, flags checkFlags) error {
 	}
 
 	// --- Step 12: Compute score and verdict from ALL issues (pre-filter) ---
-	score := review.Score(report.Issues)
+	score := review.Score(report.Issues, report.Questions)
 	verdict := review.Verdict(report.Issues, report.Questions)
 	critical, warn, info := review.Counts(report.Issues)
 

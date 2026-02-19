@@ -59,8 +59,12 @@ func GenerateDiff(specRaw string, patches []schema.Patch, w io.Writer) string {
 
 // resolve attempts to locate p.Before in specRaw using exact or normalized matching.
 // normSpec is the pre-normalized version of specRaw (passed in to avoid re-computation).
-// Returns a zero diffPatch and false if the before text cannot be found.
+// Returns a zero diffPatch and false if the before text cannot be found or is empty.
 func resolve(p schema.Patch, specRaw, normSpec string) (diffPatch, bool) {
+	if p.Before == "" {
+		return diffPatch{}, false
+	}
+
 	normBefore := normalize(p.Before)
 	normAfter := normalize(p.After)
 

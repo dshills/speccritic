@@ -36,10 +36,16 @@ func Parse(raw string, lineCount int) (*schema.Report, error) {
 func stripFences(s string) string {
 	s = strings.TrimSpace(s)
 	if strings.HasPrefix(s, "```") {
-		// Remove first line (the fence opener)
 		idx := strings.Index(s, "\n")
 		if idx >= 0 {
+			// Normal case: fence opener on its own line.
 			s = s[idx+1:]
+		} else {
+			// Fence with no newline (e.g. ```{...}```): strip up to the first { or [.
+			rest := s[3:]
+			if i := strings.IndexAny(rest, "{["); i >= 0 {
+				s = rest[i:]
+			}
 		}
 	}
 	if strings.HasSuffix(s, "```") {
@@ -52,15 +58,25 @@ func stripFences(s string) string {
 }
 
 func validateReport(r *schema.Report, lineCount int) error {
+	seenIssueIDs := make(map[string]bool, len(r.Issues))
 	for i, issue := range r.Issues {
 		if err := validateIssue(issue, i, lineCount); err != nil {
 			return err
 		}
+		if seenIssueIDs[issue.ID] {
+			return fmt.Errorf("duplicate issue ID %q", issue.ID)
+		}
+		seenIssueIDs[issue.ID] = true
 	}
+	seenQuestionIDs := make(map[string]bool, len(r.Questions))
 	for i, q := range r.Questions {
 		if err := validateQuestion(q, i, lineCount); err != nil {
 			return err
 		}
+		if seenQuestionIDs[q.ID] {
+			return fmt.Errorf("duplicate question ID %q", q.ID)
+		}
+		seenQuestionIDs[q.ID] = true
 	}
 	return nil
 }

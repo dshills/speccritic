@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -397,11 +398,7 @@ func TestRunCheck_OutputContainsInputMetadata(t *testing.T) {
 	}
 }
 
-// asExitErr is a type-assertion helper for *exitErr.
+// asExitErr is an errors.As helper for *exitErr.
 func asExitErr(err error, out **exitErr) bool {
-	e, ok := err.(*exitErr)
-	if ok {
-		*out = e
-	}
-	return ok
+	return errors.As(err, out)
 }

@@ -12,6 +12,14 @@ import (
 // openaiAPIURL is a var to allow test overrides via httptest.
 var openaiAPIURL = "https://api.openai.com/v1/chat/completions"
 
+// OpenAIAPIURL returns the current OpenAI API endpoint URL.
+// Exposed for use by integration tests via httptest servers.
+func OpenAIAPIURL() string { return openaiAPIURL }
+
+// SetOpenAIAPIURL overrides the OpenAI API endpoint URL.
+// Intended for use in tests only.
+func SetOpenAIAPIURL(u string) { openaiAPIURL = u }
+
 type openaiProvider struct {
 	model  string
 	apiKey string // unexported; never serialized by encoding/json

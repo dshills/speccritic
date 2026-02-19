@@ -15,7 +15,7 @@ type Report struct {
 // Input captures the parameters used for this run.
 type Input struct {
 	SpecFile          string   `json:"spec_file"`
-	SpecHash          string   `json:"spec_hash"`
+	SpecHash          string   `json:"spec_hash"` // SHA-256 of the original file, computed before redaction
 	ContextFiles      []string `json:"context_files"`
 	Profile           string   `json:"profile"`
 	Strict            bool     `json:"strict"`

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // anthropicAPIURL is a var to allow test overrides via httptest.
@@ -116,12 +117,13 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		return nil, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
 	}
 
-	var content string
+	var sb strings.Builder
 	for _, block := range ar.Content {
 		if block.Type == "text" {
-			content += block.Text
+			sb.WriteString(block.Text)
 		}
 	}
+	content := sb.String()
 	if content == "" {
 		return nil, fmt.Errorf("anthropic: no text content in response (got %d content blocks)", len(ar.Content))
 	}
