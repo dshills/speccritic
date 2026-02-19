@@ -150,7 +150,6 @@ func runCheck(specPath string, flags checkFlags) error {
 		UserPrompt:   userPrompt,
 		Temperature:  flags.temperature,
 		MaxTokens:    flags.maxTokens,
-		Model:        modelStr,
 	}
 
 	// --- Step 9: Debug dump (includes file paths as-is; see PLAN.md security notes) ---
