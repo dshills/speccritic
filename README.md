@@ -316,6 +316,16 @@ go build -ldflags "-X main.version=0.1.0" -o speccritic ./cmd/speccritic/
 prism review staged
 ```
 
+## Agentic Integration
+
+See [WORKFLOW.md](WORKFLOW.md) for a detailed guide on integrating SpecCritic into an agentic coding system (Claude Code, Cursor, or any LLM-based agent), including:
+
+- The canonical spec → plan → implement gate order
+- How to parse JSON output and route on verdict
+- Handling questions (user decisions) vs. issues (agent-fixable)
+- `CLAUDE.md` snippet, pre-commit hook, and GitHub Actions CI job
+- Anti-patterns and a full example agent session
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE)
