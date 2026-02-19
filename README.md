@@ -28,7 +28,7 @@ A specification is invalid when two competent engineers could implement it diffe
 ## Installation
 
 ```bash
-go install github.com/dshills/speccritic/cmd/speccritic@latest
+go install github.com/dshills/speccritic/cmd/speccritic@v0.2.0
 ```
 
 Or build from source:
