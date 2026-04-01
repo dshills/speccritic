@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -56,9 +57,9 @@ type checkFlags struct {
 
 func main() {
 	root := &cobra.Command{
-		Use:          "speccritic",
-		Short:        "Evaluate software specifications for defects",
-		Long:         "SpecCritic evaluates SPEC.md files as formal contracts, identifying defects before implementation begins.",
+		Use:           "speccritic",
+		Short:         "Evaluate software specifications for defects",
+		Long:          "SpecCritic evaluates SPEC.md files as formal contracts, identifying defects before implementation begins.",
 		SilenceErrors: true,
 	}
 
@@ -68,6 +69,7 @@ func main() {
 		Short: "Analyze a specification and produce a review",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			applyEnvDefaults(cmd, &flags)
 			return runCheck(args[0], flags)
 		},
 	}
@@ -82,7 +84,7 @@ func main() {
 	f.StringVar(&flags.severityThreshold, "severity-threshold", "info", "Minimum severity to emit: info, warn, or critical")
 	f.StringVar(&flags.patchOut, "patch-out", "", "Write suggested patches in diff-match-patch format to this file")
 	f.Float64Var(&flags.temperature, "temperature", 0.2, "LLM temperature")
-	f.IntVar(&flags.maxTokens, "max-tokens", 4096, "Maximum response tokens")
+	f.IntVar(&flags.maxTokens, "max-tokens", 16384, "Maximum response tokens")
 	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if SPECCRITIC_MODEL env var is not set; use to enforce explicit model config in CI")
 	f.BoolVar(&flags.verbose, "verbose", false, "Print processing steps to stderr")
 	f.BoolVar(&flags.debug, "debug", false, "Dump full prompt (including spec and context file contents) to stderr; use only in trusted environments")
@@ -106,16 +108,23 @@ func runCheck(specPath string, flags checkFlags) error {
 		return codeError(3, "invalid flags: %s", err)
 	}
 
-	// --- Step 2: Resolve model; offline check uses raw env var ---
-	rawModel := os.Getenv("SPECCRITIC_MODEL")
-	if flags.offline && rawModel == "" {
-		return codeError(3, "SPECCRITIC_MODEL environment variable not set (required with --offline)")
+	// --- Step 2: Resolve model from SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL ---
+	llmProvider := os.Getenv("SPECCRITIC_LLM_PROVIDER")
+	llmModel := os.Getenv("SPECCRITIC_LLM_MODEL")
+	if flags.offline && (llmProvider == "" || llmModel == "") {
+		return codeError(3, "SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL environment variables must be set (required with --offline)")
 	}
-	modelStr := rawModel
-	if modelStr == "" {
-		modelStr = "anthropic:claude-sonnet-4-6"
-		fmt.Fprintf(os.Stderr, "WARN: SPECCRITIC_MODEL not set, using default %s\n", modelStr)
+	providerSet := llmProvider != ""
+	modelSet := llmModel != ""
+	if providerSet != modelSet {
+		return codeError(3, "SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL must both be set or both be unset")
 	}
+	if llmProvider == "" {
+		llmProvider = "anthropic"
+		llmModel = "claude-sonnet-4-6"
+		fmt.Fprintf(os.Stderr, "WARN: SPECCRITIC_LLM_PROVIDER/SPECCRITIC_LLM_MODEL not set, using default %s:%s\n", llmProvider, llmModel)
+	}
+	modelStr := llmProvider + ":" + llmModel
 
 	// --- Step 3: Load spec ---
 	logVerbose(flags.verbose, "Loading spec: %s", specPath)
@@ -356,6 +365,64 @@ func parseSeverityThreshold(s string) schema.Severity {
 	default:
 		return schema.SeverityInfo
 	}
+}
+
+// applyEnvDefaults sets flag values from SPECCRITIC_* environment variables
+// for any flag not explicitly provided on the command line.
+func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
+	envStr := func(flagName, envKey string, dst *string) {
+		if !cmd.Flags().Changed(flagName) {
+			if v := os.Getenv(envKey); v != "" {
+				*dst = v
+			}
+		}
+	}
+	envBool := func(flagName, envKey string, dst *bool) {
+		if !cmd.Flags().Changed(flagName) {
+			if v := os.Getenv(envKey); v != "" {
+				b, err := strconv.ParseBool(v)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: invalid value for %s=%q, ignoring: %v\n", envKey, v, err)
+					return
+				}
+				*dst = b
+			}
+		}
+	}
+	envFloat64 := func(flagName, envKey string, dst *float64) {
+		if !cmd.Flags().Changed(flagName) {
+			if v := os.Getenv(envKey); v != "" {
+				f, err := strconv.ParseFloat(v, 64)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: invalid value for %s=%q, ignoring: %v\n", envKey, v, err)
+					return
+				}
+				*dst = f
+			}
+		}
+	}
+	envInt := func(flagName, envKey string, dst *int) {
+		if !cmd.Flags().Changed(flagName) {
+			if v := os.Getenv(envKey); v != "" {
+				i, err := strconv.Atoi(v)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "WARN: invalid value for %s=%q, ignoring: %v\n", envKey, v, err)
+					return
+				}
+				*dst = i
+			}
+		}
+	}
+
+	envStr("format", "SPECCRITIC_FORMAT", &flags.format)
+	envStr("profile", "SPECCRITIC_PROFILE", &flags.profileName)
+	envBool("strict", "SPECCRITIC_STRICT", &flags.strict)
+	envStr("fail-on", "SPECCRITIC_FAIL_ON", &flags.failOn)
+	envStr("severity-threshold", "SPECCRITIC_SEVERITY_THRESHOLD", &flags.severityThreshold)
+	envFloat64("temperature", "SPECCRITIC_LLM_TEMPERATURE", &flags.temperature)
+	envInt("max-tokens", "SPECCRITIC_LLM_MAX_TOKENS", &flags.maxTokens)
+	envBool("verbose", "SPECCRITIC_VERBOSE", &flags.verbose)
+	envBool("debug", "SPECCRITIC_DEBUG", &flags.debug)
 }
 
 // logVerbose writes a timestamped message to stderr when verbose mode is enabled.

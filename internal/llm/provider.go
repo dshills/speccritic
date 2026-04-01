@@ -15,7 +15,7 @@ var sharedHTTPClient = &http.Client{
 }
 
 // defaultMaxTokens is the fallback when Request.MaxTokens is not set.
-const defaultMaxTokens = 4096
+const defaultMaxTokens = 16384
 
 // Request holds the parameters for an LLM completion call.
 type Request struct {
@@ -59,8 +59,14 @@ func NewProvider(providerModel string) (Provider, error) {
 			return nil, fmt.Errorf("OPENAI_API_KEY environment variable not set")
 		}
 		return &openaiProvider{model: parts[1], apiKey: apiKey}, nil
+	case "gemini":
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		if apiKey == "" {
+			return nil, fmt.Errorf("GEMINI_API_KEY environment variable not set")
+		}
+		return &geminiProvider{model: parts[1], apiKey: apiKey}, nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q: supported providers are anthropic, openai", parts[0])
+		return nil, fmt.Errorf("unknown provider %q: supported providers are anthropic, openai, gemini", parts[0])
 	}
 }
 

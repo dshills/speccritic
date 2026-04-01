@@ -73,10 +73,11 @@ func specPath(name string) string {
 	return filepath.Join(testdataDir, "specs", name)
 }
 
-// setTestEnv sets SPECCRITIC_MODEL and ANTHROPIC_API_KEY for the test duration.
+// setTestEnv sets SPECCRITIC_LLM_PROVIDER, SPECCRITIC_LLM_MODEL, and ANTHROPIC_API_KEY for the test duration.
 func setTestEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("SPECCRITIC_MODEL", "anthropic:claude-sonnet-4-6")
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "anthropic")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "claude-sonnet-4-6")
 	t.Setenv("ANTHROPIC_API_KEY", "test-key-for-integration-tests")
 }
 
@@ -87,7 +88,7 @@ func runCheckFlags() checkFlags {
 		profileName:       "general",
 		severityThreshold: "info",
 		temperature:       0.2,
-		maxTokens:         4096,
+		maxTokens:         16384,
 	}
 }
 
@@ -289,14 +290,15 @@ func TestRunCheck_Debug_DoesNotFail(t *testing.T) {
 }
 
 func TestRunCheck_Offline_NoModelEnv_ExitsCode3(t *testing.T) {
-	t.Setenv("SPECCRITIC_MODEL", "")
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
 
 	flags := runCheckFlags()
 	flags.offline = true
 
 	err := runCheck(specPath("good_spec.md"), flags)
 	if err == nil {
-		t.Fatal("expected error for --offline without SPECCRITIC_MODEL")
+		t.Fatal("expected error for --offline without SPECCRITIC_LLM_PROVIDER/SPECCRITIC_LLM_MODEL")
 	}
 	var ee *exitErr
 	if asExitErr(err, &ee) {

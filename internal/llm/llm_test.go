@@ -103,9 +103,28 @@ func TestBuildSystemPrompt_NoStrictMode(t *testing.T) {
 }
 
 func TestNewProvider_UnknownPrefix(t *testing.T) {
-	_, err := NewProvider("gemini:gemini-pro")
+	_, err := NewProvider("cohere:command-r")
 	if err == nil {
 		t.Error("expected error for unknown provider prefix, got nil")
+	}
+}
+
+func TestNewProvider_Gemini_NoKey(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	_, err := NewProvider("gemini:gemini-2.5-flash")
+	if err == nil {
+		t.Error("expected error when GEMINI_API_KEY not set, got nil")
+	}
+}
+
+func TestNewProvider_Gemini_WithKey(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-key-for-construction-only")
+	p, err := NewProvider("gemini:gemini-2.5-flash")
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	if p == nil {
+		t.Error("expected non-nil provider")
 	}
 }
 
