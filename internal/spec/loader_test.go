@@ -12,8 +12,8 @@ func writeTempSpec(t *testing.T, content string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.Remove(f.Name()) })
-	defer f.Close()
+	t.Cleanup(func() { _ = os.Remove(f.Name()) })
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(content); err != nil {
 		t.Fatal(err)
 	}

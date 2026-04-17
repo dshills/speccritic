@@ -37,7 +37,7 @@ func GenerateDiff(specRaw string, patches []schema.Patch, w io.Writer) string {
 		dp, ok := resolve(p, specRaw, normSpec)
 		if !ok {
 			if w != nil {
-				fmt.Fprintf(w, "WARN: patch for %s could not be located in spec (before text not matched)\n", p.IssueID)
+				_, _ = fmt.Fprintf(w, "WARN: patch for %s could not be located in spec (before text not matched)\n", p.IssueID)
 			}
 			continue
 		}
@@ -49,7 +49,7 @@ func GenerateDiff(specRaw string, patches []schema.Patch, w io.Writer) string {
 			continue
 		}
 
-		out.WriteString(fmt.Sprintf("# patch for %s\n", dp.issueID))
+		fmt.Fprintf(&out, "# patch for %s\n", dp.issueID)
 		out.WriteString(patchText)
 		out.WriteString("\n")
 	}
@@ -90,4 +90,3 @@ func normalize(s string) string {
 	}
 	return strings.Join(lines, "\n")
 }
-

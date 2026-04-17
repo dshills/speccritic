@@ -235,10 +235,8 @@ func TestRunCheck_SeverityThreshold_FiltersOutput(t *testing.T) {
 		}
 	}
 
-	// Summary counts still reflect all issues (pre-filter).
-	if report.Summary.WarnCount == 0 && report.Summary.InfoCount == 0 {
-		// Mock has no warn/info, so just verify counts are consistent with fixture.
-	}
+	// Summary counts still reflect all issues (pre-filter). The mock produces
+	// no warn/info issues, so the counts are trivially consistent — no assertion.
 
 	// severity_threshold captured in Input.
 	if report.Input.SeverityThreshold != "critical" {

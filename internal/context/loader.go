@@ -38,7 +38,7 @@ func FormatForPrompt(files []ContextFile) string {
 	var sb strings.Builder
 	for _, f := range files {
 		name := filepath.Base(f.Path)
-		sb.WriteString(fmt.Sprintf("<context file=%q>\n", name))
+		fmt.Fprintf(&sb, "<context file=%q>\n", name)
 		sb.WriteString(f.Content)
 		if !strings.HasSuffix(f.Content, "\n") {
 			sb.WriteString("\n")

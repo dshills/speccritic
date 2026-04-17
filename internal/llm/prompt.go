@@ -109,7 +109,7 @@ func BuildUserPrompt(s *spec.Spec, contextFiles []ctx.ContextFile) string {
 
 	sb.WriteString("Analyze the following specification for defects.\n\n")
 
-	sb.WriteString(fmt.Sprintf("<spec file=%q>\n", s.Path))
+	fmt.Fprintf(&sb, "<spec file=%q>\n", s.Path)
 	sb.WriteString(s.Numbered)
 	if !strings.HasSuffix(s.Numbered, "\n") {
 		sb.WriteString("\n")

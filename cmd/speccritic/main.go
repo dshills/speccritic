@@ -249,7 +249,7 @@ func runCheck(specPath string, flags checkFlags) error {
 		}
 		// Ensure output ends with a newline for terminal friendliness.
 		if len(outputBytes) > 0 && outputBytes[len(outputBytes)-1] != '\n' {
-			fmt.Fprintln(os.Stdout)
+			_, _ = fmt.Fprintln(os.Stdout)
 		}
 	}
 

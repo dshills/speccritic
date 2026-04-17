@@ -65,7 +65,7 @@ func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))

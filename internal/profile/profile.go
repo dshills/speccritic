@@ -39,26 +39,26 @@ func (p *Profile) FormatRulesForPrompt() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Profile: %s\n", p.Name))
+	fmt.Fprintf(&sb, "Profile: %s\n", p.Name)
 
 	if len(p.RequiredSections) > 0 {
 		sb.WriteString("\nRequired sections (flag MISSING_INVARIANT if absent):\n")
 		for _, s := range p.RequiredSections {
-			sb.WriteString(fmt.Sprintf("- %s\n", s))
+			fmt.Fprintf(&sb, "- %s\n", s)
 		}
 	}
 
 	if len(p.ForbiddenPhrases) > 0 {
 		sb.WriteString("\nForbidden vague phrases (flag NON_TESTABLE_REQUIREMENT or AMBIGUOUS_BEHAVIOR if present):\n")
 		for _, ph := range p.ForbiddenPhrases {
-			sb.WriteString(fmt.Sprintf("- %q\n", ph))
+			fmt.Fprintf(&sb, "- %q\n", ph)
 		}
 	}
 
 	if len(p.DomainInvariants) > 0 {
 		sb.WriteString("\nDomain invariants (flag MISSING_INVARIANT if violated):\n")
 		for _, inv := range p.DomainInvariants {
-			sb.WriteString(fmt.Sprintf("- %s\n", inv))
+			fmt.Fprintf(&sb, "- %s\n", inv)
 		}
 	}
 
