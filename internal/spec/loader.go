@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -39,20 +40,42 @@ func Load(path string) (*Spec, error) {
 }
 
 // addLineNumbers prefixes every line with "L{n}: " and returns the result
-// along with the total line count.
+// along with the total line count. A trailing empty segment after a final
+// newline is counted but not emitted as a spurious numbered line.
 func addLineNumbers(content string) (string, int) {
-	lines := strings.Split(content, "\n")
-	// If the file ends with a newline, Split produces a trailing empty element.
-	// We include it in the count but don't emit a spurious numbered line for it.
-	out := make([]string, 0, len(lines))
-	lineCount := 0
-	for i, line := range lines {
-		// Don't number the trailing empty string after a final newline
-		if i == len(lines)-1 && line == "" {
-			break
-		}
-		lineCount++
-		out = append(out, fmt.Sprintf("L%d: %s", lineCount, line))
+	if content == "" {
+		return "", 0
 	}
-	return strings.Join(out, "\n"), lineCount
+
+	var b strings.Builder
+	// Grow once: each emitted line adds ~6 bytes of prefix ("L" + digits + ": ").
+	nlCount := strings.Count(content, "\n")
+	b.Grow(len(content) + (nlCount+1)*6)
+
+	var numBuf [20]byte
+	lineNo := 0
+	start := 0
+	emit := func(seg string) {
+		if lineNo > 0 {
+			b.WriteByte('\n')
+		}
+		lineNo++
+		b.WriteByte('L')
+		b.Write(strconv.AppendInt(numBuf[:0], int64(lineNo), 10))
+		b.WriteString(": ")
+		b.WriteString(seg)
+	}
+
+	for i := 0; i < len(content); i++ {
+		if content[i] == '\n' {
+			emit(content[start:i])
+			start = i + 1
+		}
+	}
+	// Trailing segment (content after final '\n', or whole string if none).
+	// Drop it when empty to match the original Split/Join semantics.
+	if start < len(content) {
+		emit(content[start:])
+	}
+	return b.String(), lineNo
 }

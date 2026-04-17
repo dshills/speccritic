@@ -65,6 +65,25 @@ func TestRedact_NonSecretUnchanged(t *testing.T) {
 	}
 }
 
+func TestRedact_MixedCasePasswordAlongsideOtherTrigger(t *testing.T) {
+	// Regression: a mixed-case password on one line alongside another
+	// secret type must still be redacted — the per-pattern trigger gate
+	// must match the regex's case-insensitive semantics.
+	input := "api_key = sk-abcdefghijklmnopqrstuvwxyz123456\nPassword: supersecret123"
+	out := Redact(input)
+	if strings.Contains(out, "supersecret123") {
+		t.Errorf("mixed-case Password not redacted: %q", out)
+	}
+}
+
+func TestRedact_MixedCaseBearerAlongsideOtherTrigger(t *testing.T) {
+	input := "access_key = AKIAIOSFODNN7EXAMPLE\nAuthorization: BEARER abcdefghijklmnopqrstuvwxyz0123456789"
+	out := Redact(input)
+	if strings.Contains(out, "abcdefghijklmnopqrstuvwxyz0123456789") {
+		t.Errorf("uppercase BEARER token not redacted: %q", out)
+	}
+}
+
 func TestRedact_LineCountPreserved(t *testing.T) {
 	// PEM block spans multiple lines — after redaction line count must be unchanged.
 	input := "line1\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\nline5"
