@@ -328,6 +328,17 @@ See [WORKFLOW.md](WORKFLOW.md) for a detailed guide on integrating SpecCritic in
 - `CLAUDE.md` snippet, pre-commit hook, and GitHub Actions CI job
 - Anti-patterns and a full example agent session
 
+### Claude Code Skill
+
+A ready-to-install Claude Code skill lives in [`examples/claude-code-skill/`](examples/claude-code-skill/). It teaches Claude Code when to invoke `speccritic`, how to parse `.speccritic-review.json`, and how to route CRITICAL issues (fix in place) vs. CRITICAL questions (ask the user). Install with:
+
+```bash
+mkdir -p ~/.claude/skills/speccritic
+cp examples/claude-code-skill/SKILL.md ~/.claude/skills/speccritic/SKILL.md
+```
+
+See the [skill README](examples/claude-code-skill/README.md) for project-level install, prerequisites, and customization.
+
 ## License
 
 MIT — see [LICENSE](LICENSE)
