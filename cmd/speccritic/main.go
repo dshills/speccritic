@@ -153,19 +153,20 @@ func runCheck(specPath string, flags checkFlags) error {
 
 	// --- Step 8: Build LLM request ---
 	sysPrompt := llm.BuildSystemPrompt(prof, flags.strict)
-	userPrompt := llm.BuildUserPrompt(s, contextFiles)
+	userPrefix, userSpec := llm.BuildUserPrompt(s, contextFiles)
 
 	req := &llm.Request{
-		SystemPrompt: sysPrompt,
-		UserPrompt:   userPrompt,
-		Temperature:  flags.temperature,
-		MaxTokens:    flags.maxTokens,
+		SystemPrompt:           sysPrompt,
+		UserPromptCachedPrefix: userPrefix,
+		UserPrompt:             userSpec,
+		Temperature:            flags.temperature,
+		MaxTokens:              flags.maxTokens,
 	}
 
 	// --- Step 9: Debug dump (includes file paths as-is; see PLAN.md security notes) ---
 	if flags.debug {
 		fmt.Fprintf(os.Stderr, "=== DEBUG: redacted prompt ===\n")
-		fmt.Fprintf(os.Stderr, "[SYSTEM]\n%s\n\n[USER]\n%s\n", sysPrompt, userPrompt)
+		fmt.Fprintf(os.Stderr, "[SYSTEM]\n%s\n\n[USER PREFIX]\n%s\n[USER SPEC]\n%s\n", sysPrompt, userPrefix, userSpec)
 		fmt.Fprintf(os.Stderr, "=== END DEBUG ===\n")
 	}
 

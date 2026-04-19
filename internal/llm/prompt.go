@@ -81,8 +81,11 @@ const schemaExample = `{
   ]
 }`
 
-// BuildSystemPrompt constructs the system prompt with optional profile rules
-// and strict mode injection.
+// BuildSystemPrompt constructs the system prompt with optional profile rules,
+// strict mode injection, and the JSON output schema.
+//
+// Content is ordered stable-first so downstream providers (OpenAI, Gemini,
+// Anthropic) can cache the prefix across iterative re-runs on the same spec.
 func BuildSystemPrompt(p *profile.Profile, strict bool) string {
 	var sb strings.Builder
 	sb.WriteString(systemPromptBase)
@@ -99,30 +102,34 @@ func BuildSystemPrompt(p *profile.Profile, strict bool) string {
 		}
 	}
 
-	return sb.String()
-}
-
-// BuildUserPrompt constructs the user prompt with the spec, optional context
-// files, and the JSON schema example.
-func BuildUserPrompt(s *spec.Spec, contextFiles []ctx.ContextFile) string {
-	var sb strings.Builder
-
-	sb.WriteString("Analyze the following specification for defects.\n\n")
-
-	fmt.Fprintf(&sb, "<spec file=%q>\n", s.Path)
-	sb.WriteString(s.Numbered)
-	if !strings.HasSuffix(s.Numbered, "\n") {
-		sb.WriteString("\n")
-	}
-	sb.WriteString("</spec>\n")
-
-	if len(contextFiles) > 0 {
-		sb.WriteString("\n")
-		sb.WriteString(ctx.FormatForPrompt(contextFiles))
-	}
-
-	sb.WriteString("\nReturn your findings as JSON with this structure:\n")
+	sb.WriteString("\n\nReturn your findings as JSON with this structure:\n")
 	sb.WriteString(schemaExample)
 
 	return sb.String()
+}
+
+// BuildUserPrompt constructs the user prompt in two parts: a stable prefix
+// (preamble + optional context files) and the variable spec block.
+//
+// Splitting at this seam lets providers cache the prefix across iterative
+// re-runs on the same spec/context. Callers that don't care about caching can
+// concatenate the two — byte order is preamble, then prefix, then spec.
+func BuildUserPrompt(s *spec.Spec, contextFiles []ctx.ContextFile) (cachedPrefix, variable string) {
+	var prefix strings.Builder
+	prefix.WriteString("Analyze the following specification for defects.\n")
+	if len(contextFiles) > 0 {
+		prefix.WriteString("\n")
+		prefix.WriteString(ctx.FormatForPrompt(contextFiles))
+	}
+
+	var tail strings.Builder
+	tail.WriteString("\n")
+	fmt.Fprintf(&tail, "<spec file=%q>\n", s.Path)
+	tail.WriteString(s.Numbered)
+	if !strings.HasSuffix(s.Numbered, "\n") {
+		tail.WriteString("\n")
+	}
+	tail.WriteString("</spec>\n")
+
+	return prefix.String(), tail.String()
 }

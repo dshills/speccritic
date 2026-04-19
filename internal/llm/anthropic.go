@@ -29,16 +29,45 @@ type anthropicProvider struct {
 }
 
 type anthropicRequest struct {
-	Model       string             `json:"model"`
-	MaxTokens   int                `json:"max_tokens"`
-	System      string             `json:"system,omitempty"`
-	Messages    []anthropicMessage `json:"messages"`
-	Temperature *float64           `json:"temperature,omitempty"`
+	Model       string                 `json:"model"`
+	MaxTokens   int                    `json:"max_tokens"`
+	System      []anthropicSystemBlock `json:"system,omitempty"`
+	Messages    []anthropicMessage     `json:"messages"`
+	Temperature *float64               `json:"temperature,omitempty"`
 }
 
+// anthropicSystemBlock is a single block of the structured system field.
+// The array form is required to attach cache_control for prompt caching;
+// the Anthropic API also accepts a bare string, but we always use the array
+// form here so the caching breakpoint is available.
+type anthropicSystemBlock struct {
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
+}
+
+// anthropicCacheControl marks a content block as a prompt-cache breakpoint.
+// Type "ephemeral" = 5-minute TTL; Anthropic silently ignores the breakpoint
+// if the cumulative prefix is below the per-model minimum (1024 tokens for
+// Sonnet/Opus, 2048 for Haiku).
+type anthropicCacheControl struct {
+	Type string `json:"type"`
+}
+
+// anthropicMessage carries a role and either a plain string content or an
+// array of content blocks. Content is typed `any` because the Anthropic API
+// accepts both forms, and the array form is required to attach cache_control
+// to a portion of the message.
 type anthropicMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+// anthropicContentBlock is one element of the array form of message content.
+type anthropicContentBlock struct {
+	Type         string                 `json:"type"`
+	Text         string                 `json:"text"`
+	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
 type anthropicResponse struct {
@@ -68,10 +97,14 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	body := anthropicRequest{
 		Model:     model,
 		MaxTokens: maxTokens,
-		System:    req.SystemPrompt,
-		Messages: []anthropicMessage{
-			{Role: "user", Content: req.UserPrompt},
-		},
+		Messages:  []anthropicMessage{{Role: "user", Content: buildAnthropicUserContent(req)}},
+	}
+	if req.SystemPrompt != "" {
+		body.System = []anthropicSystemBlock{{
+			Type:         "text",
+			Text:         req.SystemPrompt,
+			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		}}
 	}
 	if req.Temperature != 0 {
 		t := req.Temperature
@@ -132,4 +165,27 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		Content: content,
 		Model:   fmt.Sprintf("anthropic:%s", ar.Model),
 	}, nil
+}
+
+// buildAnthropicUserContent returns the user message content in the minimal
+// form the API requires: a bare string when there's no cacheable prefix, and
+// an array of content blocks with cache_control on the prefix otherwise.
+//
+// A second breakpoint on the prefix complements the system-prompt breakpoint:
+// when callers pass --context files (e.g. a prior SPEC.md for feature work),
+// the grounding docs sit in the prefix and become cached alongside the
+// instructions, so only the variable spec block is billed at full rate on
+// each iteration.
+func buildAnthropicUserContent(req *Request) any {
+	if req.UserPromptCachedPrefix == "" {
+		return req.UserPrompt
+	}
+	return []anthropicContentBlock{
+		{
+			Type:         "text",
+			Text:         req.UserPromptCachedPrefix,
+			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		},
+		{Type: "text", Text: req.UserPrompt},
+	}
 }

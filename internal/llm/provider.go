@@ -18,11 +18,17 @@ var sharedHTTPClient = &http.Client{
 const defaultMaxTokens = 16384
 
 // Request holds the parameters for an LLM completion call.
+//
+// UserPromptCachedPrefix is an optional stable prefix prepended to the user
+// message. When set, the Anthropic provider attaches a cache_control
+// breakpoint to it; OpenAI and Gemini benefit via automatic prefix caching
+// as long as the bytes are stable across calls.
 type Request struct {
-	SystemPrompt string
-	UserPrompt   string
-	Temperature  float64
-	MaxTokens    int
+	SystemPrompt           string
+	UserPromptCachedPrefix string
+	UserPrompt             string
+	Temperature            float64
+	MaxTokens              int
 	// Model overrides the provider's configured model when non-empty.
 	Model string
 }

@@ -35,7 +35,7 @@ func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if req.SystemPrompt != "" {
 		messages = append(messages, openaiMessage{Role: "system", Content: req.SystemPrompt})
 	}
-	messages = append(messages, openaiMessage{Role: "user", Content: req.UserPrompt})
+	messages = append(messages, openaiMessage{Role: "user", Content: req.UserPromptCachedPrefix + req.UserPrompt})
 
 	body := openaiRequest{
 		Model:    model,
