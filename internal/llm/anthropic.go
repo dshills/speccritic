@@ -106,9 +106,8 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
 		}}
 	}
-	if req.Temperature != 0 {
-		t := req.Temperature
-		body.Temperature = &t
+	if req.Temperature != nil {
+		body.Temperature = req.Temperature
 	}
 
 	bodyBytes, err := json.Marshal(body)

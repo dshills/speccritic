@@ -27,8 +27,11 @@ type Request struct {
 	SystemPrompt           string
 	UserPromptCachedPrefix string
 	UserPrompt             string
-	Temperature            float64
-	MaxTokens              int
+	// Temperature is a pointer so callers can distinguish "unset" (nil,
+	// provider default) from an explicit value — including 0.0, which
+	// callers use to request deterministic output.
+	Temperature *float64
+	MaxTokens   int
 	// Model overrides the provider's configured model when non-empty.
 	Model string
 }

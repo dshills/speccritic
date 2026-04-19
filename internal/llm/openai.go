@@ -65,9 +65,8 @@ func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Model:    model,
 		Messages: messages,
 	}
-	if req.Temperature != 0 {
-		t := req.Temperature
-		body.Temperature = &t
+	if req.Temperature != nil {
+		body.Temperature = req.Temperature
 	}
 	if req.MaxTokens > 0 {
 		body.MaxTokens = req.MaxTokens

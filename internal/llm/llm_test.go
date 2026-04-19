@@ -164,6 +164,66 @@ func TestAnthropicComplete_NoUserPromptPrefix_StringContent(t *testing.T) {
 	}
 }
 
+func TestAnthropicComplete_TemperatureZeroIsForwarded(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"x","model":"claude","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	original := AnthropicAPIURL()
+	SetAnthropicAPIURL(srv.URL)
+	t.Cleanup(func() { SetAnthropicAPIURL(original) })
+
+	zero := 0.0
+	p := &anthropicProvider{model: "claude-test", apiKey: "k"}
+	if _, err := p.Complete(context.Background(), &Request{
+		UserPrompt:  "hi",
+		Temperature: &zero,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var sent struct {
+		Temperature *float64 `json:"temperature"`
+	}
+	if err := json.Unmarshal(captured, &sent); err != nil {
+		t.Fatalf("unmarshal captured body: %v\nbody: %s", err, captured)
+	}
+	if sent.Temperature == nil {
+		t.Fatalf("expected temperature=0 to be forwarded, got nil; body: %s", captured)
+	}
+	if *sent.Temperature != 0.0 {
+		t.Errorf("temperature = %v, want 0.0", *sent.Temperature)
+	}
+}
+
+func TestAnthropicComplete_NilTemperatureOmitted(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"x","model":"claude","content":[{"type":"text","text":"ok"}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	original := AnthropicAPIURL()
+	SetAnthropicAPIURL(srv.URL)
+	t.Cleanup(func() { SetAnthropicAPIURL(original) })
+
+	p := &anthropicProvider{model: "claude-test", apiKey: "k"}
+	if _, err := p.Complete(context.Background(), &Request{UserPrompt: "hi"}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if strings.Contains(string(captured), `"temperature"`) {
+		t.Errorf("expected no temperature field when unset, body: %s", captured)
+	}
+}
+
 func TestAnthropicComplete_OmitsSystemWhenEmpty(t *testing.T) {
 	var captured []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

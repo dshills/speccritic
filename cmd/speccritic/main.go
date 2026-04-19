@@ -159,7 +159,7 @@ func runCheck(specPath string, flags checkFlags) error {
 		SystemPrompt:           sysPrompt,
 		UserPromptCachedPrefix: userPrefix,
 		UserPrompt:             userSpec,
-		Temperature:            flags.temperature,
+		Temperature:            &flags.temperature,
 		MaxTokens:              flags.maxTokens,
 	}
 
