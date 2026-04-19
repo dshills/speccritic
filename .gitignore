@@ -1,2 +1,43 @@
+# Project binaries
 /speccritic
 /bin/
+/dist/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test & coverage output
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace files (not committed — each dev's local layout)
+go.work
+go.work.sum
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Agent tooling state (local-only; see CLAUDE.md)
+.claude/
+.atlas/
