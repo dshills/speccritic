@@ -19,7 +19,9 @@ var (
 )
 
 func BuiltinRules() []Rule {
-	return []Rule{placeholderRule(), vagueRule(), weakRequirementRule()}
+	rules := []Rule{placeholderRule(), vagueRule(), weakRequirementRule()}
+	rules = append(rules, structuralRules()...)
+	return rules
 }
 
 func placeholderRule() Rule {
