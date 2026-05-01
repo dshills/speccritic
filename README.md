@@ -68,13 +68,14 @@ speccritic check SPEC.md --fail-on INVALID
 
 ## Web UI
 
-SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the submitted spec with line numbers and finding annotations.
+SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the uploaded spec with line numbers, summary metrics, finding annotations, and modal issue details.
+
+The web UI is intended for local review sessions. It does not replace the CLI and it does not change CLI behavior.
 
 Set the same provider configuration used by the CLI:
 
 ```bash
-export SPECCRITIC_LLM_PROVIDER=anthropic
-export SPECCRITIC_LLM_MODEL=claude-sonnet-4-6
+export SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -90,20 +91,38 @@ Then open:
 http://127.0.0.1:8080
 ```
 
+From the browser:
+
+1. Choose a Markdown or text spec file. Manual text entry is intentionally not supported.
+2. Select a profile and severity threshold.
+3. Optionally enable strict mode.
+4. Click `Check spec`.
+
+The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; clicking a finding opens its detail in a modal so the annotated document stays in place.
+
 Use a different address or port with `WEB_ADDR`:
 
 ```bash
 make run-web WEB_ADDR=127.0.0.1:8081
 ```
 
-Build or install the web binary directly:
+Build, install, or run the web binary directly:
 
 ```bash
 make build-web
 make install-web
+go run ./cmd/speccritic-web --addr 127.0.0.1:8080
 ```
 
 `make build-all` builds both `bin/speccritic` and `bin/speccritic-web`.
+
+For live local development with [Air](https://github.com/air-verse/air), this repository includes `.air.toml` configured for the web server:
+
+```bash
+air
+```
+
+The Air config builds `./cmd/speccritic-web` into `./tmp/speccritic-web` and runs it on `127.0.0.1:8090`.
 
 ## Configuration
 
