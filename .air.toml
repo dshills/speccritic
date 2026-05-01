@@ -9,8 +9,8 @@ tmp_dir = "tmp"
   delay = 1000
 	include_dir = ["internal"]
   exclude_dir = ["tmp", "vendor"]
+	include_ext = ["go", "html", "js", "css"]
   exclude_regex = ["_test\\.go$"]
-  include_ext = ["go"]
   kill_delay = 500
 
 [misc]
