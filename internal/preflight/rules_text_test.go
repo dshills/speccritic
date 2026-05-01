@@ -22,6 +22,13 @@ func TestBuiltinRulesWeakRequirementDetection(t *testing.T) {
 	requireIssue(t, result.Issues, "PREFLIGHT-WEAK-001", schema.SeverityWarn, 1)
 }
 
+func TestBuiltinRulesDoNotMatchWordishTermInsideUnicodeWord(t *testing.T) {
+	result := runBuiltin(t, "SPEC.md", "The service πshould retry failed requests.")
+	if findIssue(result.Issues, "PREFLIGHT-WEAK-001") != nil {
+		t.Fatal("weak rule matched inside a non-ASCII word")
+	}
+}
+
 func TestBuiltinRulesStrictModeEscalatesWeakRequirements(t *testing.T) {
 	s := spec.New("SPEC.md", "The service should retry failed requests.")
 	result, err := Run(s, Config{Enabled: true, Profile: "general", Strict: true})

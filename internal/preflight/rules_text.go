@@ -3,6 +3,8 @@ package preflight
 import (
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/dshills/speccritic/internal/schema"
 )
@@ -10,6 +12,8 @@ import (
 type textPattern struct {
 	term    string
 	pattern *regexp.Regexp
+	lower   string
+	wordish bool
 }
 
 var (
@@ -87,8 +91,9 @@ func linePatternMatcher(patterns []textPattern, suppressExamples bool, adjust fu
 			if inSuppressedSection {
 				continue
 			}
+			lowerLine := strings.ToLower(line)
 			for _, pattern := range patterns {
-				if !pattern.pattern.MatchString(line) {
+				if !pattern.match(line, lowerLine) {
 					continue
 				}
 				finding := Finding{
@@ -121,7 +126,7 @@ func wordishPattern(term string) *regexp.Regexp {
 func compileLiteralPatterns(terms []string) []textPattern {
 	patterns := make([]textPattern, 0, len(terms))
 	for _, term := range terms {
-		patterns = append(patterns, textPattern{term: term, pattern: literalPattern(term)})
+		patterns = append(patterns, textPattern{term: term, pattern: literalPattern(term), lower: strings.ToLower(term)})
 	}
 	return patterns
 }
@@ -129,9 +134,48 @@ func compileLiteralPatterns(terms []string) []textPattern {
 func compileWordishPatterns(terms []string) []textPattern {
 	patterns := make([]textPattern, 0, len(terms))
 	for _, term := range terms {
-		patterns = append(patterns, textPattern{term: term, pattern: wordishPattern(term)})
+		patterns = append(patterns, textPattern{term: term, pattern: wordishPattern(term), lower: strings.ToLower(term), wordish: true})
 	}
 	return patterns
+}
+
+func (p textPattern) match(line, lowerLine string) bool {
+	if p.lower == "" {
+		return p.pattern.MatchString(line)
+	}
+	if !p.wordish {
+		return strings.Contains(lowerLine, p.lower)
+	}
+	return containsWordish(lowerLine, p.lower)
+}
+
+func containsWordish(line, term string) bool {
+	start := 0
+	for {
+		idx := strings.Index(line[start:], term)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		end := idx + len(term)
+		if isBoundary(line, idx-1) && isBoundary(line, end) {
+			return true
+		}
+		start = idx + 1
+	}
+}
+
+func isBoundary(s string, idx int) bool {
+	if idx < 0 || idx >= len(s) {
+		return true
+	}
+	var r rune
+	if !utf8.RuneStart(s[idx]) {
+		r, _ = utf8.DecodeLastRuneInString(s[:idx+1])
+	} else {
+		r, _ = utf8.DecodeRuneInString(s[idx:])
+	}
+	return !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r))
 }
 
 func isMarkdownHeading(line string) bool {

@@ -16,13 +16,17 @@ var (
 )
 
 var allowedAcronyms = map[string]bool{
-	"API": true, "CLI": true, "CPU": true, "CSS": true, "CSV": true, "DNS": true,
+	"API": true, "ARIA": true, "CLI": true, "CPU": true, "CSRF": true, "CSS": true, "CSV": true, "DNS": true,
 	"HTML": true, "HTTP": true, "HTTPS": true, "ID": true, "IP": true, "JSON": true,
+	"KB": true, "MB": true, "GB": true, "TB": true,
 	"LLM": true, "SQL": true, "UI": true, "URL": true, "UTF": true, "UUID": true,
 	"XML": true, "TCP": true, "UDP": true, "TLS": true, "RAM": true, "SSH": true,
 	"UTC": true, "SDK": true, "JWT": true, "CORS": true, "CRUD": true, "AI": true,
+	"GET": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true, "HTMX": true, "TTL": true,
 	"AS": true, "DB": true, "IF": true, "IN": true, "OR": true, "OS": true, "TO": true,
-	"TBD": true, "TODO": true,
+	"MUST": true, "SHALL": true, "SHOULD": true, "MAY": true,
+	"CRITICAL": true, "WARN": true, "INFO": true, "INVALID": true, "SPEC": true,
+	"PREFLIGHT": true, "STRUCTURE": true, "VAGUE": true, "GROUP": true, "TBD": true, "TODO": true, "FIXME": true,
 }
 
 func contextRules() []Rule {
@@ -76,8 +80,9 @@ func measurableCriteriaRule() Rule {
 		Matcher: MatcherFunc(func(doc Document, _ Rule, _ Config) []Finding {
 			var findings []Finding
 			for i, line := range doc.Lines {
+				lowerLine := strings.ToLower(line)
 				for _, pattern := range measurablePatterns {
-					if pattern.pattern.MatchString(line) {
+					if pattern.match(line, lowerLine) {
 						if hasMeasurableValueNearTerm(line, pattern.pattern) {
 							continue
 						}
