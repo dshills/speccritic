@@ -41,10 +41,19 @@ go build -ldflags "-X main.version=$(git describe --tags --always)" -o speccriti
 
 ## Quick Start
 
-Set your model and API key:
+Run a fast deterministic preflight check without model credentials:
 
 ```bash
-export SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6
+speccritic check SPEC.md --preflight-mode only
+```
+
+Use this first when iterating on a spec. It catches obvious placeholders, vague language, weak requirements, missing sections, undefined acronyms, and unmeasurable criteria locally before making an LLM call.
+
+Set your model and API key when you are ready for a full review:
+
+```bash
+export SPECCRITIC_LLM_PROVIDER=anthropic
+export SPECCRITIC_LLM_MODEL=claude-sonnet-4-6
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -66,6 +75,12 @@ Fail in CI if the spec is invalid:
 speccritic check SPEC.md --fail-on INVALID
 ```
 
+Gate CI before any LLM call:
+
+```bash
+speccritic check SPEC.md --preflight-mode gate --fail-on INVALID
+```
+
 ## Web UI
 
 SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the uploaded spec with line numbers, summary metrics, finding annotations, and modal issue details.
@@ -75,7 +90,8 @@ The web UI is intended for local review sessions. It does not replace the CLI an
 Set the same provider configuration used by the CLI:
 
 ```bash
-export SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6
+export SPECCRITIC_LLM_PROVIDER=anthropic
+export SPECCRITIC_LLM_MODEL=claude-sonnet-4-6
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -95,10 +111,10 @@ From the browser:
 
 1. Choose a Markdown or text spec file. Manual text entry is intentionally not supported.
 2. Select a profile and severity threshold.
-3. Optionally enable strict mode.
+3. Optionally enable strict mode or disable the default preflight pass.
 4. Click `Check spec`.
 
-The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; clicking a finding opens its detail in a modal so the annotated document stays in place.
+The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, and clicking any finding opens its detail in a modal so the annotated document stays in place.
 
 Use a different address or port with `WEB_ADDR`:
 
@@ -128,7 +144,9 @@ The Air config builds `./cmd/speccritic-web` into `./tmp/speccritic-web` and run
 
 ### Model Selection
 
-Set `SPECCRITIC_MODEL` to `provider:model`. If unset, defaults to `anthropic:claude-sonnet-4-6` with a warning to stderr.
+Set `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL`. If unset, SpecCritic defaults to `SPECCRITIC_LLM_PROVIDER=anthropic` and `SPECCRITIC_LLM_MODEL=claude-sonnet-4-6` with a warning to stderr. Preflight-only checks do not require model configuration.
+
+Current builds read the split provider/model variables. If you have old shell or CI snippets that set `SPECCRITIC_MODEL=provider:model`, replace them with the two variables above.
 
 | Provider | Env Var | Example |
 |----------|---------|---------|
@@ -136,8 +154,37 @@ Set `SPECCRITIC_MODEL` to `provider:model`. If unset, defaults to `anthropic:cla
 | `openai` | `OPENAI_API_KEY` | `openai:gpt-4o` |
 
 ```bash
-export SPECCRITIC_MODEL=openai:gpt-4o
+export SPECCRITIC_LLM_PROVIDER=openai
+export SPECCRITIC_LLM_MODEL=gpt-4o
 export OPENAI_API_KEY=sk-...
+```
+
+### Preflight
+
+Preflight is a deterministic local pass that runs before the LLM by default. It is designed to reduce review latency, token usage, and repeated model round trips by catching high-signal defects immediately.
+
+Modes:
+
+| Mode | Behavior |
+|------|----------|
+| `warn` | Include preflight findings and continue to the LLM. This is the default. |
+| `gate` | Skip the LLM when blocking preflight findings exist. |
+| `only` | Run only deterministic preflight checks. No model credentials are required. |
+
+Recommended workflow:
+
+```bash
+speccritic check SPEC.md --preflight-mode only
+# fix deterministic findings
+speccritic check SPEC.md --preflight-mode gate --fail-on INVALID
+# when preflight is clean enough, run the full review
+speccritic check SPEC.md
+```
+
+Suppress a known deterministic false positive with `--preflight-ignore`:
+
+```bash
+speccritic check SPEC.md --preflight-ignore PREFLIGHT-ACRONYM-001
 ```
 
 ### Flags
@@ -158,9 +205,13 @@ speccritic check <spec-file> [flags]
 | `--patch-out` | (none) | Write suggested patches to file |
 | `--temperature` | `0.2` | LLM temperature (0.0–2.0) |
 | `--max-tokens` | `4096` | Maximum response tokens |
-| `--offline` | `false` | Exit 3 if `SPECCRITIC_MODEL` is not set (CI enforcement) |
+| `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
 | `--verbose` | `false` | Print processing steps to stderr |
 | `--debug` | `false` | Dump full prompt to stderr (use only in trusted environments) |
+| `--preflight` | `true` | Run deterministic checks before LLM review |
+| `--preflight-mode` | `warn` | Preflight mode: `warn`, `gate`, or `only` |
+| `--preflight-profile` | same as `--profile` | Override the preflight rule profile |
+| `--preflight-ignore` | (none) | Suppress a preflight rule ID; can be repeated |
 
 ## Profiles
 
@@ -303,7 +354,7 @@ Patches are advisory—they are minimal textual corrections, never wholesale rew
 |------|---------|
 | `0` | Success; verdict below `--fail-on` threshold (or no threshold set) |
 | `2` | Verdict meets or exceeds `--fail-on` threshold |
-| `3` | Input error: invalid flags, file not found, or `SPECCRITIC_MODEL` unset with `--offline` |
+| `3` | Input error: invalid flags, file not found, or LLM provider/model env vars unset with `--offline` |
 | `4` | Provider error: failed to create LLM provider (bad format, missing API key) |
 | `5` | Model output invalid: LLM response failed schema validation after one retry |
 
@@ -348,7 +399,8 @@ Any behavior not explicitly stated is flagged. Any assumption required to implem
 # GitHub Actions example
 - name: Check specification
   env:
-    SPECCRITIC_MODEL: anthropic:claude-sonnet-4-6
+    SPECCRITIC_LLM_PROVIDER: anthropic
+    SPECCRITIC_LLM_MODEL: claude-sonnet-4-6
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   run: |
     speccritic check SPEC.md \
@@ -358,7 +410,17 @@ Any behavior not explicitly stated is flagged. Any assumption required to implem
       --out spec-review.json
 ```
 
-The `--offline` flag ensures the run fails immediately (exit 3) if `SPECCRITIC_MODEL` is not set, preventing accidental use of the default model in CI.
+The `--offline` flag ensures the run fails immediately (exit 3) if `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL` are not set, preventing accidental use of the default model in CI.
+
+For a credentials-free deterministic gate:
+
+```yaml
+- name: Preflight specification
+  run: |
+    speccritic check SPEC.md \
+      --preflight-mode only \
+      --fail-on INVALID
+```
 
 ## Development
 
