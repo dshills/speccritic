@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dshills/speccritic/internal/app"
+	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/schema"
 )
@@ -477,18 +478,25 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 	}
 
 	return app.CheckRequest{
-		SpecName:          specName,
-		SpecText:          specText,
-		Profile:           profile,
-		Strict:            r.FormValue("strict") == "true",
-		SeverityThreshold: severity,
-		Temperature:       temperature,
-		MaxTokens:         maxTokens,
-		Preflight:         preflightEnabled,
-		PreflightMode:     preflightMode,
-		PreflightProfile:  profile,
-		Source:            app.SourceWeb,
-		ErrWriter:         io.Discard,
+		SpecName:               specName,
+		SpecText:               specText,
+		Profile:                profile,
+		Strict:                 r.FormValue("strict") == "true",
+		SeverityThreshold:      severity,
+		Temperature:            temperature,
+		MaxTokens:              maxTokens,
+		Preflight:              preflightEnabled,
+		PreflightMode:          preflightMode,
+		PreflightProfile:       profile,
+		Chunking:               string(chunk.ModeAuto),
+		ChunkLines:             chunk.DefaultChunkLines,
+		ChunkOverlap:           chunk.DefaultChunkOverlap,
+		ChunkMinLines:          chunk.DefaultChunkMinLines,
+		ChunkTokenThreshold:    chunk.DefaultChunkTokenThreshold,
+		ChunkConcurrency:       chunk.DefaultChunkConcurrency,
+		SynthesisLineThreshold: chunk.DefaultSynthesisLineThreshold,
+		Source:                 app.SourceWeb,
+		ErrWriter:              io.Discard,
 	}, nil
 }
 

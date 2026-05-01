@@ -195,6 +195,9 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	if !checker.req.Preflight || checker.req.PreflightMode != "warn" || checker.req.PreflightProfile != checker.req.Profile {
 		t.Fatalf("preflight request = enabled %t mode %q profile %q check profile %q", checker.req.Preflight, checker.req.PreflightMode, checker.req.PreflightProfile, checker.req.Profile)
 	}
+	if checker.req.Chunking != "auto" || checker.req.ChunkLines == 0 || checker.req.ChunkConcurrency == 0 {
+		t.Fatalf("chunking request = mode %q lines %d concurrency %d", checker.req.Chunking, checker.req.ChunkLines, checker.req.ChunkConcurrency)
+	}
 	if !strings.Contains(rec.Body.String(), "INVALID") {
 		t.Fatalf("response missing verdict: %s", rec.Body.String())
 	}
