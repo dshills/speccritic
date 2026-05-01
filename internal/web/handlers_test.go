@@ -24,7 +24,10 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 	}
 	return &app.CheckResult{
 		OriginalSpec: req.SpecText,
+		PatchDiff:    "# patch\n",
 		Report: &schema.Report{
+			Tool:    "speccritic",
+			Version: "test",
 			Input:   schema.Input{SeverityThreshold: req.SeverityThreshold},
 			Summary: schema.Summary{Verdict: schema.VerdictInvalid, Score: 80, CriticalCount: 1},
 			Issues: []schema.Issue{{
@@ -37,6 +40,56 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 			}},
 		},
 	}, nil
+}
+
+func TestExportEndpoints(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	id := createStoredCheck(t, server)
+
+	for _, tc := range []struct {
+		path        string
+		contentType string
+		want        string
+	}{
+		{"/checks/" + id + "/export.json", "application/json", `"tool": "speccritic"`},
+		{"/checks/" + id + "/export.md", "text/markdown; charset=utf-8", "SpecCritic Report"},
+		{"/checks/" + id + "/patch.diff", "text/x-diff; charset=utf-8", "# patch"},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d", tc.path, rec.Code)
+		}
+		if got := rec.Header().Get("Content-Type"); got != tc.contentType {
+			t.Fatalf("%s content type = %q", tc.path, got)
+		}
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Fatalf("%s body missing %q: %s", tc.path, tc.want, rec.Body.String())
+		}
+	}
+}
+
+func createStoredCheck(t *testing.T, server *Server) string {
+	t.Helper()
+	form := url.Values{"csrf_token": {"same"}, "spec_text": {"The system must work."}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post status = %d", rec.Code)
+	}
+	if len(server.store.order) == 0 {
+		t.Fatal("stored check ID missing")
+	}
+	return server.store.order[len(server.store.order)-1]
 }
 
 func TestIndex(t *testing.T) {

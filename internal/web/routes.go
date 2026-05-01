@@ -7,6 +7,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("POST /checks", s.handleCheckStub)
 	mux.HandleFunc("GET /checks/{id}/issues/{finding_id}", s.handleIssueDetail)
+	mux.HandleFunc("GET /checks/{id}/export.json", s.handleExportJSON)
+	mux.HandleFunc("GET /checks/{id}/export.md", s.handleExportMarkdown)
+	mux.HandleFunc("GET /checks/{id}/patch.diff", s.handleExportPatch)
 	mux.Handle("GET /assets/", http.FileServer(http.FS(content)))
 	return securityHeaders(mux)
 }

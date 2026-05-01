@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dshills/speccritic/internal/app"
+	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/schema"
 )
 
@@ -279,6 +280,49 @@ func (s *Server) handleIssueDetail(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(buf.Bytes())
 }
 
+func (s *Server) handleExportJSON(w http.ResponseWriter, r *http.Request) {
+	s.handleExport(w, r, "json", "application/json", ".json")
+}
+
+func (s *Server) handleExportMarkdown(w http.ResponseWriter, r *http.Request) {
+	s.handleExport(w, r, "md", "text/markdown; charset=utf-8", ".md")
+}
+
+func (s *Server) handleExportPatch(w http.ResponseWriter, r *http.Request) {
+	check, ok := s.store.Get(r.PathValue("id"))
+	if !ok || check.Result == nil || check.Result.PatchDiff == "" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-diff; charset=utf-8")
+	w.Header().Set("Content-Disposition", contentDisposition("speccritic-"+check.ID+".diff"))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.WriteString(w, check.Result.PatchDiff)
+}
+
+func (s *Server) handleExport(w http.ResponseWriter, r *http.Request, format, contentType, ext string) {
+	check, ok := s.store.Get(r.PathValue("id"))
+	if !ok || check.Result == nil || check.Result.Report == nil {
+		http.NotFound(w, r)
+		return
+	}
+	renderer, err := render.NewRenderer(format)
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	data, err := renderer.Render(check.Result.Report)
+	if err != nil {
+		log.Printf("render export: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", contentDisposition("speccritic-"+check.ID+ext))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
 func (s *Server) resultView(check *StoredCheck) (resultView, error) {
 	if check == nil || check.Result == nil || check.Result.Report == nil {
 		return resultView{}, fmt.Errorf("missing check result")
@@ -298,6 +342,35 @@ func (s *Server) resultView(check *StoredCheck) (resultView, error) {
 
 func buildAnnotatedSpec(specText string, report *schema.Report, threshold schema.Severity) (AnnotatedSpec, error) {
 	return BuildAnnotatedSpec(specText, report, threshold)
+}
+
+func contentDisposition(name string) string {
+	return `attachment; filename="` + sanitizeFilename(name) + `"`
+}
+
+func sanitizeFilename(name string) string {
+	if name == "" {
+		return "speccritic"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "speccritic"
+	}
+	return b.String()
 }
 
 func (s *Server) parseRequestForm(r *http.Request) error {
