@@ -190,6 +190,28 @@ Rules detect likely undefined acronyms and terms:
 
 The first version may limit this group to all-caps acronyms.
 
+The rule must include a built-in allow-list for common technical acronyms that should not require local definition. The initial allow-list must include at least:
+
+- `API`
+- `CLI`
+- `CPU`
+- `CSS`
+- `CSV`
+- `DNS`
+- `HTML`
+- `HTTP`
+- `HTTPS`
+- `ID`
+- `IP`
+- `JSON`
+- `LLM`
+- `SQL`
+- `UI`
+- `URL`
+- `UTF`
+- `UUID`
+- `XML`
+
 ### 8.5 Weak Requirements
 
 Rules detect requirements that use non-binding language:
