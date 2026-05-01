@@ -256,12 +256,11 @@ Create a local Go HTTP server that can render the main page and serve local asse
 
 ### Goals
 
-Implement `POST /checks` for pasted spec text and uploaded spec files.
+Implement `POST /checks` for uploaded spec files.
 
 ### Tasks
 
 1. Add form fields:
-   - pasted spec textarea,
    - spec file input,
    - profile select,
    - strict checkbox,
@@ -270,7 +269,7 @@ Implement `POST /checks` for pasted spec text and uploaded spec files.
    - max tokens input,
    - hidden CSRF token.
 2. Implement request parsing for `multipart/form-data`.
-3. Enforce exactly one of `spec_text` or `spec_file`.
+3. Require `spec_file`.
 4. Reject empty specs.
 5. Reject uploads larger than configured maximum.
 6. Reject unsupported profile, severity, temperature, and token values.
@@ -287,8 +286,7 @@ Implement `POST /checks` for pasted spec text and uploaded spec files.
 
 | Error | HTTP Status |
 |-------|-------------|
-| Missing spec input | 400 |
-| Both pasted text and file provided | 400 |
+| Missing spec upload | 400 |
 | Empty spec | 400 |
 | Oversized upload | 413 |
 | Invalid option | 400 |
@@ -300,10 +298,8 @@ Implement `POST /checks` for pasted spec text and uploaded spec files.
 
 ### Tests
 
-- Pasted spec succeeds with mock checker.
 - Uploaded spec succeeds with mock checker.
 - Missing input returns 400.
-- Both input methods return 400.
 - Oversized file returns 413.
 - Invalid profile returns 400.
 - Invalid severity threshold returns 400.
@@ -314,7 +310,6 @@ Implement `POST /checks` for pasted spec text and uploaded spec files.
 
 ### Acceptance Criteria
 
-- A user can submit pasted text and receive a rendered result.
 - A user can upload one Markdown/text file and receive a rendered result.
 - Validation failures are visible and do not crash the server.
 
@@ -661,8 +656,7 @@ Verify the complete browser-facing workflow using a mock LLM provider.
    - model response with patches,
    - invalid evidence response.
 2. Add integration tests using `httptest.Server`.
-3. Verify pasted spec flow.
-4. Verify uploaded spec flow.
+3. Verify uploaded spec flow.
 5. Verify issue detail flow.
 6. Verify severity filter flow.
 7. Verify export flow.
@@ -805,7 +799,7 @@ The smallest useful implementation slice is:
 1. Extract `internal/app.Checker`.
 2. Add `cmd/speccritic-web`.
 3. Render `GET /`.
-4. Implement pasted-spec-only `POST /checks` with synchronous mock-provider tests.
+4. Implement upload-only `POST /checks` with synchronous mock-provider tests.
 5. Render summary, issue list, and annotated spec.
 6. Add issue detail partials.
 7. Add JSON export.

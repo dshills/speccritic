@@ -1,16 +1,26 @@
 {{ define "partial_summary.html" }}
 <section class="summary" aria-label="Summary">
-  <p>Check {{ .Check.ID }}</p>
-  <h2>{{ .Check.Result.Report.Summary.Verdict }}</h2>
-  <dl>
-    <dt>Score</dt>
-    <dd>{{ .Check.Result.Report.Summary.Score }}</dd>
-    <dt>Critical</dt>
-    <dd>{{ .Check.Result.Report.Summary.CriticalCount }}</dd>
-    <dt>Warn</dt>
-    <dd>{{ .Check.Result.Report.Summary.WarnCount }}</dd>
-    <dt>Info</dt>
-    <dd>{{ .Check.Result.Report.Summary.InfoCount }}</dd>
+  <div class="summary-heading">
+    <p>Check {{ .Check.ID }}</p>
+    <h2>{{ .Check.Result.Report.Summary.Verdict }}</h2>
+  </div>
+  <dl class="metric-grid">
+    <div class="metric-card">
+      <dt>Score</dt>
+      <dd>{{ .Check.Result.Report.Summary.Score }}</dd>
+    </div>
+    <div class="metric-card severity-CRITICAL">
+      <dt>Critical</dt>
+      <dd>{{ .Check.Result.Report.Summary.CriticalCount }}</dd>
+    </div>
+    <div class="metric-card severity-WARN">
+      <dt>Warn</dt>
+      <dd>{{ .Check.Result.Report.Summary.WarnCount }}</dd>
+    </div>
+    <div class="metric-card severity-INFO">
+      <dt>Info</dt>
+      <dd>{{ .Check.Result.Report.Summary.InfoCount }}</dd>
+    </div>
   </dl>
 </section>
 {{ end }}

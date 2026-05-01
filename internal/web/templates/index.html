@@ -1,31 +1,37 @@
 {{ define "index.html" }}
 <main class="shell">
   <section class="input-pane" aria-labelledby="check-heading">
-    <h1 id="check-heading">SpecCritic</h1>
-    <form method="post" action="/checks" enctype="multipart/form-data" hx-post="/checks" hx-target="#status" hx-swap="innerHTML">
+    <div class="brand">
+      <h1 id="check-heading">SpecCritic</h1>
+      <p>Specification review</p>
+    </div>
+    <form method="post" action="/checks" enctype="multipart/form-data" hx-post="/checks" hx-target="#status">
       <input type="hidden" name="csrf_token" value="{{ .Nonce }}">
 
-      <label for="spec_text">Spec text</label>
-      <textarea id="spec_text" name="spec_text" rows="18" spellcheck="false"></textarea>
-
-      <label for="spec_file">Spec file</label>
-      <input id="spec_file" name="spec_file" type="file" accept=".md,.txt,text/markdown,text/plain">
+      <div class="field">
+        <label for="spec_file">Spec file</label>
+        <input id="spec_file" name="spec_file" type="file" accept=".md,.txt,text/markdown,text/plain" required>
+      </div>
 
       <div class="controls">
-        <label for="profile">Profile</label>
-        <select id="profile" name="profile">
-          <option value="general">general</option>
-          <option value="backend-api">backend-api</option>
-          <option value="regulated-system">regulated-system</option>
-          <option value="event-driven">event-driven</option>
-        </select>
+        <div class="field">
+          <label for="profile">Profile</label>
+          <select id="profile" name="profile">
+            <option value="general">general</option>
+            <option value="backend-api">backend-api</option>
+            <option value="regulated-system">regulated-system</option>
+            <option value="event-driven">event-driven</option>
+          </select>
+        </div>
 
-        <label for="severity_threshold">Severity</label>
-        <select id="severity_threshold" name="severity_threshold">
-          <option value="info">info</option>
-          <option value="warn">warn</option>
-          <option value="critical">critical</option>
-        </select>
+        <div class="field">
+          <label for="severity_threshold">Severity</label>
+          <select id="severity_threshold" name="severity_threshold">
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="critical">critical</option>
+          </select>
+        </div>
 
         <label class="checkbox">
           <input name="strict" type="checkbox" value="true">
@@ -33,7 +39,7 @@
         </label>
       </div>
 
-      <button type="submit">Check spec</button>
+      <button type="submit" data-running-label="Checking..." disabled>Check spec</button>
     </form>
   </section>
 
@@ -42,7 +48,13 @@
     <div id="summary"></div>
     <div id="issues"></div>
     <div id="annotated-spec"></div>
-    <div id="issue-detail"></div>
   </section>
+
+  <div id="issue-modal" class="modal-backdrop" data-modal hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="issue-modal-title">
+      <button class="modal-close" type="button" data-modal-close>Close</button>
+      <div id="issue-detail"></div>
+    </section>
+  </div>
 </main>
 {{ end }}

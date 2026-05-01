@@ -393,27 +393,25 @@ func (s *Server) parseRequestForm(r *http.Request) error {
 
 func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 	isMultipart := strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
-	specText := strings.TrimSpace(r.FormValue("spec_text"))
+	if !isMultipart {
+		return app.CheckRequest{}, fmt.Errorf("uploaded spec file is required")
+	}
+	specText := ""
 	specName := "SPEC.md"
 	var file multipart.File
 	var header *multipart.FileHeader
 	hasFile := false
-	if isMultipart {
-		var fileErr error
-		file, header, fileErr = r.FormFile("spec_file")
-		hasFile = fileErr == nil
-		if fileErr != nil && !errors.Is(fileErr, http.ErrMissingFile) {
-			return app.CheckRequest{}, fmt.Errorf("reading uploaded file: %w", fileErr)
-		}
+	var fileErr error
+	file, header, fileErr = r.FormFile("spec_file")
+	hasFile = fileErr == nil
+	if fileErr != nil && !errors.Is(fileErr, http.ErrMissingFile) {
+		return app.CheckRequest{}, fmt.Errorf("reading uploaded file: %w", fileErr)
 	}
 	if hasFile {
 		defer file.Close()
-		data, err := io.ReadAll(io.LimitReader(file, s.config.MaxUploadBytes+1))
+		data, err := readUploadedSpec(file, s.config.MaxUploadBytes)
 		if err != nil {
-			return app.CheckRequest{}, fmt.Errorf("reading uploaded file: %w", err)
-		}
-		if int64(len(data)) > s.config.MaxUploadBytes {
-			return app.CheckRequest{}, fmt.Errorf("uploaded file exceeds %d bytes", s.config.MaxUploadBytes)
+			return app.CheckRequest{}, err
 		}
 		if len(bytes.TrimSpace(data)) == 0 {
 			return app.CheckRequest{}, fmt.Errorf("spec is empty")
@@ -421,16 +419,13 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		if !utf8.Valid(data) {
 			return app.CheckRequest{}, fmt.Errorf("uploaded file must be UTF-8 text")
 		}
-		if specText != "" {
-			return app.CheckRequest{}, fmt.Errorf("provide pasted text or uploaded file, not both")
-		}
 		specText = string(data)
 		if header != nil && header.Filename != "" {
 			specName = filepath.Base(header.Filename)
 		}
 	}
 	if specText == "" {
-		return app.CheckRequest{}, fmt.Errorf("spec is required")
+		return app.CheckRequest{}, fmt.Errorf("uploaded spec file is required")
 	}
 
 	profile := r.FormValue("profile")
@@ -482,6 +477,18 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		Source:            app.SourceWeb,
 		ErrWriter:         io.Discard,
 	}, nil
+}
+
+func readUploadedSpec(file multipart.File, maxBytes int64) ([]byte, error) {
+	limited := &io.LimitedReader{R: file, N: maxBytes + 1}
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("reading uploaded file: %w", err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("uploaded file exceeds %d bytes", maxBytes)
+	}
+	return data, nil
 }
 
 func (s *Server) validNonce(r *http.Request) bool {

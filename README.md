@@ -66,6 +66,45 @@ Fail in CI if the spec is invalid:
 speccritic check SPEC.md --fail-on INVALID
 ```
 
+## Web UI
+
+SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the submitted spec with line numbers and finding annotations.
+
+Set the same provider configuration used by the CLI:
+
+```bash
+export SPECCRITIC_LLM_PROVIDER=anthropic
+export SPECCRITIC_LLM_MODEL=claude-sonnet-4-6
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Run the web UI:
+
+```bash
+make run-web
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080
+```
+
+Use a different address or port with `WEB_ADDR`:
+
+```bash
+make run-web WEB_ADDR=127.0.0.1:8081
+```
+
+Build or install the web binary directly:
+
+```bash
+make build-web
+make install-web
+```
+
+`make build-all` builds both `bin/speccritic` and `bin/speccritic-web`.
+
 ## Configuration
 
 ### Model Selection
@@ -306,13 +345,16 @@ The `--offline` flag ensures the run fails immediately (exit 3) if `SPECCRITIC_M
 
 ```bash
 # Run all tests
-go test ./...
+make test
 
 # Run a specific test
 go test ./cmd/speccritic/... -run TestRunCheck_BadSpec_INVALID -v
 
-# Build with version
-go build -ldflags "-X main.version=0.1.0" -o speccritic ./cmd/speccritic/
+# Build CLI and web binaries
+make build-all
+
+# Run the local web UI
+make run-web
 
 # Code review (staged changes)
 prism review staged

@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -76,10 +78,10 @@ func TestExportEndpoints(t *testing.T) {
 
 func createStoredCheck(t *testing.T, server *Server) string {
 	t.Helper()
-	form := url.Values{"csrf_token": {"same"}, "spec_text": {"The system must work."}}
+	body, contentType := multipartSpecRequest(t, "The system must work.")
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/checks", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
 	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
 	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
 	server.Handler().ServeHTTP(rec, req)
@@ -112,10 +114,13 @@ func TestIndex(t *testing.T) {
 		t.Fatal("expected session cookie")
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", `name="spec_text"`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`} {
+	for _, want := range []string{"SpecCritic", `name="spec_file"`, `required`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
+	}
+	if strings.Contains(body, `name="spec_text"`) {
+		t.Fatal("index body should not include manual spec text input")
 	}
 }
 
@@ -125,7 +130,7 @@ func TestAssets(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	for _, path := range []string{"/assets/style.css", "/assets/htmx.min.js"} {
+	for _, path := range []string{"/assets/style.css", "/assets/app.js"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		server.Handler().ServeHTTP(rec, req)
@@ -161,10 +166,10 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	form := url.Values{"csrf_token": {"same"}, "spec_text": {"The system must work."}}
+	body, contentType := multipartSpecRequest(t, "The system must work.")
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/checks", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
 	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
 	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
 	server.Handler().ServeHTTP(rec, req)
@@ -181,9 +186,12 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "ISSUE-0001") {
 		t.Fatalf("response missing issue: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `data-modal-target="#issue-modal"`) {
+		t.Fatalf("response missing modal issue target: %s", rec.Body.String())
+	}
 }
 
-func TestIssueDetail(t *testing.T) {
+func TestCheckStubRequiresUploadedSpec(t *testing.T) {
 	checker := &fakeChecker{}
 	server, err := NewServerWithChecker(DefaultConfig(), checker)
 	if err != nil {
@@ -194,6 +202,32 @@ func TestIssueDetail(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/checks", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "uploaded spec file is required") {
+		t.Fatalf("response missing upload requirement: %s", rec.Body.String())
+	}
+	if checker.req.SpecText != "" {
+		t.Fatalf("checker should not be called, got spec %q", checker.req.SpecText)
+	}
+}
+
+func TestIssueDetail(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
 	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
 	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
 	server.Handler().ServeHTTP(rec, req)
@@ -215,4 +249,27 @@ func TestIssueDetail(t *testing.T) {
 	if !strings.Contains(detail.Body.String(), "Vague") {
 		t.Fatalf("detail missing issue: %s", detail.Body.String())
 	}
+	if !strings.Contains(detail.Body.String(), `id="issue-modal-title"`) {
+		t.Fatalf("detail missing modal title: %s", detail.Body.String())
+	}
+}
+
+func multipartSpecRequest(t *testing.T, specText string) (*bytes.Buffer, string) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("csrf_token", "same"); err != nil {
+		t.Fatalf("write csrf field: %v", err)
+	}
+	part, err := writer.CreateFormFile("spec_file", "SPEC.md")
+	if err != nil {
+		t.Fatalf("create spec file part: %v", err)
+	}
+	if _, err := part.Write([]byte(specText)); err != nil {
+		t.Fatalf("write spec file part: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return &body, writer.FormDataContentType()
 }

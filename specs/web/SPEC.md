@@ -8,7 +8,7 @@ The web UI must make it easier to inspect findings in context. It does not repla
 
 ## 2. Goals
 
-- Allow a user to paste or upload a spec document.
+- Allow a user to upload a spec document.
 - Run a SpecCritic check from a Go HTTP server.
 - Render the submitted spec with stable line numbers.
 - Annotate spec lines that are referenced by SpecCritic evidence.
@@ -36,7 +36,7 @@ The first version assumes the server is run locally by a trusted user. Remote, s
 ## 5. Core Workflow
 
 1. User opens the web UI.
-2. User pastes spec text into a textarea or uploads a single spec file.
+2. User uploads a single spec file.
 3. User chooses review options.
 4. User starts a check.
 5. Server validates the request.
@@ -66,9 +66,8 @@ Returns the main web UI shell. The shell includes:
 
 `POST /checks`
 
-Accepts either:
+Accepts:
 
-- `spec_text`: raw pasted spec text, or
 - `spec_file`: one uploaded text or Markdown file.
 
 The request may include:
@@ -82,7 +81,7 @@ The request may include:
 
 Validation rules:
 
-- Exactly one of `spec_text` or `spec_file` must be provided.
+- `spec_file` must be provided.
 - Empty specs are rejected.
 - Uploaded files larger than 1 MiB are rejected.
 - The server must wrap request bodies with `http.MaxBytesReader` before parsing multipart forms so upload limits are enforced before buffering.
@@ -236,8 +235,7 @@ When patches are present:
 
 The web UI must render user-visible errors for:
 
-- missing spec input,
-- both pasted text and uploaded file provided,
+- missing spec upload,
 - oversized upload,
 - invalid option values,
 - missing model configuration when offline behavior requires it,
@@ -286,7 +284,7 @@ Retained checks must expire after a configurable TTL as well as a configurable m
 
 The web server must call the same internal review pipeline as the CLI.
 
-Web handlers must pass pasted or uploaded spec content as text, not as server filesystem paths. File-backed spec and context paths are reserved for trusted CLI use.
+Web handlers must pass uploaded spec content as text, not as server filesystem paths. File-backed spec and context paths are reserved for trusted CLI use.
 
 The implementation must avoid duplicating:
 
@@ -399,7 +397,6 @@ Handler tests must cover:
 
 Integration tests must use a mock LLM provider and verify:
 
-- pasted spec review flow,
 - uploaded spec review flow,
 - invalid model output path,
 - evidence bounds validation failure,
@@ -409,7 +406,7 @@ Integration tests must use a mock LLM provider and verify:
 
 The first version is complete when:
 
-- a user can paste a spec and run a check from the browser,
+- a user can upload a spec and run a check from the browser,
 - the server returns the same verdict, score, issue counts, and issue data that the CLI would return for the same input and options,
 - the submitted spec is rendered with line numbers,
 - lines referenced by issue evidence are visibly annotated,

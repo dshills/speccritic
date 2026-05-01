@@ -8,7 +8,7 @@
         <td><code>{{ .Text }}</code></td>
         <td>
           {{ range .FindingRefs }}
-          <a href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" hx-swap="innerHTML" aria-label="{{ .Severity }} finding {{ .ID }}">{{ .Severity }} {{ .ID }}</a>
+          <a class="line-finding severity-{{ .Severity }}" href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" data-modal-target="#issue-modal" aria-label="{{ .Severity }} finding {{ .ID }}">{{ .Severity }} {{ .ID }}</a>
           {{ end }}
         </td>
       </tr>

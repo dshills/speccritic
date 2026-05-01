@@ -5,15 +5,19 @@
     <ul>
       {{ range .Issues }}
       <li>
-        <a class="severity-{{ .Severity }}" href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" hx-swap="innerHTML">
-          <strong>{{ .Severity }}</strong> {{ .ID }} {{ .Title }}
+        <a class="finding-link severity-{{ .Severity }}" href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" data-modal-target="#issue-modal">
+          <span class="severity-chip">{{ .Severity }}</span>
+          <span class="finding-id">{{ .ID }}</span>
+          <span class="finding-title">{{ .Title }}</span>
         </a>
       </li>
       {{ end }}
       {{ range .Questions }}
       <li>
-        <a class="severity-{{ .Severity }}" href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" hx-swap="innerHTML">
-          <strong>{{ .Severity }}</strong> {{ .ID }} {{ .Question }}
+        <a class="finding-link severity-{{ .Severity }}" href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" data-modal-target="#issue-modal">
+          <span class="severity-chip">{{ .Severity }}</span>
+          <span class="finding-id">{{ .ID }}</span>
+          <span class="finding-title">{{ .Question }}</span>
         </a>
       </li>
       {{ end }}
