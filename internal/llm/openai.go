@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // openaiAPIURL is a var to allow test overrides via httptest.
@@ -26,10 +27,11 @@ type openaiProvider struct {
 }
 
 type openaiRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openaiMessage `json:"messages"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []openaiMessage `json:"messages"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64        `json:"temperature,omitempty"`
 }
 
 type openaiMessage struct {
@@ -61,53 +63,13 @@ func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}
 	messages = append(messages, openaiMessage{Role: "user", Content: req.UserPromptCachedPrefix + req.UserPrompt})
 
-	body := openaiRequest{
-		Model:    model,
-		Messages: messages,
+	useCompletionTokens := openaiUsesMaxCompletionTokens(model)
+	oaiResp, retry, err := p.completeOnce(ctx, model, messages, req, useCompletionTokens)
+	if retry {
+		oaiResp, _, err = p.completeOnce(ctx, model, messages, req, !useCompletionTokens)
 	}
-	if req.Temperature != nil {
-		body.Temperature = req.Temperature
-	}
-	if req.MaxTokens > 0 {
-		body.MaxTokens = req.MaxTokens
-	}
-
-	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, openaiAPIURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("creating HTTP request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-
-	resp, err := sharedHTTPClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
-	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-	respStr := string(respBytes)
-
-	var oaiResp openaiResponse
-	if err := json.Unmarshal(respBytes, &oaiResp); err != nil {
-		return nil, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
-	}
-
-	// Check status code first, then structured error field.
-	if resp.StatusCode != http.StatusOK {
-		if oaiResp.Error != nil {
-			return nil, fmt.Errorf("openai: %s: %s", oaiResp.Error.Type, oaiResp.Error.Message)
-		}
-		return nil, fmt.Errorf("openai: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
+		return nil, err
 	}
 
 	if len(oaiResp.Choices) == 0 {
@@ -118,4 +80,74 @@ func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Content: oaiResp.Choices[0].Message.Content,
 		Model:   fmt.Sprintf("openai:%s", oaiResp.Model),
 	}, nil
+}
+
+func (p *openaiProvider) completeOnce(ctx context.Context, model string, messages []openaiMessage, req *Request, useCompletionTokens bool) (openaiResponse, bool, error) {
+	body := openaiRequest{
+		Model:    model,
+		Messages: messages,
+	}
+	if req.Temperature != nil {
+		body.Temperature = req.Temperature
+	}
+	if req.MaxTokens > 0 {
+		if useCompletionTokens {
+			body.MaxCompletionTokens = req.MaxTokens
+		} else {
+			body.MaxTokens = req.MaxTokens
+		}
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return openaiResponse{}, false, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, openaiAPIURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return openaiResponse{}, false, fmt.Errorf("creating HTTP request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+
+	resp, err := sharedHTTPClient.Do(httpReq)
+	if err != nil {
+		return openaiResponse{}, false, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	if err != nil {
+		return openaiResponse{}, false, fmt.Errorf("reading response body: %w", err)
+	}
+	respStr := string(respBytes)
+
+	var oaiResp openaiResponse
+	if err := json.Unmarshal(respBytes, &oaiResp); err != nil {
+		return openaiResponse{}, false, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		if oaiResp.Error != nil {
+			retry := unsupportedTokenParameter(oaiResp.Error.Message)
+			return openaiResponse{}, retry, fmt.Errorf("openai: %s: %s", oaiResp.Error.Type, oaiResp.Error.Message)
+		}
+		return openaiResponse{}, false, fmt.Errorf("openai: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
+	}
+	return oaiResp, false, nil
+}
+
+func openaiUsesMaxCompletionTokens(model string) bool {
+	model = strings.ToLower(model)
+	return strings.HasPrefix(model, "o1") ||
+		strings.HasPrefix(model, "o3") ||
+		strings.HasPrefix(model, "o4") ||
+		strings.HasPrefix(model, "gpt-5")
+}
+
+func unsupportedTokenParameter(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "unsupported parameter") &&
+		(strings.Contains(message, "max_tokens") || strings.Contains(message, "max_completion_tokens"))
 }

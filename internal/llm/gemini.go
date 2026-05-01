@@ -25,6 +25,13 @@ type geminiProvider struct {
 	apiKey string // unexported; never serialized by encoding/json
 }
 
+type geminiRequest struct {
+	Model       string          `json:"model"`
+	Messages    []openaiMessage `json:"messages"`
+	MaxTokens   int             `json:"max_tokens,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+}
+
 func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	model := p.model
 	if req.Model != "" {
@@ -37,7 +44,7 @@ func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}
 	messages = append(messages, openaiMessage{Role: "user", Content: req.UserPromptCachedPrefix + req.UserPrompt})
 
-	body := openaiRequest{
+	body := geminiRequest{
 		Model:    model,
 		Messages: messages,
 	}

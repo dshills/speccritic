@@ -247,6 +247,111 @@ func TestAnthropicComplete_OmitsSystemWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestOpenAIComplete_UsesMaxCompletionTokens(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gpt-test","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	original := OpenAIAPIURL()
+	SetOpenAIAPIURL(srv.URL)
+	t.Cleanup(func() { SetOpenAIAPIURL(original) })
+
+	p := &openaiProvider{model: "gpt-5", apiKey: "k"}
+	if _, err := p.Complete(context.Background(), &Request{
+		UserPrompt: "hi",
+		MaxTokens:  1234,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(captured, &sent); err != nil {
+		t.Fatalf("unmarshal captured body: %v\nbody: %s", err, captured)
+	}
+	if _, ok := sent["max_tokens"]; ok {
+		t.Fatalf("request should not include max_tokens: %s", captured)
+	}
+	if got := sent["max_completion_tokens"]; got != float64(1234) {
+		t.Fatalf("max_completion_tokens = %#v, want 1234; body: %s", got, captured)
+	}
+}
+
+func TestOpenAIComplete_UsesMaxTokensForLegacyModels(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	original := OpenAIAPIURL()
+	SetOpenAIAPIURL(srv.URL)
+	t.Cleanup(func() { SetOpenAIAPIURL(original) })
+
+	p := &openaiProvider{model: "gpt-4o", apiKey: "k"}
+	if _, err := p.Complete(context.Background(), &Request{
+		UserPrompt: "hi",
+		MaxTokens:  1234,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(captured, &sent); err != nil {
+		t.Fatalf("unmarshal captured body: %v\nbody: %s", err, captured)
+	}
+	if _, ok := sent["max_completion_tokens"]; ok {
+		t.Fatalf("legacy request should not include max_completion_tokens: %s", captured)
+	}
+	if got := sent["max_tokens"]; got != float64(1234) {
+		t.Fatalf("max_tokens = %#v, want 1234; body: %s", got, captured)
+	}
+}
+
+func TestOpenAIComplete_RetriesAlternateTokenParameter(t *testing.T) {
+	var captured [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured = append(captured, body)
+		w.Header().Set("Content-Type", "application/json")
+		if len(captured) == 1 {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"model":"new-model","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	original := OpenAIAPIURL()
+	SetOpenAIAPIURL(srv.URL)
+	t.Cleanup(func() { SetOpenAIAPIURL(original) })
+
+	p := &openaiProvider{model: "new-model", apiKey: "k"}
+	if _, err := p.Complete(context.Background(), &Request{
+		UserPrompt: "hi",
+		MaxTokens:  1234,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if len(captured) != 2 {
+		t.Fatalf("calls = %d, want retry with alternate token field", len(captured))
+	}
+	if !strings.Contains(string(captured[0]), `"max_tokens"`) {
+		t.Fatalf("first request = %s, want max_tokens", captured[0])
+	}
+	if !strings.Contains(string(captured[1]), `"max_completion_tokens"`) {
+		t.Fatalf("second request = %s, want max_completion_tokens", captured[1])
+	}
+}
+
 func writeTempSpec(t *testing.T, content string) *spec.Spec {
 	t.Helper()
 	f, err := os.CreateTemp("", "spec*.md")
