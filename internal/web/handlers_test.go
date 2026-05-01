@@ -1,12 +1,33 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/dshills/speccritic/internal/app"
+	"github.com/dshills/speccritic/internal/schema"
 )
+
+type fakeChecker struct {
+	req app.CheckRequest
+	err error
+}
+
+func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.CheckResult, error) {
+	f.req = req
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &app.CheckResult{
+		Report: &schema.Report{
+			Summary: schema.Summary{Verdict: schema.VerdictValid, Score: 100},
+		},
+	}, nil
+}
 
 func TestIndex(t *testing.T) {
 	server, err := NewServer(DefaultConfig())
@@ -71,12 +92,13 @@ func TestCheckStubRequiresNonce(t *testing.T) {
 }
 
 func TestCheckStubAcceptedNonce(t *testing.T) {
-	server, err := NewServer(DefaultConfig())
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	form := url.Values{"csrf_token": {"same"}}
+	form := url.Values{"csrf_token": {"same"}, "spec_text": {"The system must work."}}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/checks", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -84,7 +106,13 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
 	server.Handler().ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d, want 501", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if checker.req.SpecText != "The system must work." {
+		t.Fatalf("checker spec text = %q", checker.req.SpecText)
+	}
+	if !strings.Contains(rec.Body.String(), "VALID") {
+		t.Fatalf("response missing verdict: %s", rec.Body.String())
 	}
 }

@@ -2,15 +2,30 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
+	"errors"
+	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/dshills/speccritic/internal/app"
 )
 
 type indexData struct {
 	Config Config
 	Nonce  string
 }
+
+const maxWebTokens = 16384
+const multipartMemoryLimit = 1 << 20
+const multipartOverheadLimit = 1 << 20
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	nonce := ""
@@ -77,13 +92,186 @@ func isSecureRequest(r *http.Request) bool {
 	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
+func sanitizeWebError(err error) string {
+	var appErr *app.Error
+	if errors.As(err, &appErr) {
+		switch appErr.Kind {
+		case app.ErrorInput:
+			return appErr.Error()
+		case app.ErrorProvider:
+			return "LLM provider error."
+		case app.ErrorModelOutput:
+			return "Invalid model output."
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Request timed out."
+	}
+	return "Internal server error."
+}
+
 func (s *Server) handleCheckStub(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, s.config.MaxUploadBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, s.config.MaxUploadBytes+multipartOverheadLimit)
+	if err := s.parseRequestForm(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
 	if !s.validNonce(r) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	http.Error(w, "Check submission is not implemented yet.", http.StatusNotImplemented)
+	req, err := s.parseCheckRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.config.RequestTimeout)
+	defer cancel()
+
+	result, err := s.checker.Check(ctx, req)
+	if err != nil {
+		log.Printf("check failed: %v", err)
+		status := http.StatusInternalServerError
+		var appErr *app.Error
+		if errors.As(err, &appErr) {
+			switch appErr.Kind {
+			case app.ErrorInput:
+				status = http.StatusBadRequest
+			case app.ErrorProvider, app.ErrorModelOutput:
+				status = http.StatusBadGateway
+			}
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			status = http.StatusGatewayTimeout
+		}
+		http.Error(w, sanitizeWebError(err), status)
+		return
+	}
+
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "partial_result.html", result); err != nil {
+		log.Printf("render result: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
+func (s *Server) parseRequestForm(r *http.Request) error {
+	isMultipart := strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
+	if isMultipart {
+		err := r.ParseMultipartForm(multipartMemoryLimit)
+		if r.MultipartForm != nil && err != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+		if err != nil {
+			return fmt.Errorf("invalid form: %w", err)
+		}
+		return nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return fmt.Errorf("invalid form: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
+	isMultipart := strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
+	specText := strings.TrimSpace(r.FormValue("spec_text"))
+	specName := "SPEC.md"
+	var file multipart.File
+	var header *multipart.FileHeader
+	hasFile := false
+	if isMultipart {
+		var fileErr error
+		file, header, fileErr = r.FormFile("spec_file")
+		hasFile = fileErr == nil
+		if fileErr != nil && !errors.Is(fileErr, http.ErrMissingFile) {
+			return app.CheckRequest{}, fmt.Errorf("reading uploaded file: %w", fileErr)
+		}
+	}
+	if hasFile {
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, s.config.MaxUploadBytes+1))
+		if err != nil {
+			return app.CheckRequest{}, fmt.Errorf("reading uploaded file: %w", err)
+		}
+		if int64(len(data)) > s.config.MaxUploadBytes {
+			return app.CheckRequest{}, fmt.Errorf("uploaded file exceeds %d bytes", s.config.MaxUploadBytes)
+		}
+		if len(bytes.TrimSpace(data)) == 0 {
+			return app.CheckRequest{}, fmt.Errorf("spec is empty")
+		}
+		if !utf8.Valid(data) {
+			return app.CheckRequest{}, fmt.Errorf("uploaded file must be UTF-8 text")
+		}
+		if specText != "" {
+			return app.CheckRequest{}, fmt.Errorf("provide pasted text or uploaded file, not both")
+		}
+		specText = string(data)
+		if header != nil && header.Filename != "" {
+			specName = filepath.Base(header.Filename)
+		}
+	}
+	if specText == "" {
+		return app.CheckRequest{}, fmt.Errorf("spec is required")
+	}
+
+	profile := r.FormValue("profile")
+	if profile == "" {
+		profile = "general"
+	}
+	switch profile {
+	case "general", "backend-api", "regulated-system", "event-driven":
+	default:
+		return app.CheckRequest{}, fmt.Errorf("invalid profile %q", profile)
+	}
+
+	severity := r.FormValue("severity_threshold")
+	if severity == "" {
+		severity = "info"
+	}
+	switch severity {
+	case "info", "warn", "critical":
+	default:
+		return app.CheckRequest{}, fmt.Errorf("invalid severity threshold %q", severity)
+	}
+
+	temperature := 0.2
+	if raw := r.FormValue("temperature"); raw != "" {
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil || v < 0 || v > 2 {
+			return app.CheckRequest{}, fmt.Errorf("invalid temperature")
+		}
+		temperature = v
+	}
+
+	maxTokens := 16384
+	if raw := r.FormValue("max_tokens"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 || v > maxWebTokens {
+			return app.CheckRequest{}, fmt.Errorf("invalid max tokens")
+		}
+		maxTokens = v
+	}
+
+	return app.CheckRequest{
+		SpecName:          specName,
+		SpecText:          specText,
+		Profile:           profile,
+		Strict:            r.FormValue("strict") == "true",
+		SeverityThreshold: severity,
+		Temperature:       temperature,
+		MaxTokens:         maxTokens,
+		Source:            app.SourceWeb,
+		ErrWriter:         io.Discard,
+	}, nil
 }
 
 func (s *Server) validNonce(r *http.Request) bool {
@@ -96,9 +284,6 @@ func (s *Server) validNonce(r *http.Request) bool {
 	}
 	formCookie, err := r.Cookie("speccritic_form")
 	if err != nil || formCookie.Value == "" {
-		return false
-	}
-	if err := r.ParseForm(); err != nil {
 		return false
 	}
 	submitted := r.PostFormValue("csrf_token")
