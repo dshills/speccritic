@@ -22,6 +22,7 @@ var allowedAcronyms = map[string]bool{
 	"XML": true, "TCP": true, "UDP": true, "TLS": true, "RAM": true, "SSH": true,
 	"UTC": true, "SDK": true, "JWT": true, "CORS": true, "CRUD": true, "AI": true,
 	"AS": true, "DB": true, "IF": true, "IN": true, "OR": true, "OS": true, "TO": true,
+	"TBD": true, "TODO": true,
 }
 
 func contextRules() []Rule {

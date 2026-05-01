@@ -10,6 +10,7 @@ import (
 	ctxpkg "github.com/dshills/speccritic/internal/context"
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/patch"
+	"github.com/dshills/speccritic/internal/preflight"
 	"github.com/dshills/speccritic/internal/profile"
 	"github.com/dshills/speccritic/internal/redact"
 	"github.com/dshills/speccritic/internal/review"
@@ -62,6 +63,10 @@ type CheckRequest struct {
 	Offline           bool
 	Debug             bool
 	Verbose           bool
+	Preflight         bool
+	PreflightMode     string
+	PreflightProfile  string
+	PreflightIgnore   []string
 	Source            Source
 	ErrWriter         io.Writer
 }
@@ -93,12 +98,6 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		errw = io.Discard
 	}
 
-	llmProvider, llmModel, err := resolveModel(req.Offline, errw)
-	if err != nil {
-		return nil, appError(ErrorInput, err)
-	}
-	modelStr := llmProvider + ":" + llmModel
-
 	logVerbose(errw, req.Verbose, "Loading spec: %s", specLabel(req))
 	s, err := loadSpec(req)
 	if err != nil {
@@ -107,6 +106,26 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 
 	s.Numbered = redact.Redact(s.Numbered)
 	s.Raw = redact.Redact(s.Raw)
+
+	preflightIssues, preflightOnly, err := runPreflight(s, req, errw)
+	if err != nil {
+		return nil, appError(ErrorInput, err)
+	}
+	if preflightOnly {
+		report := buildReport(req, s, preflightIssues, nil, nil, "preflight")
+		return &CheckResult{
+			Report:       report,
+			OriginalSpec: s.Raw,
+			LineCount:    s.LineCount,
+			Model:        "preflight",
+		}, nil
+	}
+
+	llmProvider, llmModel, err := resolveModel(req.Offline, errw)
+	if err != nil {
+		return nil, appError(ErrorInput, err)
+	}
+	modelStr := llmProvider + ":" + llmModel
 
 	logVerbose(errw, req.Verbose, "Loading %d context file(s)", len(req.ContextPaths)+len(req.ContextDocuments))
 	contextFiles, err := loadContext(req)
@@ -147,44 +166,107 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	}
 
 	logVerbose(errw, req.Verbose, "Calling LLM: %s", modelStr)
-	report, actualModel, err := callWithRetry(ctx, provider, llmReq, s.LineCount, req.Verbose, errw)
+	report, responseModel, err := callWithRetry(ctx, provider, llmReq, s.LineCount, req.Verbose, errw)
 	if err != nil {
 		return nil, appError(ErrorModelOutput, err)
 	}
+	report.Issues = mergeIssues(preflightIssues, report.Issues)
 
-	score := review.Score(report.Issues, report.Questions)
-	verdict := review.Verdict(report.Issues, report.Questions)
-	critical, warn, info := review.Counts(report.Issues)
-
-	report.Tool = "speccritic"
-	report.Version = req.Version
-	report.Input = schema.Input{
-		SpecFile:          s.Path,
-		SpecHash:          s.Hash,
-		ContextFiles:      req.ContextPaths,
-		Profile:           req.Profile,
-		Strict:            req.Strict,
-		SeverityThreshold: req.SeverityThreshold,
-	}
-	report.Summary = schema.Summary{
-		Verdict:       verdict,
-		Score:         score,
-		CriticalCount: critical,
-		WarnCount:     warn,
-		InfoCount:     info,
-	}
-	report.Meta = schema.Meta{
-		Model:       actualModel,
-		Temperature: req.Temperature,
-	}
+	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
 
 	return &CheckResult{
 		Report:       report,
 		PatchDiff:    patch.GenerateDiff(s.Raw, report.Patches, errw),
 		OriginalSpec: s.Raw,
 		LineCount:    s.LineCount,
-		Model:        actualModel,
+		Model:        responseModel,
 	}, nil
+}
+
+func runPreflight(s *spec.Spec, req CheckRequest, errw io.Writer) ([]schema.Issue, bool, error) {
+	if !req.Preflight {
+		return nil, false, nil
+	}
+	mode := preflight.Mode(req.PreflightMode)
+	if mode == "" {
+		mode = preflight.ModeWarn
+	}
+	profileName := req.PreflightProfile
+	if profileName == "" {
+		profileName = req.Profile
+	}
+	logVerbose(errw, req.Verbose, "Running preflight: %s", mode)
+	result, err := preflight.Run(s, preflight.Config{
+		Enabled:   true,
+		Mode:      mode,
+		Profile:   profileName,
+		Strict:    req.Strict,
+		IgnoreIDs: req.PreflightIgnore,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	switch mode {
+	case preflight.ModeOnly:
+		return result.Issues, true, nil
+	case preflight.ModeGate:
+		return result.Issues, hasBlockingIssue(result.Issues), nil
+	case preflight.ModeWarn:
+		return result.Issues, false, nil
+	default:
+		return nil, false, fmt.Errorf("invalid preflight mode %q", req.PreflightMode)
+	}
+}
+
+func hasBlockingIssue(issues []schema.Issue) bool {
+	for _, issue := range issues {
+		if issue.Blocking {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeIssues(preflightIssues, llmIssues []schema.Issue) []schema.Issue {
+	if len(preflightIssues) == 0 {
+		return llmIssues
+	}
+	merged := make([]schema.Issue, 0, len(preflightIssues)+len(llmIssues))
+	merged = append(merged, preflightIssues...)
+	merged = append(merged, llmIssues...)
+	return merged
+}
+
+func buildReport(req CheckRequest, s *spec.Spec, issues []schema.Issue, questions []schema.Question, patches []schema.Patch, model string) *schema.Report {
+	score := review.Score(issues, questions)
+	verdict := review.Verdict(issues, questions)
+	critical, warn, info := review.Counts(issues)
+	return &schema.Report{
+		Tool:    "speccritic",
+		Version: req.Version,
+		Input: schema.Input{
+			SpecFile:          s.Path,
+			SpecHash:          s.Hash,
+			ContextFiles:      req.ContextPaths,
+			Profile:           req.Profile,
+			Strict:            req.Strict,
+			SeverityThreshold: req.SeverityThreshold,
+		},
+		Summary: schema.Summary{
+			Verdict:       verdict,
+			Score:         score,
+			CriticalCount: critical,
+			WarnCount:     warn,
+			InfoCount:     info,
+		},
+		Issues:    issues,
+		Questions: questions,
+		Patches:   patches,
+		Meta: schema.Meta{
+			Model:       model,
+			Temperature: req.Temperature,
+		},
+	}
 }
 
 func validateRequest(req CheckRequest) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -46,6 +47,10 @@ type checkFlags struct {
 	offline           bool
 	verbose           bool
 	debug             bool
+	preflight         bool
+	preflightMode     string
+	preflightProfile  string
+	preflightIgnore   []string
 }
 
 func main() {
@@ -81,6 +86,10 @@ func main() {
 	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if SPECCRITIC_MODEL env var is not set; use to enforce explicit model config in CI")
 	f.BoolVar(&flags.verbose, "verbose", false, "Print processing steps to stderr")
 	f.BoolVar(&flags.debug, "debug", false, "Dump full prompt (including spec and context file contents) to stderr; use only in trusted environments")
+	f.BoolVar(&flags.preflight, "preflight", true, "Run deterministic preflight checks before LLM review")
+	f.StringVar(&flags.preflightMode, "preflight-mode", "warn", "Preflight mode: warn, gate, or only")
+	f.StringVar(&flags.preflightProfile, "preflight-profile", "", "Override preflight rule profile")
+	f.StringArrayVar(&flags.preflightIgnore, "preflight-ignore", nil, "Preflight rule ID to suppress (may be repeated)")
 
 	root.AddCommand(checkCmd)
 
@@ -113,6 +122,10 @@ func runCheck(specPath string, flags checkFlags) error {
 		Offline:           flags.offline,
 		Debug:             flags.debug,
 		Verbose:           flags.verbose,
+		Preflight:         flags.preflight,
+		PreflightMode:     flags.preflightMode,
+		PreflightProfile:  flags.preflightProfile,
+		PreflightIgnore:   flags.preflightIgnore,
 		Source:            app.SourceCLI,
 		ErrWriter:         os.Stderr,
 	})
@@ -231,6 +244,11 @@ func validateFlags(flags checkFlags) error {
 	if flags.maxTokens <= 0 {
 		return fmt.Errorf("--max-tokens must be > 0, got %d", flags.maxTokens)
 	}
+	switch flags.preflightMode {
+	case "warn", "gate", "only":
+	default:
+		return fmt.Errorf("--preflight-mode must be warn, gate, or only, got %q", flags.preflightMode)
+	}
 
 	return nil
 }
@@ -293,6 +311,23 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 			}
 		}
 	}
+	envStringArray := func(flagName, envKey string, dst *[]string) {
+		if cmd.Flags().Changed(flagName) {
+			return
+		}
+		v := os.Getenv(envKey)
+		if v == "" {
+			return
+		}
+		var values []string
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				values = append(values, part)
+			}
+		}
+		*dst = values
+	}
 
 	envStr("format", "SPECCRITIC_FORMAT", &flags.format)
 	envStr("profile", "SPECCRITIC_PROFILE", &flags.profileName)
@@ -303,6 +338,10 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 	envInt("max-tokens", "SPECCRITIC_LLM_MAX_TOKENS", &flags.maxTokens)
 	envBool("verbose", "SPECCRITIC_VERBOSE", &flags.verbose)
 	envBool("debug", "SPECCRITIC_DEBUG", &flags.debug)
+	envBool("preflight", "SPECCRITIC_PREFLIGHT", &flags.preflight)
+	envStr("preflight-mode", "SPECCRITIC_PREFLIGHT_MODE", &flags.preflightMode)
+	envStr("preflight-profile", "SPECCRITIC_PREFLIGHT_PROFILE", &flags.preflightProfile)
+	envStringArray("preflight-ignore", "SPECCRITIC_PREFLIGHT_IGNORE", &flags.preflightIgnore)
 }
 
 // logVerbose writes a timestamped message to stderr when verbose mode is enabled.

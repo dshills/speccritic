@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	llmpkg "github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/schema"
 )
@@ -89,6 +91,8 @@ func runCheckFlags() checkFlags {
 		severityThreshold: "info",
 		temperature:       0.2,
 		maxTokens:         16384,
+		preflight:         false,
+		preflightMode:     "warn",
 	}
 }
 
@@ -308,6 +312,76 @@ func TestRunCheck_Offline_NoModelEnv_ExitsCode3(t *testing.T) {
 	}
 }
 
+func TestRunCheck_PreflightOnly_DoesNotRequireModelEnv(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+
+	specFile := filepath.Join(t.TempDir(), "SPEC.md")
+	if err := os.WriteFile(specFile, []byte("TODO define upload validation.\n"), 0o644); err != nil {
+		t.Fatalf("write spec: %v", err)
+	}
+
+	flags := runCheckFlags()
+	flags.preflight = true
+	flags.preflightMode = "only"
+	flags.out = filepath.Join(t.TempDir(), "out.json")
+
+	if err := runCheck(specFile, flags); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+
+	data, err := os.ReadFile(flags.out)
+	if err != nil {
+		t.Fatalf("reading output: %v", err)
+	}
+	var report schema.Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("bad JSON: %v", err)
+	}
+	if report.Meta.Model != "preflight" {
+		t.Fatalf("model = %q, want preflight", report.Meta.Model)
+	}
+	if !reportHasIssue(report.Issues, "PREFLIGHT-TODO-001") {
+		t.Fatalf("issues = %#v, want PREFLIGHT-TODO-001", report.Issues)
+	}
+}
+
+func TestRunCheck_InvalidPreflightMode_ExitsCode3(t *testing.T) {
+	flags := runCheckFlags()
+	flags.preflight = true
+	flags.preflightMode = "fast"
+
+	err := runCheck(specPath("good_spec.md"), flags)
+	if err == nil {
+		t.Fatal("expected error for invalid --preflight-mode")
+	}
+	var ee *exitErr
+	if asExitErr(err, &ee) {
+		if ee.code != 3 {
+			t.Errorf("expected exit code 3, got %d", ee.code)
+		}
+	} else {
+		t.Errorf("expected exitErr, got %T", err)
+	}
+}
+
+func TestApplyEnvDefaultsPreflightIgnore(t *testing.T) {
+	t.Setenv("SPECCRITIC_PREFLIGHT_IGNORE", "PREFLIGHT-TODO-001, PREFLIGHT-WEAK-001")
+
+	cmd := &cobra.Command{Use: "check"}
+	cmd.Flags().StringArray("preflight-ignore", nil, "")
+	flags := runCheckFlags()
+
+	applyEnvDefaults(cmd, &flags)
+
+	if len(flags.preflightIgnore) != 2 {
+		t.Fatalf("preflightIgnore = %#v, want two IDs", flags.preflightIgnore)
+	}
+	if flags.preflightIgnore[0] != "PREFLIGHT-TODO-001" || flags.preflightIgnore[1] != "PREFLIGHT-WEAK-001" {
+		t.Fatalf("preflightIgnore = %#v", flags.preflightIgnore)
+	}
+}
+
 func TestRunCheck_RetryOnInvalidResponse(t *testing.T) {
 	setTestEnv(t)
 
@@ -401,4 +475,13 @@ func TestRunCheck_OutputContainsInputMetadata(t *testing.T) {
 // asExitErr is an errors.As helper for *exitErr.
 func asExitErr(err error, out **exitErr) bool {
 	return errors.As(err, out)
+}
+
+func reportHasIssue(issues []schema.Issue, id string) bool {
+	for _, issue := range issues {
+		if issue.ID == id {
+			return true
+		}
+	}
+	return false
 }
