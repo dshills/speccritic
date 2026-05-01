@@ -7,7 +7,7 @@ SpecCritic evaluates software specifications as formal contracts, identifying de
 ```
 $ speccritic check SPEC.md --verbose
 INFO: Loading spec: SPEC.md
-INFO: Calling LLM: anthropic:claude-sonnet-4-6
+INFO: Calling LLM: anthropic:claude-sonnet-4-20250514
 INFO: Rendering output (format: json)
 
 Verdict: INVALID  Score: 60/100  Critical: 2  Warn: 3  Info: 1
@@ -53,7 +53,7 @@ Set your model and API key when you are ready for a full review:
 
 ```bash
 export SPECCRITIC_LLM_PROVIDER=anthropic
-export SPECCRITIC_LLM_MODEL=claude-sonnet-4-6
+export SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -89,7 +89,7 @@ speccritic check SPEC.md --chunking on --chunk-concurrency 4
 
 ## Web UI
 
-SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the uploaded spec with line numbers, summary metrics, finding annotations, and modal issue details.
+SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the uploaded spec with line numbers, summary metrics, finding annotations, provider/model metadata, and modal issue details.
 
 The web UI is intended for local review sessions. It does not replace the CLI and it does not change CLI behavior. Large uploaded specs use the same automatic chunked review path as the CLI and still render as one merged result.
 
@@ -97,7 +97,7 @@ Set the same provider configuration used by the CLI:
 
 ```bash
 export SPECCRITIC_LLM_PROVIDER=anthropic
-export SPECCRITIC_LLM_MODEL=claude-sonnet-4-6
+export SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -120,7 +120,7 @@ From the browser:
 3. Optionally enable strict mode or disable the default preflight pass.
 4. Click `Check spec`.
 
-The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, and clicking any finding opens its detail in a modal so the annotated document stays in place.
+The left pane shows the configured provider and model before the review starts. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, and clicking any finding opens its detail in a modal so the annotated document stays in place.
 
 Use a different address or port with `WEB_ADDR`:
 
@@ -150,14 +150,14 @@ The Air config builds `./cmd/speccritic-web` into `./tmp/speccritic-web` and run
 
 ### Model Selection
 
-Set `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL`. If unset, SpecCritic defaults to `SPECCRITIC_LLM_PROVIDER=anthropic` and `SPECCRITIC_LLM_MODEL=claude-sonnet-4-6` with a warning to stderr. Preflight-only checks do not require model configuration.
+Set `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL`. If unset, SpecCritic defaults to `SPECCRITIC_LLM_PROVIDER=anthropic` and `SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514` with a warning to stderr. Preflight-only checks do not require model configuration.
 
 Current builds read the split provider/model variables. If you have old shell or CI snippets that set `SPECCRITIC_MODEL=provider:model`, replace them with the two variables above.
 
-| Provider | Env Var | Example |
-|----------|---------|---------|
-| `anthropic` | `ANTHROPIC_API_KEY` | `anthropic:claude-sonnet-4-6` |
-| `openai` | `OPENAI_API_KEY` | `openai:gpt-4o` |
+| Provider | API Key Env Var | Model Value Example |
+|----------|-----------------|-----------------------|
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
+| `openai` | `OPENAI_API_KEY` | `gpt-4o` |
 
 ```bash
 export SPECCRITIC_LLM_PROVIDER=openai
@@ -169,12 +169,14 @@ export OPENAI_API_KEY=sk-...
 
 Preflight is a deterministic local pass that runs before the LLM by default. It is designed to reduce review latency, token usage, and repeated model round trips by catching high-signal defects immediately.
 
+Preflight findings use the same issue schema as LLM findings and participate in the same final scoring and verdict calculation. When the LLM confirms a preflight finding, SpecCritic deduplicates the result and tags the LLM issue with `preflight-confirmed` and `preflight-rule:<ID>` instead of showing the same defect twice.
+
 Modes:
 
 | Mode | Behavior |
 |------|----------|
-| `warn` | Include preflight findings and continue to the LLM. This is the default. |
-| `gate` | Skip the LLM when blocking preflight findings exist. |
+| `warn` | Include preflight findings in the final report and continue to the LLM. This is the default. |
+| `gate` | Skip the LLM when blocking preflight findings exist. A finding is blocking when its rule or finding marks it blocking, and all CRITICAL preflight findings are blocking by default. |
 | `only` | Run only deterministic preflight checks. No model credentials are required. |
 
 Recommended workflow:
@@ -193,11 +195,27 @@ Suppress a known deterministic false positive with `--preflight-ignore`:
 speccritic check SPEC.md --preflight-ignore PREFLIGHT-ACRONYM-001
 ```
 
+Useful preflight behavior:
+
+- Redaction still runs before any prompt is built.
+- `--preflight-mode only` does not require `SPECCRITIC_LLM_PROVIDER`, `SPECCRITIC_LLM_MODEL`, or provider API keys.
+- `--preflight-mode gate` is useful in CI when obvious blocking defects should prevent any provider call.
+- `--preflight-profile` defaults to `--profile`; override it only when deterministic checks need a different profile than the LLM review.
+
 ### Chunked Review
 
 Chunked review is an execution strategy for large specs. It splits the redacted spec by Markdown sections, reviews chunks with bounded parallel LLM calls, validates each chunk against the same schema and evidence rules, optionally runs one cross-section synthesis pass, and merges everything back into one normal report.
 
 Small specs still use the existing single-call path by default.
+
+The final output remains a normal SpecCritic report. Chunk internals are not rendered as separate reports, but chunk-related tags may appear on findings:
+
+| Tag | Meaning |
+|-----|---------|
+| `chunked-review` | Finding came from chunked review rather than the single-call path. |
+| `chunk:<CHUNK-ID>` | Source chunk that emitted the finding. |
+| `cross-section` | Chunk reviewer believed the finding depends on another section. |
+| `synthesis` | Finding came from the cross-section synthesis pass. |
 
 Modes:
 
@@ -222,6 +240,16 @@ speccritic check SPEC.md --chunk-concurrency 1 --chunk-lines 140
 
 Chunking usually reduces wall-clock latency for large specs, but it may increase the total number of provider calls. Provider rate limits, low concurrency, and cross-section synthesis can reduce the speedup. Cross-section defects are still hard: chunk prompts receive a table of contents and summaries, and synthesis can catch contradictions across sections, but no chunking strategy is a substitute for a well-structured spec.
 
+Implementation details:
+
+- Chunking happens after spec loading, redaction, and preflight.
+- `auto` mode uses a deterministic local estimate of one token per four UTF-8 bytes. This is a rough heuristic; code-heavy specs and non-English specs may need a lower `--chunk-token-threshold` or forced `--chunking on`.
+- Chunk reviews cite only their primary line range; overlap lines are context only.
+- Every chunk response must include `meta.chunk_summary`; summaries are used for synthesis and are not shown as user-facing output.
+- Chunk calls run with bounded concurrency.
+- If one chunk fails permanently after the built-in repair attempt, the check fails with model-output/provider error rather than returning partial results.
+- Synthesis runs when chunked review has findings or when the spec is at least `--synthesis-line-threshold` lines. A no-finding chunked review below that threshold skips synthesis.
+
 ### Flags
 
 ```
@@ -235,7 +263,7 @@ speccritic check <spec-file> [flags]
 | `--profile` | `general` | Evaluation profile (see [Profiles](#profiles)) |
 | `--context` | (none) | Context file paths; can be repeated |
 | `--strict` | `false` | Treat all unstated behavior as ambiguous |
-| `--fail-on` | (none) | Exit 2 if verdict ≥ `VALID_WITH_GAPS` or `INVALID` |
+| `--fail-on` | (none) | Exit 2 if verdict meets or exceeds the threshold; valid values are case-sensitive `VALID_WITH_GAPS` or `INVALID` |
 | `--severity-threshold` | `info` | Minimum severity to include in output: `info`, `warn`, `critical` |
 | `--patch-out` | (none) | Write suggested patches to file |
 | `--temperature` | `0.2` | LLM temperature (0.0–2.0) |
@@ -266,6 +294,15 @@ Chunking environment defaults are also supported when the matching flag is not p
 | `SPECCRITIC_CHUNK_TOKEN_THRESHOLD` | `--chunk-token-threshold` |
 | `SPECCRITIC_CHUNK_CONCURRENCY` | `--chunk-concurrency` |
 | `SPECCRITIC_SYNTHESIS_LINE_THRESHOLD` | `--synthesis-line-threshold` |
+
+Validation rules:
+
+- `--chunk-lines` must be greater than `0`.
+- `--chunk-overlap` must be `>= 0` and less than `--chunk-lines`.
+- `--chunk-min-lines` must be `>= 0`.
+- `--chunk-token-threshold` must be greater than `0`.
+- `--chunk-concurrency` must be between `1` and `16`.
+- `--synthesis-line-threshold` must be `>= 0`.
 
 ## Profiles
 
@@ -384,7 +421,7 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
   "questions": [...],
   "patches": [...],
   "meta": {
-    "model": "anthropic:claude-sonnet-4-6",
+    "model": "anthropic:claude-sonnet-4-20250514",
     "temperature": 0.2
   }
 }
@@ -454,7 +491,7 @@ Any behavior not explicitly stated is flagged. Any assumption required to implem
 - name: Check specification
   env:
     SPECCRITIC_LLM_PROVIDER: anthropic
-    SPECCRITIC_LLM_MODEL: claude-sonnet-4-6
+    SPECCRITIC_LLM_MODEL: claude-sonnet-4-20250514
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   run: |
     speccritic check SPEC.md \

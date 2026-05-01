@@ -79,7 +79,7 @@ func specPath(name string) string {
 func setTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("SPECCRITIC_LLM_PROVIDER", "anthropic")
-	t.Setenv("SPECCRITIC_LLM_MODEL", "claude-sonnet-4-6")
+	t.Setenv("SPECCRITIC_LLM_MODEL", llmpkg.DefaultModel)
 	t.Setenv("ANTHROPIC_API_KEY", "test-key-for-integration-tests")
 }
 
@@ -254,7 +254,7 @@ func TestRunCheck_PatchOut(t *testing.T) {
 	// Use a fixture that includes a patch with text that appears in bad_spec.md.
 	const patchFixture = `{
   "id": "msg_patch",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-4-20250514",
   "content": [{"type": "text", "text": "{\"issues\":[{\"id\":\"ISSUE-0001\",\"severity\":\"CRITICAL\",\"category\":\"NON_TESTABLE_REQUIREMENT\",\"title\":\"Vague\",\"description\":\"vague\",\"evidence\":[{\"path\":\"bad_spec.md\",\"line_start\":5,\"line_end\":5,\"quote\":\"fast\"}],\"impact\":\"x\",\"recommendation\":\"y\",\"blocking\":true,\"tags\":[]}],\"questions\":[],\"patches\":[{\"issue_id\":\"ISSUE-0001\",\"before\":\"This system must perform well and be fast.\",\"after\":\"This system SHALL respond with P99 latency ≤ 200 ms.\"}]}"}],
   "stop_reason": "end_turn"
 }`

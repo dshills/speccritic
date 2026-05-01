@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dshills/speccritic/internal/app"
+	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/schema"
 )
 
@@ -241,7 +242,7 @@ func TestConfiguredModelDisplay(t *testing.T) {
 	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
 	t.Setenv("SPECCRITIC_LLM_MODEL", "")
 	provider, model := configuredModelDisplay()
-	if provider != "anthropic" || model != "claude-sonnet-4-6" {
+	if provider != llm.DefaultProvider || model != llm.DefaultModel {
 		t.Fatalf("default configured model = %q/%q", provider, model)
 	}
 

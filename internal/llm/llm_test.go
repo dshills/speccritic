@@ -485,7 +485,7 @@ func TestNewProvider_InvalidFormat(t *testing.T) {
 
 func TestNewProvider_Anthropic_NoKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
-	_, err := NewProvider("anthropic:claude-sonnet-4-6")
+	_, err := NewProvider(DefaultProvider + ":" + DefaultModel)
 	if err == nil {
 		t.Error("expected error when ANTHROPIC_API_KEY not set, got nil")
 	}
@@ -501,7 +501,7 @@ func TestNewProvider_OpenAI_NoKey(t *testing.T) {
 
 func TestNewProvider_Anthropic_WithKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-test-key-for-construction-only")
-	p, err := NewProvider("anthropic:claude-sonnet-4-6")
+	p, err := NewProvider(DefaultProvider + ":" + DefaultModel)
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

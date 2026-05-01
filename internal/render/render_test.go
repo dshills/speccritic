@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/schema"
 )
 
@@ -35,7 +36,7 @@ func sampleReport() *schema.Report {
 		},
 		Questions: []schema.Question{},
 		Patches:   []schema.Patch{},
-		Meta:      schema.Meta{Model: "anthropic:claude-sonnet-4-6", Temperature: 0.2},
+		Meta:      schema.Meta{Model: llm.DefaultProvider + ":" + llm.DefaultModel, Temperature: 0.2},
 	}
 }
 

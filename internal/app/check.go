@@ -620,8 +620,8 @@ func resolveModel(offline bool, errw io.Writer) (string, string, error) {
 		return "", "", fmt.Errorf("SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL must both be set or both be unset")
 	}
 	if llmProvider == "" {
-		llmProvider = "anthropic"
-		llmModel = "claude-sonnet-4-6"
+		llmProvider = llm.DefaultProvider
+		llmModel = llm.DefaultModel
 		fmt.Fprintf(errw, "WARN: SPECCRITIC_LLM_PROVIDER/SPECCRITIC_LLM_MODEL not set, using default %s:%s\n", llmProvider, llmModel)
 	}
 	return llmProvider, llmModel, nil

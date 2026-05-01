@@ -17,6 +17,12 @@ var sharedHTTPClient = &http.Client{
 // defaultMaxTokens is the fallback when Request.MaxTokens is not set.
 const defaultMaxTokens = 16384
 
+const (
+	// DefaultProvider and DefaultModel are used when model configuration is omitted.
+	DefaultProvider = "anthropic"
+	DefaultModel    = "claude-sonnet-4-20250514"
+)
+
 // Request holds the parameters for an LLM completion call.
 //
 // UserPromptCachedPrefix is an optional stable prefix prepended to the user
@@ -49,11 +55,11 @@ type Provider interface {
 
 // NewProvider parses a "provider:model" string and returns the appropriate Provider.
 // The API key is read from the environment at construction time and validated immediately.
-// Example: "anthropic:claude-sonnet-4-6" or "openai:gpt-4o".
+// Example: "anthropic:claude-sonnet-4-20250514" or "openai:gpt-4o".
 func NewProvider(providerModel string) (Provider, error) {
 	parts := strings.SplitN(providerModel, ":", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return nil, fmt.Errorf("invalid model format %q: expected provider:model (e.g. anthropic:claude-sonnet-4-6)", providerModel)
+		return nil, fmt.Errorf("invalid model format %q: expected provider:model (e.g. anthropic:claude-sonnet-4-20250514)", providerModel)
 	}
 	switch parts[0] {
 	case "anthropic":

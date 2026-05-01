@@ -18,6 +18,7 @@ import (
 
 	"github.com/dshills/speccritic/internal/app"
 	"github.com/dshills/speccritic/internal/chunk"
+	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/schema"
 )
@@ -116,7 +117,7 @@ func configuredModelDisplay() (string, string) {
 	provider := strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_PROVIDER"))
 	model := strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_MODEL"))
 	if provider == "" && model == "" {
-		return "anthropic", "claude-sonnet-4-6"
+		return llm.DefaultProvider, llm.DefaultModel
 	}
 	if provider == "" {
 		provider = defaultProviderDisplay
