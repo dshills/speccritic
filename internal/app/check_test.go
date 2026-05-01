@@ -183,7 +183,7 @@ func TestCheckerPreflightWarnCallsProviderAndMergesIssues(t *testing.T) {
 	result, err := checker.Check(context.Background(), CheckRequest{
 		Version:           "test",
 		SpecName:          "SPEC.md",
-		SpecText:          "TODO define retry behavior.\n",
+		SpecText:          "TODO define upload validation.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
 		Temperature:       0.2,
@@ -203,6 +203,88 @@ func TestCheckerPreflightWarnCallsProviderAndMergesIssues(t *testing.T) {
 	}
 }
 
+func TestCheckerPreflightWarnSendsKnownFindingsToProvider(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &fakeProvider{content: `{"issues":[],"questions":[],"patches":[]}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          completeSpecWithRequirement("TODO define upload validation."),
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Preflight:         true,
+		PreflightMode:     "warn",
+		Source:            SourceCLI,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(provider.reqs) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.reqs))
+	}
+	prompt := provider.reqs[0].UserPrompt
+	for _, want := range []string{"<known_preflight_findings>", "PREFLIGHT-TODO-001", "duplicates:<PREFLIGHT-ID>"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestCheckerPreflightDuplicateTagKeepsLLMIssueCanonical(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &fakeProvider{content: `{
+		"issues":[{
+			"id":"ISSUE-0001",
+			"severity":"CRITICAL",
+			"category":"UNSPECIFIED_CONSTRAINT",
+			"title":"Placeholder text remains in spec",
+			"description":"The model confirms the placeholder.",
+			"evidence":[{"path":"SPEC.md","line_start":11,"line_end":11,"quote":"TODO define upload validation."}],
+			"impact":"Cannot implement safely.",
+			"recommendation":"Replace the placeholder.",
+			"blocking":true,
+			"tags":["duplicates:PREFLIGHT-TODO-001"]
+		}],
+		"questions":[],
+		"patches":[]
+	}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          completeSpecWithRequirement("TODO define upload validation."),
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Preflight:         true,
+		PreflightMode:     "warn",
+		Source:            SourceCLI,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(result.Report.Issues) != 1 {
+		t.Fatalf("issues = %#v, want only confirmed LLM issue", result.Report.Issues)
+	}
+	issue := result.Report.Issues[0]
+	if issue.ID != "ISSUE-0001" {
+		t.Fatalf("issue ID = %s, want ISSUE-0001", issue.ID)
+	}
+	if !hasIssueTag(issue.Tags, "preflight-confirmed") || !hasIssueTag(issue.Tags, "preflight-rule:PREFLIGHT-TODO-001") {
+		t.Fatalf("tags = %#v, want preflight confirmation tags", issue.Tags)
+	}
+}
+
 func hasIssue(issues []schema.Issue, id string) bool {
 	for _, issue := range issues {
 		if issue.ID == id {
@@ -210,4 +292,32 @@ func hasIssue(issues []schema.Issue, id string) bool {
 		}
 	}
 	return false
+}
+
+func hasIssueTag(tags []string, want string) bool {
+	for _, tag := range tags {
+		if tag == want {
+			return true
+		}
+	}
+	return false
+}
+
+func completeSpecWithRequirement(requirement string) string {
+	return strings.Join([]string{
+		"# Service Spec",
+		"",
+		"## Purpose",
+		"Define service behavior.",
+		"",
+		"## Non-goals",
+		"Billing is out of scope.",
+		"",
+		"## Requirements",
+		"",
+		requirement,
+		"",
+		"## Acceptance Criteria",
+		"Each requirement has an objective test.",
+	}, "\n")
 }

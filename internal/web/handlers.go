@@ -466,6 +466,15 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		maxTokens = v
 	}
 	preflightEnabled := formBoolDefault(r, "preflight", true)
+	preflightMode := r.FormValue("preflight_mode")
+	if preflightMode == "" {
+		preflightMode = "warn"
+	}
+	switch preflightMode {
+	case "warn", "gate", "only":
+	default:
+		return app.CheckRequest{}, fmt.Errorf("invalid preflight mode %q", preflightMode)
+	}
 
 	return app.CheckRequest{
 		SpecName:          specName,
@@ -476,7 +485,7 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		Temperature:       temperature,
 		MaxTokens:         maxTokens,
 		Preflight:         preflightEnabled,
-		PreflightMode:     "warn",
+		PreflightMode:     preflightMode,
 		PreflightProfile:  profile,
 		Source:            app.SourceWeb,
 		ErrWriter:         io.Discard,

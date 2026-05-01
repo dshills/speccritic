@@ -261,6 +261,29 @@ func TestCheckStubAllowsDisablingPreflight(t *testing.T) {
 	}
 }
 
+func TestCheckStubAcceptsPreflightMode(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{"preflight_mode": "gate"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if checker.req.PreflightMode != "gate" {
+		t.Fatalf("preflight mode = %q, want gate", checker.req.PreflightMode)
+	}
+}
+
 func TestIssueDetail(t *testing.T) {
 	checker := &fakeChecker{}
 	server, err := NewServerWithChecker(DefaultConfig(), checker)

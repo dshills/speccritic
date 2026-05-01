@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	ctxpkg "github.com/dshills/speccritic/internal/context"
@@ -42,6 +43,8 @@ const (
 	SourceCLI Source = "cli"
 	SourceWeb Source = "web"
 )
+
+const maxPreflightPromptFindings = 20
 
 type ContextDocument struct {
 	Name string
@@ -141,6 +144,10 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 
 	sysPrompt := llm.BuildSystemPrompt(prof, req.Strict)
 	userPrefix, userSpec := llm.BuildUserPrompt(s, contextFiles)
+	preflightContext, knownPreflightIDs := buildPreflightPromptContext(preflightIssues)
+	if preflightContext != "" {
+		userSpec = preflightContext + "\n" + userSpec
+	}
 
 	llmReq := &llm.Request{
 		SystemPrompt:           sysPrompt,
@@ -170,7 +177,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	if err != nil {
 		return nil, appError(ErrorModelOutput, err)
 	}
-	report.Issues = mergeIssues(preflightIssues, report.Issues)
+	report.Issues = mergeIssues(preflightIssues, report.Issues, knownPreflightIDs)
 
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
 
@@ -227,14 +234,200 @@ func hasBlockingIssue(issues []schema.Issue) bool {
 	return false
 }
 
-func mergeIssues(preflightIssues, llmIssues []schema.Issue) []schema.Issue {
+func mergeIssues(preflightIssues, llmIssues []schema.Issue, knownPreflightIDs map[string]bool) []schema.Issue {
 	if len(preflightIssues) == 0 {
-		return llmIssues
+		return cleanDuplicateTags(llmIssues, knownPreflightIDs)
+	}
+	llmIssues = cleanDuplicateTags(llmIssues, knownPreflightIDs)
+	consumed := make(map[int]bool)
+	confirmedLLM := make([]schema.Issue, 0, len(llmIssues))
+	for _, issue := range llmIssues {
+		if idx := duplicatePreflightIndex(issue, preflightIssues, knownPreflightIDs, consumed); idx >= 0 {
+			consumed[idx] = true
+			issue = markPreflightConfirmed(issue, preflightIssues[idx])
+		}
+		confirmedLLM = append(confirmedLLM, issue)
 	}
 	merged := make([]schema.Issue, 0, len(preflightIssues)+len(llmIssues))
-	merged = append(merged, preflightIssues...)
-	merged = append(merged, llmIssues...)
+	for i, issue := range preflightIssues {
+		if !consumed[i] {
+			merged = append(merged, issue)
+		}
+	}
+	merged = append(merged, confirmedLLM...)
 	return merged
+}
+
+func buildPreflightPromptContext(issues []schema.Issue) (string, map[string]bool) {
+	if len(issues) == 0 {
+		return "", nil
+	}
+	sorted := append([]schema.Issue(nil), issues...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if severityRank(sorted[i].Severity) != severityRank(sorted[j].Severity) {
+			return severityRank(sorted[i].Severity) > severityRank(sorted[j].Severity)
+		}
+		if issueLineStart(sorted[i]) != issueLineStart(sorted[j]) {
+			return issueLineStart(sorted[i]) < issueLineStart(sorted[j])
+		}
+		return sorted[i].ID < sorted[j].ID
+	})
+	limit := len(sorted)
+	if limit > maxPreflightPromptFindings {
+		limit = maxPreflightPromptFindings
+	}
+	known := make(map[string]bool, limit)
+	var sb strings.Builder
+	sb.WriteString("<known_preflight_findings>\n")
+	sb.WriteString("These deterministic findings were found locally before the LLM call. Do not repeat them unless you can add materially new information. If your issue duplicates one, add tag duplicates:<PREFLIGHT-ID> using only an ID listed below.\n")
+	for _, issue := range sorted[:limit] {
+		known[issue.ID] = true
+		fmt.Fprintf(&sb, "- %s %s %s L%d: %s\n", issue.ID, issue.Severity, issue.Category, issueLineStart(issue), issue.Title)
+	}
+	if len(sorted) > limit {
+		counts := make(map[string]int)
+		for _, issue := range sorted[limit:] {
+			counts[preflightGroup(issue)]++
+		}
+		groups := make([]string, 0, len(counts))
+		for group := range counts {
+			groups = append(groups, group)
+		}
+		sort.Strings(groups)
+		sb.WriteString("Additional deterministic findings omitted from this prompt:\n")
+		for _, group := range groups {
+			fmt.Fprintf(&sb, "- %s: %d\n", group, counts[group])
+		}
+	}
+	sb.WriteString("</known_preflight_findings>\n")
+	return sb.String(), known
+}
+
+func cleanDuplicateTags(issues []schema.Issue, knownPreflightIDs map[string]bool) []schema.Issue {
+	if len(knownPreflightIDs) == 0 {
+		return issues
+	}
+	out := append([]schema.Issue(nil), issues...)
+	for i := range out {
+		tags := make([]string, 0, len(out[i].Tags))
+		for _, tag := range out[i].Tags {
+			if id, ok := duplicateTagID(tag); ok && !knownPreflightIDs[id] {
+				continue
+			}
+			tags = append(tags, tag)
+		}
+		out[i].Tags = tags
+	}
+	return out
+}
+
+func duplicatePreflightIndex(issue schema.Issue, preflightIssues []schema.Issue, knownPreflightIDs map[string]bool, consumed map[int]bool) int {
+	for _, tag := range issue.Tags {
+		id, ok := duplicateTagID(tag)
+		if !ok || !knownPreflightIDs[id] {
+			continue
+		}
+		if idx := findPreflightByIDAndEvidence(id, issue, preflightIssues, consumed); idx >= 0 {
+			return idx
+		}
+	}
+	for i, preflightIssue := range preflightIssues {
+		if consumed[i] {
+			continue
+		}
+		if deterministicDuplicate(preflightIssue, issue) {
+			return i
+		}
+	}
+	return -1
+}
+
+func findPreflightByIDAndEvidence(id string, issue schema.Issue, preflightIssues []schema.Issue, consumed map[int]bool) int {
+	fallback := -1
+	for i, preflightIssue := range preflightIssues {
+		if consumed[i] || preflightIssue.ID != id {
+			continue
+		}
+		if fallback < 0 {
+			fallback = i
+		}
+		if evidenceOverlaps(preflightIssue, issue) {
+			return i
+		}
+	}
+	return fallback
+}
+
+func deterministicDuplicate(preflightIssue, llmIssue schema.Issue) bool {
+	return preflightIssue.Category == llmIssue.Category &&
+		preflightIssue.Title == llmIssue.Title &&
+		evidenceOverlaps(preflightIssue, llmIssue)
+}
+
+func evidenceOverlaps(a, b schema.Issue) bool {
+	for _, left := range a.Evidence {
+		for _, right := range b.Evidence {
+			if left.LineStart <= right.LineEnd && right.LineStart <= left.LineEnd {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func markPreflightConfirmed(issue, preflightIssue schema.Issue) schema.Issue {
+	issue.Tags = appendUnique(append([]string(nil), issue.Tags...), "preflight-confirmed", "preflight-rule:"+preflightIssue.ID)
+	return issue
+}
+
+func duplicateTagID(tag string) (string, bool) {
+	id, ok := strings.CutPrefix(tag, "duplicates:")
+	return id, ok && id != ""
+}
+
+func preflightGroup(issue schema.Issue) string {
+	for _, tag := range issue.Tags {
+		if group, ok := strings.CutPrefix(tag, "preflight-rule:"); ok {
+			return group
+		}
+	}
+	return "unknown"
+}
+
+func issueLineStart(issue schema.Issue) int {
+	if len(issue.Evidence) == 0 {
+		return 0
+	}
+	return issue.Evidence[0].LineStart
+}
+
+func severityRank(severity schema.Severity) int {
+	switch severity {
+	case schema.SeverityCritical:
+		return 2
+	case schema.SeverityWarn:
+		return 1
+	case schema.SeverityInfo:
+		return 0
+	default:
+		return -1
+	}
+}
+
+func appendUnique(tags []string, values ...string) []string {
+	for _, value := range values {
+		exists := false
+		for _, tag := range tags {
+			if tag == value {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			tags = append(tags, value)
+		}
+	}
+	return tags
 }
 
 func buildReport(req CheckRequest, s *spec.Spec, issues []schema.Issue, questions []schema.Question, patches []schema.Patch, model string) *schema.Report {
