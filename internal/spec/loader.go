@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+var lineEndingReplacer = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+
 // Spec holds a loaded specification file with derived metadata.
 type Spec struct {
 	Path      string
@@ -54,39 +56,39 @@ func New(path, raw string) *Spec {
 // along with the total line count. A trailing empty segment after a final
 // newline is counted but not emitted as a spurious numbered line.
 func addLineNumbers(content string) (string, int) {
-	if content == "" {
+	lines := Lines(content)
+	if len(lines) == 0 {
 		return "", 0
 	}
 
 	var b strings.Builder
 	// Grow once: each emitted line adds ~6 bytes of prefix ("L" + digits + ": ").
-	nlCount := strings.Count(content, "\n")
-	b.Grow(len(content) + (nlCount+1)*6)
+	b.Grow(len(content) + len(lines)*6)
 
 	var numBuf [20]byte
-	lineNo := 0
-	start := 0
-	emit := func(seg string) {
-		if lineNo > 0 {
+	for i, line := range lines {
+		if i > 0 {
 			b.WriteByte('\n')
 		}
-		lineNo++
 		b.WriteByte('L')
-		b.Write(strconv.AppendInt(numBuf[:0], int64(lineNo), 10))
+		b.Write(strconv.AppendInt(numBuf[:0], int64(i+1), 10))
 		b.WriteString(": ")
-		b.WriteString(seg)
+		b.WriteString(line)
 	}
+	return b.String(), len(lines)
+}
 
-	for i := 0; i < len(content); i++ {
-		if content[i] == '\n' {
-			emit(content[start:i])
-			start = i + 1
-		}
+// Lines returns the canonical line view used for prompt numbering and web annotations.
+// It normalizes CRLF/CR to LF and treats a trailing newline as a terminator,
+// not as an additional empty line.
+func Lines(content string) []string {
+	if content == "" {
+		return nil
 	}
-	// Trailing segment (content after final '\n', or whole string if none).
-	// Drop it when empty to match the original Split/Join semantics.
-	if start < len(content) {
-		emit(content[start:])
+	content = lineEndingReplacer.Replace(content)
+	trimmed := strings.TrimSuffix(content, "\n")
+	if trimmed == "" {
+		return []string{""}
 	}
-	return b.String(), lineNo
+	return strings.Split(trimmed, "\n")
 }
