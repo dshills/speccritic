@@ -1,0 +1,48 @@
+{{ define "index.html" }}
+<main class="shell">
+  <section class="input-pane" aria-labelledby="check-heading">
+    <h1 id="check-heading">SpecCritic</h1>
+    <form method="post" action="/checks" enctype="multipart/form-data" hx-post="/checks" hx-target="#status" hx-swap="innerHTML">
+      <input type="hidden" name="csrf_token" value="{{ .Nonce }}">
+
+      <label for="spec_text">Spec text</label>
+      <textarea id="spec_text" name="spec_text" rows="18" spellcheck="false"></textarea>
+
+      <label for="spec_file">Spec file</label>
+      <input id="spec_file" name="spec_file" type="file" accept=".md,.txt,text/markdown,text/plain">
+
+      <div class="controls">
+        <label for="profile">Profile</label>
+        <select id="profile" name="profile">
+          <option value="general">general</option>
+          <option value="backend-api">backend-api</option>
+          <option value="regulated-system">regulated-system</option>
+          <option value="event-driven">event-driven</option>
+        </select>
+
+        <label for="severity_threshold">Severity</label>
+        <select id="severity_threshold" name="severity_threshold">
+          <option value="info">info</option>
+          <option value="warn">warn</option>
+          <option value="critical">critical</option>
+        </select>
+
+        <label class="checkbox">
+          <input name="strict" type="checkbox" value="true">
+          Strict
+        </label>
+      </div>
+
+      <button type="submit">Check spec</button>
+    </form>
+  </section>
+
+  <section class="result-pane" aria-label="Review result">
+    <div id="status" aria-live="polite"></div>
+    <div id="summary"></div>
+    <div id="issues"></div>
+    <div id="annotated-spec"></div>
+    <div id="issue-detail"></div>
+  </section>
+</main>
+{{ end }}
