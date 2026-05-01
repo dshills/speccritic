@@ -122,10 +122,6 @@ func RunRules(s *spec.Spec, cfg Config, rules []Rule) (Result, error) {
 	return Result{Issues: issues}, nil
 }
 
-func BuiltinRules() []Rule {
-	return nil
-}
-
 func validateConfig(cfg Config) error {
 	switch cfg.Mode {
 	case "", ModeWarn, ModeGate, ModeOnly:
