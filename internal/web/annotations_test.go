@@ -62,6 +62,23 @@ func TestBuildAnnotatedSpecIncludesQuestions(t *testing.T) {
 	}
 }
 
+func TestBuildAnnotatedSpecMarksPreflightRefs(t *testing.T) {
+	report := &schema.Report{Issues: []schema.Issue{{
+		ID:       "PREFLIGHT-TODO-001",
+		Severity: schema.SeverityCritical,
+		Title:    "Placeholder",
+		Evidence: []schema.Evidence{{LineStart: 1, LineEnd: 1}},
+		Tags:     []string{"preflight"},
+	}}}
+	annotated, err := BuildAnnotatedSpec("one", report, schema.SeverityInfo)
+	if err != nil {
+		t.Fatalf("BuildAnnotatedSpec: %v", err)
+	}
+	if !annotated.Lines[0].FindingRefs[0].IsPreflight {
+		t.Fatalf("preflight ref = false, want true")
+	}
+}
+
 func TestBuildAnnotatedSpecRejectsInvalidEvidence(t *testing.T) {
 	report := &schema.Report{Issues: []schema.Issue{{
 		ID:       "ISSUE-0001",

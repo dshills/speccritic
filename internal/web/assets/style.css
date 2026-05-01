@@ -341,7 +341,7 @@ form[aria-busy="true"] button:disabled {
 
 .finding-link {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto auto minmax(0, 1fr);
   align-items: center;
   gap: 9px;
   min-height: 40px;
@@ -381,6 +381,26 @@ form[aria-busy="true"] button:disabled {
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0;
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  min-width: 66px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.source-chip-empty {
+  visibility: hidden;
 }
 
 .finding-link.severity-CRITICAL {

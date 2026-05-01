@@ -8,6 +8,8 @@ import (
 	"github.com/dshills/speccritic/internal/spec"
 )
 
+const preflightTag = "preflight"
+
 type AnnotatedSpec struct {
 	Lines []AnnotatedLine
 }
@@ -21,10 +23,11 @@ type AnnotatedLine struct {
 }
 
 type FindingRef struct {
-	ID       string
-	Kind     string
-	Severity schema.Severity
-	Title    string
+	ID          string
+	Kind        string
+	Severity    schema.Severity
+	Title       string
+	IsPreflight bool
 }
 
 func BuildAnnotatedSpec(specText string, report *schema.Report, threshold schema.Severity) (AnnotatedSpec, error) {
@@ -46,7 +49,7 @@ func BuildAnnotatedSpec(specText string, report *schema.Report, threshold schema
 		if !meetsThreshold(issue.Severity, threshold) {
 			continue
 		}
-		ref := FindingRef{ID: issue.ID, Kind: "issue", Severity: issue.Severity, Title: issue.Title}
+		ref := FindingRef{ID: issue.ID, Kind: "issue", Severity: issue.Severity, Title: issue.Title, IsPreflight: isPreflightTags(issue.Tags)}
 		for _, ev := range issue.Evidence {
 			if err := addRef(lines, lineCount, ev, ref); err != nil {
 				return AnnotatedSpec{}, err
@@ -123,4 +126,17 @@ func severityRank(severity schema.Severity) int {
 	default:
 		return -1
 	}
+}
+
+func hasTag(tags []string, want string) bool {
+	for _, tag := range tags {
+		if tag == want {
+			return true
+		}
+	}
+	return false
+}
+
+func isPreflightTags(tags []string) bool {
+	return hasTag(tags, preflightTag)
 }

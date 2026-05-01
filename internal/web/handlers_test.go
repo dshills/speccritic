@@ -24,6 +24,25 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 	if f.err != nil {
 		return nil, f.err
 	}
+	issues := []schema.Issue{{
+		ID:          "ISSUE-0001",
+		Severity:    schema.SeverityCritical,
+		Category:    schema.CategoryNonTestableRequirement,
+		Title:       "Vague",
+		Description: "desc",
+		Evidence:    []schema.Evidence{{LineStart: 1, LineEnd: 1}},
+	}}
+	if req.Preflight {
+		issues = append([]schema.Issue{{
+			ID:          "PREFLIGHT-TODO-001",
+			Severity:    schema.SeverityCritical,
+			Category:    schema.CategoryUnspecifiedConstraint,
+			Title:       "Placeholder",
+			Description: "desc",
+			Evidence:    []schema.Evidence{{LineStart: 1, LineEnd: 1}},
+			Tags:        []string{"preflight", "preflight-rule:PREFLIGHT-TODO-001"},
+		}}, issues...)
+	}
 	return &app.CheckResult{
 		OriginalSpec: req.SpecText,
 		PatchDiff:    "# patch\n",
@@ -32,14 +51,7 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 			Version: "test",
 			Input:   schema.Input{SeverityThreshold: req.SeverityThreshold},
 			Summary: schema.Summary{Verdict: schema.VerdictInvalid, Score: 80, CriticalCount: 1},
-			Issues: []schema.Issue{{
-				ID:          "ISSUE-0001",
-				Severity:    schema.SeverityCritical,
-				Category:    schema.CategoryNonTestableRequirement,
-				Title:       "Vague",
-				Description: "desc",
-				Evidence:    []schema.Evidence{{LineStart: 1, LineEnd: 1}},
-			}},
+			Issues:  issues,
 		},
 	}, nil
 }
@@ -114,7 +126,7 @@ func TestIndex(t *testing.T) {
 		t.Fatal("expected session cookie")
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", `name="spec_file"`, `required`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
+	for _, want := range []string{"SpecCritic", `name="spec_file"`, `required`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
@@ -180,6 +192,9 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	if checker.req.SpecText != "The system must work." {
 		t.Fatalf("checker spec text = %q", checker.req.SpecText)
 	}
+	if !checker.req.Preflight || checker.req.PreflightMode != "warn" || checker.req.PreflightProfile != checker.req.Profile {
+		t.Fatalf("preflight request = enabled %t mode %q profile %q check profile %q", checker.req.Preflight, checker.req.PreflightMode, checker.req.PreflightProfile, checker.req.Profile)
+	}
 	if !strings.Contains(rec.Body.String(), "INVALID") {
 		t.Fatalf("response missing verdict: %s", rec.Body.String())
 	}
@@ -188,6 +203,9 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `data-modal-target="#issue-modal"`) {
 		t.Fatalf("response missing modal issue target: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Preflight") {
+		t.Fatalf("response missing preflight label: %s", rec.Body.String())
 	}
 }
 
@@ -214,6 +232,32 @@ func TestCheckStubRequiresUploadedSpec(t *testing.T) {
 	}
 	if checker.req.SpecText != "" {
 		t.Fatalf("checker should not be called, got spec %q", checker.req.SpecText)
+	}
+}
+
+func TestCheckStubAllowsDisablingPreflight(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{"preflight": "false"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if checker.req.Preflight {
+		t.Fatal("preflight = true, want false")
+	}
+	if strings.Contains(rec.Body.String(), "Preflight") {
+		t.Fatalf("response should not include preflight label: %s", rec.Body.String())
 	}
 }
 
@@ -254,12 +298,19 @@ func TestIssueDetail(t *testing.T) {
 	}
 }
 
-func multipartSpecRequest(t *testing.T, specText string) (*bytes.Buffer, string) {
+func multipartSpecRequest(t *testing.T, specText string, fields ...map[string]string) (*bytes.Buffer, string) {
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	if err := writer.WriteField("csrf_token", "same"); err != nil {
 		t.Fatalf("write csrf field: %v", err)
+	}
+	for _, group := range fields {
+		for name, value := range group {
+			if err := writer.WriteField(name, value); err != nil {
+				t.Fatalf("write %s field: %v", name, err)
+			}
+		}
 	}
 	part, err := writer.CreateFormFile("spec_file", "SPEC.md")
 	if err != nil {

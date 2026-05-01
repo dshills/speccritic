@@ -7,6 +7,7 @@
       <li>
         <a class="finding-link severity-{{ .Severity }}" href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" data-modal-target="#issue-modal">
           <span class="severity-chip">{{ .Severity }}</span>
+          {{ if isPreflight .Tags }}<span class="source-chip">Preflight</span>{{ else }}<span class="source-chip source-chip-empty" aria-hidden="true"></span>{{ end }}
           <span class="finding-id">{{ .ID }}</span>
           <span class="finding-title">{{ .Title }}</span>
         </a>

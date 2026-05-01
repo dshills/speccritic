@@ -465,6 +465,7 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		}
 		maxTokens = v
 	}
+	preflightEnabled := formBoolDefault(r, "preflight", true)
 
 	return app.CheckRequest{
 		SpecName:          specName,
@@ -474,9 +475,28 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		SeverityThreshold: severity,
 		Temperature:       temperature,
 		MaxTokens:         maxTokens,
+		Preflight:         preflightEnabled,
+		PreflightMode:     "warn",
+		PreflightProfile:  profile,
 		Source:            app.SourceWeb,
 		ErrWriter:         io.Discard,
 	}, nil
+}
+
+func formBoolDefault(r *http.Request, name string, def bool) bool {
+	values, ok := r.PostForm[name]
+	if !ok && r.MultipartForm != nil {
+		values, ok = r.MultipartForm.Value[name]
+	}
+	if !ok {
+		return def
+	}
+	for _, value := range values {
+		if value == "true" {
+			return true
+		}
+	}
+	return false
 }
 
 func readUploadedSpec(file multipart.File, maxBytes int64) ([]byte, error) {
