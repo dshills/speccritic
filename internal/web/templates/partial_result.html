@@ -1,16 +1,7 @@
 {{ define "partial_result.html" }}
 <section class="result-summary" aria-label="Check result">
-  <p>Check {{ .ID }}</p>
-  <h2>{{ .Result.Report.Summary.Verdict }}</h2>
-  <dl>
-    <dt>Score</dt>
-    <dd>{{ .Result.Report.Summary.Score }}</dd>
-    <dt>Critical</dt>
-    <dd>{{ .Result.Report.Summary.CriticalCount }}</dd>
-    <dt>Warn</dt>
-    <dd>{{ .Result.Report.Summary.WarnCount }}</dd>
-    <dt>Info</dt>
-    <dd>{{ .Result.Report.Summary.InfoCount }}</dd>
-  </dl>
+  {{ template "partial_summary.html" . }}
+  {{ template "partial_issue_list.html" . }}
+  {{ template "partial_annotated_spec.html" . }}
 </section>
 {{ end }}

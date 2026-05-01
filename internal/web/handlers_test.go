@@ -23,8 +23,18 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 		return nil, f.err
 	}
 	return &app.CheckResult{
+		OriginalSpec: req.SpecText,
 		Report: &schema.Report{
-			Summary: schema.Summary{Verdict: schema.VerdictValid, Score: 100},
+			Input:   schema.Input{SeverityThreshold: req.SeverityThreshold},
+			Summary: schema.Summary{Verdict: schema.VerdictInvalid, Score: 80, CriticalCount: 1},
+			Issues: []schema.Issue{{
+				ID:          "ISSUE-0001",
+				Severity:    schema.SeverityCritical,
+				Category:    schema.CategoryNonTestableRequirement,
+				Title:       "Vague",
+				Description: "desc",
+				Evidence:    []schema.Evidence{{LineStart: 1, LineEnd: 1}},
+			}},
 		},
 	}, nil
 }
@@ -112,7 +122,44 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	if checker.req.SpecText != "The system must work." {
 		t.Fatalf("checker spec text = %q", checker.req.SpecText)
 	}
-	if !strings.Contains(rec.Body.String(), "VALID") {
+	if !strings.Contains(rec.Body.String(), "INVALID") {
 		t.Fatalf("response missing verdict: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ISSUE-0001") {
+		t.Fatalf("response missing issue: %s", rec.Body.String())
+	}
+}
+
+func TestIssueDetail(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	form := url.Values{"csrf_token": {"same"}, "spec_text": {"The system must work."}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post status = %d", rec.Code)
+	}
+
+	if len(server.store.order) == 0 {
+		t.Fatal("stored check ID missing")
+	}
+	id := server.store.order[0]
+
+	detail := httptest.NewRecorder()
+	detailReq := httptest.NewRequest(http.MethodGet, "/checks/"+id+"/issues/ISSUE-0001", nil)
+	server.Handler().ServeHTTP(detail, detailReq)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("detail status = %d", detail.Code)
+	}
+	if !strings.Contains(detail.Body.String(), "Vague") {
+		t.Fatalf("detail missing issue: %s", detail.Body.String())
 	}
 }

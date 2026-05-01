@@ -1,0 +1,25 @@
+{{ define "partial_issue_list.html" }}
+<section class="issue-list" aria-label="Issues and questions">
+  <h3>Findings</h3>
+  {{ if or .Issues .Questions }}
+    <ul>
+      {{ range .Issues }}
+      <li>
+        <a href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" hx-swap="innerHTML">
+          <strong>{{ .Severity }}</strong> {{ .ID }} {{ .Title }}
+        </a>
+      </li>
+      {{ end }}
+      {{ range .Questions }}
+      <li>
+        <a href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" hx-swap="innerHTML">
+          <strong>{{ .Severity }}</strong> {{ .ID }} {{ .Question }}
+        </a>
+      </li>
+      {{ end }}
+    </ul>
+  {{ else }}
+    <p>No findings at this severity threshold.</p>
+  {{ end }}
+</section>
+{{ end }}

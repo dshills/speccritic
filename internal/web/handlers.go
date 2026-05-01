@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dshills/speccritic/internal/app"
+	"github.com/dshills/speccritic/internal/schema"
 )
 
 type indexData struct {
@@ -26,6 +27,19 @@ type indexData struct {
 const maxWebTokens = 16384
 const multipartMemoryLimit = 1 << 20
 const multipartOverheadLimit = 1 << 20
+
+type resultView struct {
+	Check     *StoredCheck
+	Annotated AnnotatedSpec
+	Issues    []schema.Issue
+	Questions []schema.Question
+}
+
+type findingDetail struct {
+	CheckID  string
+	Issue    *schema.Issue
+	Question *schema.Question
+}
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	nonce := ""
@@ -110,6 +124,54 @@ func sanitizeWebError(err error) string {
 	return "Internal server error."
 }
 
+func parseSeverity(raw string) schema.Severity {
+	switch strings.ToLower(raw) {
+	case "warn":
+		return schema.SeverityWarn
+	case "critical":
+		return schema.SeverityCritical
+	default:
+		return schema.SeverityInfo
+	}
+}
+
+func filterIssues(issues []schema.Issue, threshold schema.Severity) []schema.Issue {
+	out := make([]schema.Issue, 0, len(issues))
+	for _, issue := range issues {
+		if handlerMeetsThreshold(issue.Severity, threshold) {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+func filterQuestions(questions []schema.Question, threshold schema.Severity) []schema.Question {
+	out := make([]schema.Question, 0, len(questions))
+	for _, question := range questions {
+		if handlerMeetsThreshold(question.Severity, threshold) {
+			out = append(out, question)
+		}
+	}
+	return out
+}
+
+func handlerMeetsThreshold(severity, threshold schema.Severity) bool {
+	return handlerSeverityRank(severity) >= handlerSeverityRank(threshold)
+}
+
+func handlerSeverityRank(severity schema.Severity) int {
+	switch severity {
+	case schema.SeverityCritical:
+		return 2
+	case schema.SeverityWarn:
+		return 1
+	case schema.SeverityInfo:
+		return 0
+	default:
+		return -1
+	}
+}
+
 func (s *Server) handleCheckStub(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.config.MaxUploadBytes+multipartOverheadLimit)
 	if err := s.parseRequestForm(r); err != nil {
@@ -158,8 +220,14 @@ func (s *Server) handleCheckStub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	view, err := s.resultView(stored)
+	if err != nil {
+		log.Printf("build result view: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 	var buf bytes.Buffer
-	if err := s.templates.ExecuteTemplate(&buf, "partial_result.html", stored); err != nil {
+	if err := s.templates.ExecuteTemplate(&buf, "partial_result.html", view); err != nil {
 		log.Printf("render result: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -167,6 +235,69 @@ func (s *Server) handleCheckStub(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf.Bytes())
+}
+
+func (s *Server) handleIssueDetail(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	findingID := r.PathValue("finding_id")
+	check, ok := s.store.Get(id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if check.Result == nil || check.Result.Report == nil {
+		http.NotFound(w, r)
+		return
+	}
+	detail := findingDetail{CheckID: id}
+	for i := range check.Result.Report.Issues {
+		if check.Result.Report.Issues[i].ID == findingID {
+			detail.Issue = &check.Result.Report.Issues[i]
+			break
+		}
+	}
+	if detail.Issue == nil {
+		for i := range check.Result.Report.Questions {
+			if check.Result.Report.Questions[i].ID == findingID {
+				detail.Question = &check.Result.Report.Questions[i]
+				break
+			}
+		}
+	}
+	if detail.Issue == nil && detail.Question == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var buf bytes.Buffer
+	if err := s.templates.ExecuteTemplate(&buf, "partial_issue_detail.html", detail); err != nil {
+		log.Printf("render issue detail: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
+func (s *Server) resultView(check *StoredCheck) (resultView, error) {
+	if check == nil || check.Result == nil || check.Result.Report == nil {
+		return resultView{}, fmt.Errorf("missing check result")
+	}
+	threshold := parseSeverity(check.Result.Report.Input.SeverityThreshold)
+	annotated, err := buildAnnotatedSpec(check.Result.OriginalSpec, check.Result.Report, threshold)
+	if err != nil {
+		return resultView{}, err
+	}
+	return resultView{
+		Check:     check,
+		Annotated: annotated,
+		Issues:    filterIssues(check.Result.Report.Issues, threshold),
+		Questions: filterQuestions(check.Result.Report.Questions, threshold),
+	}, nil
+}
+
+func buildAnnotatedSpec(specText string, report *schema.Report, threshold schema.Severity) (AnnotatedSpec, error) {
+	return BuildAnnotatedSpec(specText, report, threshold)
 }
 
 func (s *Server) parseRequestForm(r *http.Request) error {

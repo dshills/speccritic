@@ -1,0 +1,19 @@
+{{ define "partial_annotated_spec.html" }}
+<section class="annotated-spec" aria-label="Annotated spec">
+  <table>
+    <tbody>
+      {{ range .Annotated.Lines }}
+      <tr id="{{ .ElementID }}" class="severity-{{ .HighestSeverity }}">
+        <th scope="row">{{ .Number }}</th>
+        <td><code>{{ .Text }}</code></td>
+        <td>
+          {{ range .FindingRefs }}
+          <a href="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-get="/checks/{{ $.Check.ID }}/issues/{{ .ID }}" hx-target="#issue-detail" hx-swap="innerHTML">{{ .Severity }} {{ .ID }}</a>
+          {{ end }}
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</section>
+{{ end }}

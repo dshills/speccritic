@@ -1,0 +1,16 @@
+{{ define "partial_issue_detail.html" }}
+<section class="issue-detail" aria-label="Finding detail">
+  {{ if .Issue }}
+    <h3>{{ .Issue.ID }} {{ .Issue.Title }}</h3>
+    <p><strong>{{ .Issue.Severity }}</strong> {{ .Issue.Category }}</p>
+    <p>{{ .Issue.Description }}</p>
+    <p>{{ .Issue.Impact }}</p>
+    <p>{{ .Issue.Recommendation }}</p>
+  {{ else if .Question }}
+    <h3>{{ .Question.ID }}</h3>
+    <p><strong>{{ .Question.Severity }}</strong></p>
+    <p>{{ .Question.Question }}</p>
+    <p>{{ .Question.WhyNeeded }}</p>
+  {{ end }}
+</section>
+{{ end }}

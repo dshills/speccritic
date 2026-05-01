@@ -6,6 +6,7 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("POST /checks", s.handleCheckStub)
+	mux.HandleFunc("GET /checks/{id}/issues/{finding_id}", s.handleIssueDetail)
 	mux.Handle("GET /assets/", http.FileServer(http.FS(content)))
 	return securityHeaders(mux)
 }

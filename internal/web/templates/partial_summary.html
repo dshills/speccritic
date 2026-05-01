@@ -1,0 +1,16 @@
+{{ define "partial_summary.html" }}
+<section class="summary" aria-label="Summary">
+  <p>Check {{ .Check.ID }}</p>
+  <h2>{{ .Check.Result.Report.Summary.Verdict }}</h2>
+  <dl>
+    <dt>Score</dt>
+    <dd>{{ .Check.Result.Report.Summary.Score }}</dd>
+    <dt>Critical</dt>
+    <dd>{{ .Check.Result.Report.Summary.CriticalCount }}</dd>
+    <dt>Warn</dt>
+    <dd>{{ .Check.Result.Report.Summary.WarnCount }}</dd>
+    <dt>Info</dt>
+    <dd>{{ .Check.Result.Report.Summary.InfoCount }}</dd>
+  </dl>
+</section>
+{{ end }}
