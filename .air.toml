@@ -1,0 +1,16 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/speccritic-web ./cmd/speccritic-web"
+  bin = "./tmp/speccritic-web"
+	entrypoint = ["./tmp/speccritic-web"]
+	args_bin = ["--addr", "127.0.0.1:8090"]
+  delay = 1000
+  exclude_dir = ["tmp", "vendor"]
+  exclude_regex = ["_test\\.go$"]
+  include_ext = ["go"]
+  kill_delay = 500
+
+[misc]
+  clean_on_exit = true

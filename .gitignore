@@ -2,6 +2,7 @@
 /speccritic
 /bin/
 /dist/
+/tmp/
 
 # Go build artifacts
 *.exe
@@ -41,3 +42,4 @@ Thumbs.db
 # Agent tooling state (local-only; see CLAUDE.md)
 .claude/
 .atlas/
+.codex/
