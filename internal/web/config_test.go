@@ -19,3 +19,12 @@ func TestConfigValidateRejectsInvalidValues(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestNewServerAppliesRetentionDefaults(t *testing.T) {
+	config := DefaultConfig()
+	config.MaxRetainedChecks = 0
+	config.RetainedCheckTTL = 0
+	if _, err := NewServer(config); err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+}

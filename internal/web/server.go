@@ -15,6 +15,7 @@ var content embed.FS
 type Server struct {
 	config    Config
 	checker   checker
+	store     *Store
 	templates *template.Template
 	handler   http.Handler
 }
@@ -28,6 +29,7 @@ type checker interface {
 }
 
 func NewServerWithChecker(config Config, c checker) (*Server, error) {
+	config = withDefaults(config)
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -35,13 +37,38 @@ func NewServerWithChecker(config Config, c checker) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	store, err := NewStore(config.MaxRetainedChecks, config.RetainedCheckTTL)
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
 		config:    config,
 		checker:   c,
+		store:     store,
 		templates: tmpl,
 	}
 	s.handler = s.routes()
 	return s, nil
+}
+
+func withDefaults(config Config) Config {
+	defaults := DefaultConfig()
+	if config.Addr == "" {
+		config.Addr = defaults.Addr
+	}
+	if config.RequestTimeout == 0 {
+		config.RequestTimeout = defaults.RequestTimeout
+	}
+	if config.MaxUploadBytes == 0 {
+		config.MaxUploadBytes = defaults.MaxUploadBytes
+	}
+	if config.MaxRetainedChecks == 0 {
+		config.MaxRetainedChecks = defaults.MaxRetainedChecks
+	}
+	if config.RetainedCheckTTL == 0 {
+		config.RetainedCheckTTL = defaults.RetainedCheckTTL
+	}
+	return config
 }
 
 func (s *Server) Handler() http.Handler {

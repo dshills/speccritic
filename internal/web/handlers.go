@@ -151,9 +151,15 @@ func (s *Server) handleCheckStub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, sanitizeWebError(err), status)
 		return
 	}
+	stored, err := s.store.Save(result)
+	if err != nil {
+		log.Printf("store check: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 
 	var buf bytes.Buffer
-	if err := s.templates.ExecuteTemplate(&buf, "partial_result.html", result); err != nil {
+	if err := s.templates.ExecuteTemplate(&buf, "partial_result.html", stored); err != nil {
 		log.Printf("render result: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
