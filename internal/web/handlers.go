@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,8 +23,10 @@ import (
 )
 
 type indexData struct {
-	Config Config
-	Nonce  string
+	Config        Config
+	Nonce         string
+	ModelProvider string
+	ModelName     string
 }
 
 const maxWebTokens = 4096
@@ -31,10 +34,12 @@ const multipartMemoryLimit = 1 << 20
 const multipartOverheadLimit = 1 << 20
 
 type resultView struct {
-	Check     *StoredCheck
-	Annotated AnnotatedSpec
-	Issues    []schema.Issue
-	Questions []schema.Question
+	Check         *StoredCheck
+	Annotated     AnnotatedSpec
+	Issues        []schema.Issue
+	Questions     []schema.Question
+	ModelProvider string
+	ModelName     string
 }
 
 type findingDetail struct {
@@ -63,9 +68,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var buf bytes.Buffer
+	provider, model := configuredModelDisplay()
 	if err := s.templates.ExecuteTemplate(&buf, "layout.html", indexData{
-		Config: s.config,
-		Nonce:  nonce,
+		Config:        s.config,
+		Nonce:         nonce,
+		ModelProvider: provider,
+		ModelName:     model,
 	}); err != nil {
 		log.Printf("render index: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -102,6 +110,21 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		return
 	}
+}
+
+func configuredModelDisplay() (string, string) {
+	provider := strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_PROVIDER"))
+	model := strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_MODEL"))
+	if provider == "" && model == "" {
+		return "anthropic", "claude-sonnet-4-6"
+	}
+	if provider == "" {
+		provider = defaultProviderDisplay
+	}
+	if model == "" {
+		model = defaultModelDisplay
+	}
+	return provider, model
 }
 
 func isSecureRequest(r *http.Request) bool {
@@ -333,13 +356,41 @@ func (s *Server) resultView(check *StoredCheck) (resultView, error) {
 	if err != nil {
 		return resultView{}, err
 	}
+	provider, model := splitModelDisplay(check.Result.Report.Meta.Model)
 	return resultView{
-		Check:     check,
-		Annotated: annotated,
-		Issues:    filterIssues(check.Result.Report.Issues, threshold),
-		Questions: filterQuestions(check.Result.Report.Questions, threshold),
+		Check:         check,
+		Annotated:     annotated,
+		Issues:        filterIssues(check.Result.Report.Issues, threshold),
+		Questions:     filterQuestions(check.Result.Report.Questions, threshold),
+		ModelProvider: provider,
+		ModelName:     model,
 	}, nil
 }
+
+func splitModelDisplay(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultProviderDisplay, defaultModelDisplay
+	}
+	provider, model, ok := strings.Cut(value, ":")
+	if !ok {
+		return defaultProviderDisplay, value
+	}
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider == "" {
+		provider = defaultProviderDisplay
+	}
+	if model == "" {
+		model = defaultModelDisplay
+	}
+	return provider, model
+}
+
+const (
+	defaultProviderDisplay = "Provider"
+	defaultModelDisplay    = "Unknown"
+)
 
 func buildAnnotatedSpec(specText string, report *schema.Report, threshold schema.Severity) (AnnotatedSpec, error) {
 	return BuildAnnotatedSpec(specText, report, threshold)

@@ -89,6 +89,52 @@ h1 {
   font-size: 13px;
 }
 
+.configured-model {
+  margin: 0 0 24px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-muted);
+}
+
+.configured-model h2 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.configured-model dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.configured-model div {
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.configured-model dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.configured-model dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 form {
   display: grid;
   gap: 18px;
@@ -270,6 +316,41 @@ form[aria-busy="true"] button:disabled {
   font-size: 30px;
   line-height: 1;
   letter-spacing: 0;
+}
+
+.model-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(110px, max-content));
+  gap: 10px;
+  max-width: 100%;
+  margin: 0;
+}
+
+.model-meta div {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-muted);
+}
+
+.model-meta dt {
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.model-meta dd {
+  max-width: 240px;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
 }
 
 .metric-grid {
@@ -597,6 +678,14 @@ form[aria-busy="true"] button:disabled {
   .summary-heading,
   .finding-link {
     display: grid;
+  }
+
+  .model-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .model-meta dd {
+    max-width: none;
   }
 
   .finding-link {

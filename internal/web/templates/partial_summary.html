@@ -1,8 +1,20 @@
 {{ define "partial_summary.html" }}
 <section class="summary" aria-label="Summary">
   <div class="summary-heading">
-    <p>Check {{ .Check.ID }}</p>
-    <h2>{{ .Check.Result.Report.Summary.Verdict }}</h2>
+    <div>
+      <p>Check {{ .Check.ID }}</p>
+      <h2>{{ .Check.Result.Report.Summary.Verdict }}</h2>
+    </div>
+    <dl class="model-meta" aria-label="Provider and model">
+      <div>
+        <dt>Provider</dt>
+        <dd>{{ .ModelProvider }}</dd>
+      </div>
+      <div>
+        <dt>Model</dt>
+        <dd>{{ .ModelName }}</dd>
+      </div>
+    </dl>
   </div>
   <dl class="metric-grid">
     <div class="metric-card">

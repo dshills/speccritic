@@ -52,6 +52,7 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 			Input:   schema.Input{SeverityThreshold: req.SeverityThreshold},
 			Summary: schema.Summary{Verdict: schema.VerdictInvalid, Score: 80, CriticalCount: 1},
 			Issues:  issues,
+			Meta:    schema.Meta{Model: "openai:gpt-5"},
 		},
 	}, nil
 }
@@ -107,6 +108,8 @@ func createStoredCheck(t *testing.T, server *Server) string {
 }
 
 func TestIndex(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "openai")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "gpt-5")
 	server, err := NewServer(DefaultConfig())
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -126,7 +129,7 @@ func TestIndex(t *testing.T) {
 		t.Fatal("expected session cookie")
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", `name="spec_file"`, `required`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
+	for _, want := range []string{"SpecCritic", "Configured model", "openai", "gpt-5", `name="spec_file"`, `required`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
@@ -201,6 +204,9 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "INVALID") {
 		t.Fatalf("response missing verdict: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), "openai") || !strings.Contains(rec.Body.String(), "gpt-5") {
+		t.Fatalf("response missing provider/model display: %s", rec.Body.String())
+	}
 	if !strings.Contains(rec.Body.String(), "ISSUE-0001") {
 		t.Fatalf("response missing issue: %s", rec.Body.String())
 	}
@@ -209,6 +215,41 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Preflight") {
 		t.Fatalf("response missing preflight label: %s", rec.Body.String())
+	}
+}
+
+func TestSplitModelDisplay(t *testing.T) {
+	for _, tc := range []struct {
+		input        string
+		wantProvider string
+		wantModel    string
+	}{
+		{input: "openai:gpt-5", wantProvider: "openai", wantModel: "gpt-5"},
+		{input: "preflight", wantProvider: "Provider", wantModel: "preflight"},
+		{input: "", wantProvider: "Provider", wantModel: "Unknown"},
+		{input: "anthropic:", wantProvider: "anthropic", wantModel: "Unknown"},
+		{input: " OpenAI : GPT-4 ", wantProvider: "OpenAI", wantModel: "GPT-4"},
+	} {
+		provider, model := splitModelDisplay(tc.input)
+		if provider != tc.wantProvider || model != tc.wantModel {
+			t.Fatalf("splitModelDisplay(%q) = %q/%q, want %q/%q", tc.input, provider, model, tc.wantProvider, tc.wantModel)
+		}
+	}
+}
+
+func TestConfiguredModelDisplay(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+	provider, model := configuredModelDisplay()
+	if provider != "anthropic" || model != "claude-sonnet-4-6" {
+		t.Fatalf("default configured model = %q/%q", provider, model)
+	}
+
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "openai")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "gpt-5")
+	provider, model = configuredModelDisplay()
+	if provider != "openai" || model != "gpt-5" {
+		t.Fatalf("configured model = %q/%q", provider, model)
 	}
 }
 

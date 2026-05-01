@@ -5,6 +5,19 @@
       <h1 id="check-heading">SpecCritic</h1>
       <p>Specification review</p>
     </div>
+    <section class="configured-model" aria-labelledby="configured-model-heading">
+      <h2 id="configured-model-heading">Configured model</h2>
+      <dl>
+        <div>
+          <dt>Provider</dt>
+          <dd>{{ .ModelProvider }}</dd>
+        </div>
+        <div>
+          <dt>Model</dt>
+          <dd>{{ .ModelName }}</dd>
+        </div>
+      </dl>
+    </section>
     <form method="post" action="/checks" enctype="multipart/form-data" hx-post="/checks" hx-target="#status">
       <input type="hidden" name="csrf_token" value="{{ .Nonce }}">
 
