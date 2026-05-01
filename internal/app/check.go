@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dshills/speccritic/internal/chunk"
 	ctxpkg "github.com/dshills/speccritic/internal/context"
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/patch"
@@ -52,26 +53,33 @@ type ContextDocument struct {
 }
 
 type CheckRequest struct {
-	Version           string
-	SpecPath          string
-	SpecName          string
-	SpecText          string
-	ContextPaths      []string
-	ContextDocuments  []ContextDocument
-	Profile           string
-	Strict            bool
-	SeverityThreshold string
-	Temperature       float64
-	MaxTokens         int
-	Offline           bool
-	Debug             bool
-	Verbose           bool
-	Preflight         bool
-	PreflightMode     string
-	PreflightProfile  string
-	PreflightIgnore   []string
-	Source            Source
-	ErrWriter         io.Writer
+	Version                string
+	SpecPath               string
+	SpecName               string
+	SpecText               string
+	ContextPaths           []string
+	ContextDocuments       []ContextDocument
+	Profile                string
+	Strict                 bool
+	SeverityThreshold      string
+	Temperature            float64
+	MaxTokens              int
+	Offline                bool
+	Debug                  bool
+	Verbose                bool
+	Preflight              bool
+	PreflightMode          string
+	PreflightProfile       string
+	PreflightIgnore        []string
+	Chunking               string
+	ChunkLines             int
+	ChunkOverlap           int
+	ChunkMinLines          int
+	ChunkTokenThreshold    int
+	ChunkConcurrency       int
+	SynthesisLineThreshold int
+	Source                 Source
+	ErrWriter              io.Writer
 }
 
 type CheckResult struct {
@@ -173,6 +181,23 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	}
 
 	logVerbose(errw, req.Verbose, "Calling LLM: %s", modelStr)
+	chunkCfg := chunkConfigFromRequest(req)
+	estimatedPromptTokens := estimatePromptTokens(llmReq)
+	if chunk.ShouldChunk(s.LineCount, estimatedPromptTokens, chunkCfg) {
+		logVerbose(errw, req.Verbose, "Using chunked review: %d lines, estimated prompt tokens %d", s.LineCount, estimatedPromptTokens)
+		report, responseModel, err := c.checkChunked(ctx, provider, req, s, contextFiles, preflightIssues, sysPrompt, preflightContext, chunkCfg, errw)
+		if err != nil {
+			return nil, appError(ErrorModelOutput, err)
+		}
+		return &CheckResult{
+			Report:       report,
+			PatchDiff:    patch.GenerateDiff(s.Raw, report.Patches, errw),
+			OriginalSpec: s.Raw,
+			LineCount:    s.LineCount,
+			Model:        responseModel,
+		}, nil
+	}
+
 	report, responseModel, err := callWithRetry(ctx, provider, llmReq, s.LineCount, req.Verbose, errw)
 	if err != nil {
 		return nil, appError(ErrorModelOutput, err)
@@ -188,6 +213,76 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, contextFiles []ctxpkg.ContextFile, preflightIssues []schema.Issue, sysPrompt, preflightContext string, cfg chunk.Config, errw io.Writer) (*schema.Report, string, error) {
+	if errw == nil {
+		errw = io.Discard
+	}
+	plan, err := chunk.PlanSpec(s, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	if req.Debug {
+		fmt.Fprintf(errw, "=== DEBUG: chunk prompt components ===\n")
+		for _, ch := range plan.Chunks {
+			prefix, tail, err := chunk.BuildUserPrompt(chunk.PromptInput{
+				Spec:             s,
+				Plan:             plan,
+				Chunk:            ch,
+				ContextFiles:     contextFiles,
+				PreflightContext: preflightContext,
+			})
+			if err != nil {
+				fmt.Fprintf(errw, "WARN: building debug prompt for chunk %s failed: %s\n", ch.ID, err)
+				continue
+			}
+			fmt.Fprintf(errw, "[CHUNK %s USER PREFIX]\n%s\n[CHUNK %s USER SPEC]\n%s\n", ch.ID, prefix, ch.ID, tail)
+		}
+		fmt.Fprintf(errw, "=== END DEBUG ===\n")
+	}
+	results, err := chunk.ReviewChunks(ctx, provider, s, plan, chunk.ExecutorConfig{
+		SystemPrompt:     sysPrompt,
+		ContextFiles:     contextFiles,
+		PreflightContext: preflightContext,
+		Temperature:      req.Temperature,
+		MaxTokens:        req.MaxTokens,
+		Concurrency:      cfg.ChunkConcurrency,
+		Verbose:          req.Verbose,
+		ErrWriter:        errw,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	merged := chunk.MergeReports(chunk.MergeInput{
+		ChunkResults: results,
+		Preflight:    preflightIssues,
+		OriginalSpec: s.Raw,
+	})
+	model := firstChunkModel(results)
+	synthesis, synthesisModel, err := chunk.RunSynthesis(ctx, provider, s, plan, results, preflightIssues, merged, chunk.SynthesisConfig{
+		SystemPrompt:  sysPrompt,
+		Temperature:   req.Temperature,
+		MaxTokens:     req.MaxTokens,
+		LineThreshold: cfg.SynthesisLineThreshold,
+		Enabled:       true,
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	if synthesis != nil {
+		merged = chunk.MergeReports(chunk.MergeInput{
+			ChunkResults: results,
+			Synthesis:    synthesis,
+			Preflight:    preflightIssues,
+			OriginalSpec: s.Raw,
+		})
+		if synthesisModel != "" {
+			model = synthesisModel
+		}
+	}
+	report := buildReport(req, s, merged.Issues, merged.Questions, merged.Patches, model)
+	return report, model, nil
 }
 
 func runPreflight(s *spec.Spec, req CheckRequest, errw io.Writer) ([]schema.Issue, bool, error) {
@@ -232,6 +327,36 @@ func hasBlockingIssue(issues []schema.Issue) bool {
 		}
 	}
 	return false
+}
+
+func chunkConfigFromRequest(req CheckRequest) chunk.Config {
+	return chunk.WithDefaults(chunk.Config{
+		Mode:                   chunk.Mode(req.Chunking),
+		ChunkLines:             req.ChunkLines,
+		ChunkOverlap:           req.ChunkOverlap,
+		ChunkMinLines:          req.ChunkMinLines,
+		ChunkTokenThreshold:    req.ChunkTokenThreshold,
+		ChunkConcurrency:       req.ChunkConcurrency,
+		SynthesisLineThreshold: req.SynthesisLineThreshold,
+	})
+}
+
+func firstChunkModel(results []chunk.ChunkResult) string {
+	for _, result := range results {
+		if result.Model != "" {
+			return result.Model
+		}
+	}
+	return ""
+}
+
+func estimatePromptTokens(req *llm.Request) int {
+	if req == nil {
+		return 0
+	}
+	return chunk.EstimateTokens(req.SystemPrompt) +
+		chunk.EstimateTokens(req.UserPromptCachedPrefix) +
+		chunk.EstimateTokens(req.UserPrompt)
 }
 
 func mergeIssues(preflightIssues, llmIssues []schema.Issue, knownPreflightIDs map[string]bool) []schema.Issue {
@@ -463,6 +588,9 @@ func buildReport(req CheckRequest, s *spec.Spec, issues []schema.Issue, question
 }
 
 func validateRequest(req CheckRequest) error {
+	if err := chunk.ValidateConfig(chunkConfigFromRequest(req)); err != nil {
+		return err
+	}
 	if req.Source == SourceWeb {
 		if req.SpecPath != "" {
 			return fmt.Errorf("web checks must not use SpecPath")

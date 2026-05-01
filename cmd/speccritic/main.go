@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dshills/speccritic/internal/app"
+	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/review"
 	"github.com/dshills/speccritic/internal/schema"
@@ -34,23 +35,30 @@ func codeError(code int, format string, args ...any) error {
 
 // checkFlags holds the parsed flags for the check command.
 type checkFlags struct {
-	format            string
-	out               string
-	contextFiles      []string
-	profileName       string
-	strict            bool
-	failOn            string
-	severityThreshold string
-	patchOut          string
-	temperature       float64
-	maxTokens         int
-	offline           bool
-	verbose           bool
-	debug             bool
-	preflight         bool
-	preflightMode     string
-	preflightProfile  string
-	preflightIgnore   []string
+	format                 string
+	out                    string
+	contextFiles           []string
+	profileName            string
+	strict                 bool
+	failOn                 string
+	severityThreshold      string
+	patchOut               string
+	temperature            float64
+	maxTokens              int
+	offline                bool
+	verbose                bool
+	debug                  bool
+	preflight              bool
+	preflightMode          string
+	preflightProfile       string
+	preflightIgnore        []string
+	chunking               string
+	chunkLines             int
+	chunkOverlap           int
+	chunkMinLines          int
+	chunkTokenThreshold    int
+	chunkConcurrency       int
+	synthesisLineThreshold int
 }
 
 func main() {
@@ -90,6 +98,13 @@ func main() {
 	f.StringVar(&flags.preflightMode, "preflight-mode", "warn", "Preflight mode: warn, gate, or only")
 	f.StringVar(&flags.preflightProfile, "preflight-profile", "", "Override preflight rule profile")
 	f.StringArrayVar(&flags.preflightIgnore, "preflight-ignore", nil, "Preflight rule ID to suppress (may be repeated)")
+	f.StringVar(&flags.chunking, "chunking", "auto", "Chunking mode: auto, on, or off")
+	f.IntVar(&flags.chunkLines, "chunk-lines", 180, "Target maximum source lines per chunk before overlap")
+	f.IntVar(&flags.chunkOverlap, "chunk-overlap", 20, "Neighboring lines included before and after each chunk for context")
+	f.IntVar(&flags.chunkMinLines, "chunk-min-lines", 120, "Minimum line count before auto chunking may run")
+	f.IntVar(&flags.chunkTokenThreshold, "chunk-token-threshold", 4000, "Estimated prompt-token count before auto chunking may run")
+	f.IntVar(&flags.chunkConcurrency, "chunk-concurrency", 3, "Maximum concurrent chunk LLM calls")
+	f.IntVar(&flags.synthesisLineThreshold, "synthesis-line-threshold", 240, "Minimum total line count before no-finding chunked review may run synthesis")
 
 	root.AddCommand(checkCmd)
 
@@ -111,23 +126,30 @@ func runCheck(specPath string, flags checkFlags) error {
 	}
 
 	result, err := app.NewChecker().Check(cmdContext(), app.CheckRequest{
-		Version:           version,
-		SpecPath:          specPath,
-		ContextPaths:      flags.contextFiles,
-		Profile:           flags.profileName,
-		Strict:            flags.strict,
-		SeverityThreshold: flags.severityThreshold,
-		Temperature:       flags.temperature,
-		MaxTokens:         flags.maxTokens,
-		Offline:           flags.offline,
-		Debug:             flags.debug,
-		Verbose:           flags.verbose,
-		Preflight:         flags.preflight,
-		PreflightMode:     flags.preflightMode,
-		PreflightProfile:  flags.preflightProfile,
-		PreflightIgnore:   flags.preflightIgnore,
-		Source:            app.SourceCLI,
-		ErrWriter:         os.Stderr,
+		Version:                version,
+		SpecPath:               specPath,
+		ContextPaths:           flags.contextFiles,
+		Profile:                flags.profileName,
+		Strict:                 flags.strict,
+		SeverityThreshold:      flags.severityThreshold,
+		Temperature:            flags.temperature,
+		MaxTokens:              flags.maxTokens,
+		Offline:                flags.offline,
+		Debug:                  flags.debug,
+		Verbose:                flags.verbose,
+		Preflight:              flags.preflight,
+		PreflightMode:          flags.preflightMode,
+		PreflightProfile:       flags.preflightProfile,
+		PreflightIgnore:        flags.preflightIgnore,
+		Chunking:               flags.chunking,
+		ChunkLines:             flags.chunkLines,
+		ChunkOverlap:           flags.chunkOverlap,
+		ChunkMinLines:          flags.chunkMinLines,
+		ChunkTokenThreshold:    flags.chunkTokenThreshold,
+		ChunkConcurrency:       flags.chunkConcurrency,
+		SynthesisLineThreshold: flags.synthesisLineThreshold,
+		Source:                 app.SourceCLI,
+		ErrWriter:              os.Stderr,
 	})
 	if err != nil {
 		return mapAppError(err)
@@ -244,6 +266,17 @@ func validateFlags(flags checkFlags) error {
 	if flags.maxTokens <= 0 {
 		return fmt.Errorf("--max-tokens must be > 0, got %d", flags.maxTokens)
 	}
+	if err := chunk.ValidateConfig(chunk.WithDefaults(chunk.Config{
+		Mode:                   chunk.Mode(flags.chunking),
+		ChunkLines:             flags.chunkLines,
+		ChunkOverlap:           flags.chunkOverlap,
+		ChunkMinLines:          flags.chunkMinLines,
+		ChunkTokenThreshold:    flags.chunkTokenThreshold,
+		ChunkConcurrency:       flags.chunkConcurrency,
+		SynthesisLineThreshold: flags.synthesisLineThreshold,
+	})); err != nil {
+		return err
+	}
 	switch flags.preflightMode {
 	case "warn", "gate", "only":
 	default:
@@ -342,6 +375,13 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 	envStr("preflight-mode", "SPECCRITIC_PREFLIGHT_MODE", &flags.preflightMode)
 	envStr("preflight-profile", "SPECCRITIC_PREFLIGHT_PROFILE", &flags.preflightProfile)
 	envStringArray("preflight-ignore", "SPECCRITIC_PREFLIGHT_IGNORE", &flags.preflightIgnore)
+	envStr("chunking", "SPECCRITIC_CHUNKING", &flags.chunking)
+	envInt("chunk-lines", "SPECCRITIC_CHUNK_LINES", &flags.chunkLines)
+	envInt("chunk-overlap", "SPECCRITIC_CHUNK_OVERLAP", &flags.chunkOverlap)
+	envInt("chunk-min-lines", "SPECCRITIC_CHUNK_MIN_LINES", &flags.chunkMinLines)
+	envInt("chunk-token-threshold", "SPECCRITIC_CHUNK_TOKEN_THRESHOLD", &flags.chunkTokenThreshold)
+	envInt("chunk-concurrency", "SPECCRITIC_CHUNK_CONCURRENCY", &flags.chunkConcurrency)
+	envInt("synthesis-line-threshold", "SPECCRITIC_SYNTHESIS_LINE_THRESHOLD", &flags.synthesisLineThreshold)
 }
 
 // logVerbose writes a timestamped message to stderr when verbose mode is enabled.
