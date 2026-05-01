@@ -44,6 +44,8 @@ New flags:
 | `--preflight` | `true` | Enable deterministic preflight checks. |
 | `--preflight-mode` | `warn` | `warn` includes preflight findings and continues to LLM; `gate` skips LLM when blocking preflight defects exist; `only` runs preflight and never calls LLM. |
 | `--preflight-profile` | same as `--profile` | Optional override for preflight rule pack. |
+| `--preflight-ignore` | empty | Rule IDs to suppress, repeatable. Suppressed rules do not emit findings and cannot block `gate` mode. |
+| `--strict` | `false` | Existing SpecCritic strict mode. Preflight must use this value when applying strict-mode rules, including weak-requirement severity escalation. |
 
 `--offline` behavior:
 
@@ -113,6 +115,25 @@ Rule output must map to existing `schema.Issue` fields:
 - `tags`
 
 Preflight findings must include tag `preflight`.
+
+Blocking behavior is determined by this precedence order:
+
+1. If the rule ID is listed in `--preflight-ignore`, the rule does not run.
+2. Calculate effective severity, including profile rules and strict-mode escalation.
+3. A finding is blocking when its rule default severity is CRITICAL.
+4. Otherwise, a finding is blocking when its effective severity is CRITICAL.
+5. Otherwise, a finding is blocking when the rule explicitly sets `blocking=true`.
+
+The rule loader must reject or ignore any built-in or external profile override that attempts to downgrade a rule whose default severity is CRITICAL.
+
+The first version must not expose general per-rule blocking toggles in the web UI. The CLI `--preflight-ignore` flag is the escape hatch for deterministic false positives.
+
+Default blocking rules:
+
+- all CRITICAL findings are blocking,
+- placeholder findings are blocking when severity is CRITICAL,
+- missing required-section findings are blocking when severity is CRITICAL,
+- weak-requirement findings become blocking in strict mode because strict mode escalates them to CRITICAL.
 
 ## 8. Required Rule Groups
 
@@ -273,15 +294,35 @@ When preflight and LLM both run, duplicate findings must be deduplicated before 
 
 ## 11. Deduplication
 
-The first version must deduplicate exact same-line findings with the same category and equivalent title.
+The first version must deduplicate preflight/preflight findings with the same category, same rule ID, and identical evidence line range.
 
 Later versions may deduplicate semantically similar preflight and LLM findings.
 
-If a preflight finding and an LLM finding overlap:
+When preflight and LLM both run in `warn` mode, a bounded summary of preflight findings is supplied to the LLM as known deterministic findings. The first version must send at most 20 preflight findings to the LLM. Findings sent to the LLM must be selected by stable sort order: severity descending, line number ascending, rule ID ascending. If more than 20 findings exist, send the first 20 by that order and include a count summary by rule group for the remainder.
+
+The LLM prompt must instruct the model to add tag `duplicates:<PREFLIGHT-ID>` to any LLM issue that duplicates a known preflight finding. The orchestration layer must validate that any duplicate tag references one of the preflight finding IDs included in the prompt context for that LLM call. Invalid duplicate tags are ignored.
+
+If a preflight finding and an LLM finding overlap by deterministic match or valid explicit duplicate tag:
 
 - retain the LLM finding as canonical,
 - add tag `preflight-confirmed` to the retained finding,
+- preserve the preflight rule ID in tags using `preflight-rule:<PREFLIGHT-ID>`,
 - do not double-count score deductions.
+
+Deterministic preflight/LLM deduplication requires all of:
+
+- same schema category,
+- evidence ranges are identical, or one range contains the other and the containing range is no more than 3 lines,
+- normalized title token Jaccard similarity is at least 0.8.
+
+Title normalization for deduplication must:
+
+- lowercase text,
+- replace non-alphanumeric characters with spaces,
+- split on whitespace,
+- remove stopwords `a`, `an`, `and`, `are`, `for`, `in`, `is`, `of`, `on`, `or`, `the`, `to`, `with`.
+
+The first version must not deduplicate preflight and LLM findings based only on category or line overlap.
 
 ## 12. Performance Requirements
 

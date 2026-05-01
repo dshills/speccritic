@@ -178,24 +178,38 @@ Run preflight before the LLM in `speccritic check`.
 1. Add CLI flags:
    - `--preflight`,
    - `--preflight-mode`,
-   - `--preflight-profile`.
-2. Parse and validate modes:
+   - `--preflight-profile`,
+   - `--preflight-ignore`.
+2. Reuse the existing `--strict` flag as preflight strict-mode input.
+3. Parse and validate modes:
    - `warn`,
    - `gate`,
    - `only`.
-3. Run preflight after redaction and line numbering, before LLM prompt construction.
-4. Implement `warn` mode:
+4. Run preflight after redaction and line numbering, before LLM prompt construction.
+5. Implement blocking detection:
+   - ignored rule IDs do not run,
+   - default CRITICAL rules are blocking,
+   - final CRITICAL findings are blocking,
+   - WARN/INFO findings block only when a rule explicitly sets `blocking=true`.
+6. Implement `warn` mode:
    - include preflight findings,
    - continue to LLM.
-5. Implement `gate` mode:
+7. Implement `gate` mode:
    - skip LLM when blocking preflight defects exist,
    - otherwise continue to LLM.
-6. Implement `only` mode:
+8. Implement `only` mode:
    - never call LLM,
    - do not require model configuration.
-7. Merge and deduplicate preflight and LLM findings.
-8. Apply normal scoring and verdict logic.
-9. Add CLI integration tests with mock providers.
+9. Merge and deduplicate preflight and LLM findings.
+   - Use rule ID plus evidence line range for preflight/preflight duplicates.
+   - Supply at most 20 preflight findings to the LLM as known deterministic findings in `warn` mode, selected by severity descending, line number ascending, and rule ID ascending.
+   - Summarize additional preflight findings by rule group instead of sending each finding.
+   - Instruct the LLM to tag duplicates as `duplicates:<PREFLIGHT-ID>`.
+   - Validate duplicate tags against the preflight finding IDs included in the prompt context and ignore invalid references.
+   - For preflight/LLM overlap, deduplicate when either a valid duplicate tag exists or deterministic category/title/evidence matching succeeds.
+   - Retain the LLM finding as canonical, add `preflight-confirmed`, and preserve the deterministic preflight rule ID in a `preflight-rule:<ID>` tag.
+10. Apply normal scoring and verdict logic.
+11. Add CLI integration tests with mock providers.
 
 ### Review Gate
 
