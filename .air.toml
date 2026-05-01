@@ -7,6 +7,7 @@ tmp_dir = "tmp"
 	entrypoint = ["./tmp/speccritic-web"]
 	args_bin = ["--addr", "127.0.0.1:8090"]
   delay = 1000
+	include_dir = ["internal"]
   exclude_dir = ["tmp", "vendor"]
   exclude_regex = ["_test\\.go$"]
   include_ext = ["go"]
