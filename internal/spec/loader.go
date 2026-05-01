@@ -24,10 +24,21 @@ func Load(path string) (*Spec, error) {
 		return nil, fmt.Errorf("reading spec file: %w", err)
 	}
 
-	raw := string(data)
-	sum := sha256.Sum256(data)
-	hash := fmt.Sprintf("sha256:%x", sum)
+	return New(path, string(data)), nil
+}
 
+// LoadText constructs a Spec from in-memory text, using name as the display path.
+func LoadText(name, raw string) (*Spec, error) {
+	if name == "" {
+		name = "SPEC.md"
+	}
+	return New(name, raw), nil
+}
+
+// New constructs a Spec from raw text, computes its hash, and line-numbers it.
+func New(path, raw string) *Spec {
+	sum := sha256.Sum256([]byte(raw))
+	hash := fmt.Sprintf("sha256:%x", sum)
 	numbered, lineCount := addLineNumbers(raw)
 
 	return &Spec{
@@ -36,7 +47,7 @@ func Load(path string) (*Spec, error) {
 		Raw:       raw,
 		Numbered:  numbered,
 		LineCount: lineCount,
-	}, nil
+	}
 }
 
 // addLineNumbers prefixes every line with "L{n}: " and returns the result

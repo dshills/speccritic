@@ -6,20 +6,13 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/spf13/cobra"
 
-	ctxpkg "github.com/dshills/speccritic/internal/context"
-	"github.com/dshills/speccritic/internal/llm"
-	"github.com/dshills/speccritic/internal/patch"
-	"github.com/dshills/speccritic/internal/profile"
-	"github.com/dshills/speccritic/internal/redact"
+	"github.com/dshills/speccritic/internal/app"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/review"
 	"github.com/dshills/speccritic/internal/schema"
-	"github.com/dshills/speccritic/internal/schema/validate"
-	"github.com/dshills/speccritic/internal/spec"
 )
 
 // version is set at build time via -ldflags "-X main.version=x.y.z".
@@ -108,111 +101,25 @@ func runCheck(specPath string, flags checkFlags) error {
 		return codeError(3, "invalid flags: %s", err)
 	}
 
-	// --- Step 2: Resolve model from SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL ---
-	llmProvider := os.Getenv("SPECCRITIC_LLM_PROVIDER")
-	llmModel := os.Getenv("SPECCRITIC_LLM_MODEL")
-	if flags.offline && (llmProvider == "" || llmModel == "") {
-		return codeError(3, "SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL environment variables must be set (required with --offline)")
-	}
-	providerSet := llmProvider != ""
-	modelSet := llmModel != ""
-	if providerSet != modelSet {
-		return codeError(3, "SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL must both be set or both be unset")
-	}
-	if llmProvider == "" {
-		llmProvider = "anthropic"
-		llmModel = "claude-sonnet-4-6"
-		fmt.Fprintf(os.Stderr, "WARN: SPECCRITIC_LLM_PROVIDER/SPECCRITIC_LLM_MODEL not set, using default %s:%s\n", llmProvider, llmModel)
-	}
-	modelStr := llmProvider + ":" + llmModel
-
-	// --- Step 3: Load spec ---
-	logVerbose(flags.verbose, "Loading spec: %s", specPath)
-	s, err := spec.Load(specPath)
-	if err != nil {
-		return codeError(3, "loading spec: %s", err)
-	}
-
-	// --- Step 4: Redact spec content ---
-	s.Numbered = redact.Redact(s.Numbered)
-	s.Raw = redact.Redact(s.Raw)
-
-	// --- Step 5-6: Load and redact context files ---
-	logVerbose(flags.verbose, "Loading %d context file(s)", len(flags.contextFiles))
-	contextFiles, err := ctxpkg.Load(flags.contextFiles)
-	if err != nil {
-		return codeError(3, "loading context files: %s", err)
-	}
-
-	// --- Step 7: Load profile ---
-	logVerbose(flags.verbose, "Loading profile: %s", flags.profileName)
-	prof, err := profile.Get(flags.profileName)
-	if err != nil {
-		return codeError(3, "loading profile: %s", err)
-	}
-
-	// --- Step 8: Build LLM request ---
-	sysPrompt := llm.BuildSystemPrompt(prof, flags.strict)
-	userPrefix, userSpec := llm.BuildUserPrompt(s, contextFiles)
-
-	req := &llm.Request{
-		SystemPrompt:           sysPrompt,
-		UserPromptCachedPrefix: userPrefix,
-		UserPrompt:             userSpec,
-		Temperature:            &flags.temperature,
-		MaxTokens:              flags.maxTokens,
-	}
-
-	// --- Step 9: Debug dump (includes file paths as-is; see PLAN.md security notes) ---
-	if flags.debug {
-		fmt.Fprintf(os.Stderr, "=== DEBUG: redacted prompt ===\n")
-		fmt.Fprintf(os.Stderr, "[SYSTEM]\n%s\n\n[USER PREFIX]\n%s\n[USER SPEC]\n%s\n", sysPrompt, userPrefix, userSpec)
-		fmt.Fprintf(os.Stderr, "=== END DEBUG ===\n")
-	}
-
-	// --- Step 10: Create LLM provider ---
-	provider, err := llm.NewProvider(modelStr)
-	if err != nil {
-		return codeError(4, "creating LLM provider: %s", err)
-	}
-
-	// --- Step 11: Call LLM with retry ---
-	logVerbose(flags.verbose, "Calling LLM: %s", modelStr)
-	report, llmModel, callErr := callWithRetry(context.Background(), provider, req, s.LineCount, flags.verbose)
-	if callErr != nil {
-		return codeError(5, "%s", callErr)
-	}
-
-	// --- Step 12: Compute score and verdict from ALL issues (pre-filter) ---
-	score := review.Score(report.Issues, report.Questions)
-	verdict := review.Verdict(report.Issues, report.Questions)
-	critical, warn, info := review.Counts(report.Issues)
-
-	// --- Step 13: Populate report fields ---
-	// Note: summary counts always reflect all issues before --severity-threshold filtering.
-	// The issues array in output will be filtered (step 14), creating an intentional
-	// mismatch that is documented in the output schema.
-	report.Tool = "speccritic"
-	report.Version = version
-	report.Input = schema.Input{
-		SpecFile:          specPath,
-		SpecHash:          s.Hash,
-		ContextFiles:      flags.contextFiles,
+	result, err := app.NewChecker().Check(cmdContext(), app.CheckRequest{
+		Version:           version,
+		SpecPath:          specPath,
+		ContextPaths:      flags.contextFiles,
 		Profile:           flags.profileName,
 		Strict:            flags.strict,
 		SeverityThreshold: flags.severityThreshold,
+		Temperature:       flags.temperature,
+		MaxTokens:         flags.maxTokens,
+		Offline:           flags.offline,
+		Debug:             flags.debug,
+		Verbose:           flags.verbose,
+		Source:            app.SourceCLI,
+		ErrWriter:         os.Stderr,
+	})
+	if err != nil {
+		return mapAppError(err)
 	}
-	report.Summary = schema.Summary{
-		Verdict:       verdict,
-		Score:         score,
-		CriticalCount: critical,
-		WarnCount:     warn,
-		InfoCount:     info,
-	}
-	report.Meta = schema.Meta{
-		Model:       llmModel,
-		Temperature: flags.temperature,
-	}
+	report := cloneReport(result.Report)
 
 	// --- Step 14: Apply severity threshold filter (output only, does not affect score/counts) ---
 	severityFilter := parseSeverityThreshold(flags.severityThreshold)
@@ -221,8 +128,7 @@ func runCheck(specPath string, flags checkFlags) error {
 	// --- Step 15: Write patches ---
 	if flags.patchOut != "" {
 		logVerbose(flags.verbose, "Generating patches → %s", flags.patchOut)
-		diffText := patch.GenerateDiff(s.Raw, report.Patches, os.Stderr)
-		if err := os.WriteFile(flags.patchOut, []byte(diffText), 0o644); err != nil {
+		if err := os.WriteFile(flags.patchOut, []byte(result.PatchDiff), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "WARN: patch write failed: %s\n", err)
 			// Continue — patches are advisory per SPEC.md §12
 		}
@@ -257,6 +163,7 @@ func runCheck(specPath string, flags checkFlags) error {
 	// --- Step 18: Evaluate --fail-on ---
 	if flags.failOn != "" {
 		verdictThreshold := schema.Verdict(flags.failOn)
+		verdict := report.Summary.Verdict
 		if schema.VerdictOrdinal(verdict) >= schema.VerdictOrdinal(verdictThreshold) {
 			return codeError(2, "verdict %s meets or exceeds --fail-on threshold %s", verdict, verdictThreshold)
 		}
@@ -265,62 +172,34 @@ func runCheck(specPath string, flags checkFlags) error {
 	return nil
 }
 
-// callWithRetry attempts an LLM call and retries once on validation failure.
-// Returns the parsed report, the model string from the response, and any error.
-func callWithRetry(ctx context.Context, provider llm.Provider, req *llm.Request, lineCount int, verbose bool) (*schema.Report, string, error) {
-	resp, err := provider.Complete(ctx, req)
-	if err != nil {
-		return nil, "", fmt.Errorf("LLM call failed: %w", err)
-	}
-
-	report, parseErr := validate.Parse(resp.Content, lineCount)
-	if parseErr == nil {
-		return report, resp.Model, nil
-	}
-
-	logVerbose(verbose, "Validation failed, retrying: %s", parseErr)
-
-	// Append a sanitized error description (not the raw LLM output) to avoid
-	// prompt injection from the model's previous response.
-	repairReq := *req
-	repairReq.UserPrompt = req.UserPrompt + fmt.Sprintf(
-		"\n\nYour previous response failed schema validation (error category: %q). Return only valid JSON matching the schema above.",
-		sanitizeErrForPrompt(parseErr),
-	)
-
-	resp2, err := provider.Complete(ctx, &repairReq)
-	if err != nil {
-		return nil, "", fmt.Errorf("LLM retry call failed: %w", err)
-	}
-
-	report, parseErr = validate.Parse(resp2.Content, lineCount)
-	if parseErr != nil {
-		return nil, "", fmt.Errorf("invalid model output after retry: %w", parseErr)
-	}
-
-	return report, resp2.Model, nil
+func cmdContext() context.Context {
+	return context.Background()
 }
 
-// sanitizeErrForPrompt classifies a parse error into a fixed category string
-// without echoing any LLM-generated content back into the retry prompt.
-func sanitizeErrForPrompt(err error) string {
-	msg := err.Error()
-	switch {
-	case strings.HasPrefix(msg, "JSON parse failed"):
-		return "JSON syntax error"
-	case strings.Contains(msg, "invalid severity"):
-		return "invalid enum value (severity must be INFO, WARN, or CRITICAL)"
-	case strings.Contains(msg, "unknown category"):
-		return "invalid enum value (unknown defect category)"
-	case strings.Contains(msg, "title is required"), strings.Contains(msg, "question text is required"):
-		return "missing required field"
-	case strings.Contains(msg, "does not match ISSUE-"), strings.Contains(msg, "does not match Q-"):
-		return "invalid ID format"
-	case strings.Contains(msg, "line_start"), strings.Contains(msg, "line_end"):
-		return "invalid line range in evidence"
-	default:
-		return "schema validation error"
+func mapAppError(err error) error {
+	var appErr *app.Error
+	if errors.As(err, &appErr) {
+		switch appErr.Kind {
+		case app.ErrorProvider:
+			return codeError(4, "%s", appErr)
+		case app.ErrorModelOutput:
+			return codeError(5, "%s", appErr)
+		default:
+			return codeError(3, "%s", appErr)
+		}
 	}
+	return codeError(3, "%s", err)
+}
+
+func cloneReport(report *schema.Report) *schema.Report {
+	if report == nil {
+		return &schema.Report{}
+	}
+	clone := *report
+	clone.Issues = append([]schema.Issue(nil), report.Issues...)
+	clone.Questions = append([]schema.Question(nil), report.Questions...)
+	clone.Patches = append([]schema.Patch(nil), report.Patches...)
+	return &clone
 }
 
 // validateFlags returns an error if any flag value is invalid.
