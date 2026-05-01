@@ -34,8 +34,9 @@ type Summary struct {
 
 // Meta holds runtime metadata about the LLM call.
 type Meta struct {
-	Model       string  `json:"model"`
-	Temperature float64 `json:"temperature"`
+	Model        string  `json:"model"`
+	Temperature  float64 `json:"temperature"`
+	ChunkSummary string  `json:"chunk_summary,omitempty"`
 }
 
 // Severity levels for issues and questions.
