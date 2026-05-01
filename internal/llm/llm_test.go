@@ -521,6 +521,17 @@ func TestNewProvider_OpenAI_WithKey(t *testing.T) {
 	}
 }
 
+func TestNewProvider_NormalizesProviderCase(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-test-key-for-construction-only")
+	p, err := NewProvider("OpenAI:gpt-4o")
+	if err != nil {
+		t.Fatalf("NewProvider: %v", err)
+	}
+	if p == nil {
+		t.Error("expected non-nil provider")
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	if got := truncate("hello", 10); got != "hello" {
 		t.Errorf("truncate short string: got %q", got)

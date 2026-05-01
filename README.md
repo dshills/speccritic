@@ -120,7 +120,7 @@ From the browser:
 3. Optionally enable strict mode or disable the default preflight pass.
 4. Click `Check spec`.
 
-The left pane shows the configured provider and model before the review starts. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, and clicking any finding opens its detail in a modal so the annotated document stays in place.
+The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, and clicking any finding opens its detail in a modal so the annotated document stays in place.
 
 Use a different address or port with `WEB_ADDR`:
 
@@ -150,7 +150,7 @@ The Air config builds `./cmd/speccritic-web` into `./tmp/speccritic-web` and run
 
 ### Model Selection
 
-Set `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL`. If unset, SpecCritic defaults to `SPECCRITIC_LLM_PROVIDER=anthropic` and `SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514` with a warning to stderr. Preflight-only checks do not require model configuration.
+Set `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL`, or pass `--llm-provider` and `--llm-model` for a single CLI run. If unset, SpecCritic defaults to `SPECCRITIC_LLM_PROVIDER=anthropic` and `SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514` with a warning to stderr. If a provider is set without a model, SpecCritic uses the default model for that provider. Preflight-only checks do not require model configuration.
 
 Current builds read the split provider/model variables. If you have old shell or CI snippets that set `SPECCRITIC_MODEL=provider:model`, replace them with the two variables above.
 
@@ -158,6 +158,7 @@ Current builds read the split provider/model variables. If you have old shell or
 |----------|-----------------|-----------------------|
 | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
 | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
+| `gemini` | `GEMINI_API_KEY` | `gemini-2.0-flash` |
 
 ```bash
 export SPECCRITIC_LLM_PROVIDER=openai
@@ -266,6 +267,8 @@ speccritic check <spec-file> [flags]
 | `--fail-on` | (none) | Exit 2 if verdict meets or exceeds the threshold; valid values are case-sensitive `VALID_WITH_GAPS` or `INVALID` |
 | `--severity-threshold` | `info` | Minimum severity to include in output: `info`, `warn`, `critical` |
 | `--patch-out` | (none) | Write suggested patches to file |
+| `--llm-provider` | env/default | LLM provider override: `anthropic`, `openai`, or `gemini` |
+| `--llm-model` | env/provider default | LLM model override |
 | `--temperature` | `0.2` | LLM temperature (0.0–2.0) |
 | `--max-tokens` | `4096` | Maximum response tokens |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |

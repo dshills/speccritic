@@ -382,6 +382,25 @@ func TestApplyEnvDefaultsPreflightIgnore(t *testing.T) {
 	}
 }
 
+func TestApplyEnvDefaultsDoesNotMixModelFlagWithProviderEnv(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "anthropic")
+	t.Setenv("SPECCRITIC_LLM_MODEL", llmpkg.DefaultModel)
+
+	cmd := &cobra.Command{Use: "check"}
+	flags := runCheckFlags()
+	cmd.Flags().StringVar(&flags.llmProvider, "llm-provider", "", "")
+	cmd.Flags().StringVar(&flags.llmModel, "llm-model", "", "")
+	if err := cmd.Flags().Set("llm-model", "gpt-5"); err != nil {
+		t.Fatalf("set llm-model: %v", err)
+	}
+
+	applyEnvDefaults(cmd, &flags)
+
+	if flags.llmProvider != "" || flags.llmModel != "gpt-5" {
+		t.Fatalf("provider/model = %q/%q, want empty/gpt-5", flags.llmProvider, flags.llmModel)
+	}
+}
+
 func TestRunCheck_RetryOnInvalidResponse(t *testing.T) {
 	setTestEnv(t)
 

@@ -53,6 +53,44 @@ type Provider interface {
 	Complete(ctx context.Context, req *Request) (*Response, error)
 }
 
+func IsSupportedProvider(provider string) bool {
+	switch strings.ToLower(provider) {
+	case "anthropic", "openai", "gemini":
+		return true
+	default:
+		return false
+	}
+}
+
+func DefaultModelForProvider(provider string) string {
+	switch strings.ToLower(provider) {
+	case "openai":
+		return "gpt-4o"
+	case "gemini":
+		return "gemini-2.0-flash"
+	default:
+		return DefaultModel
+	}
+}
+
+func ProviderForModel(model string) string {
+	model = strings.ToLower(model)
+	switch {
+	case strings.HasPrefix(model, "claude"):
+		return "anthropic"
+	case strings.HasPrefix(model, "gpt-"), isOpenAIReasoningModel(model):
+		return "openai"
+	case strings.HasPrefix(model, "gemini"):
+		return "gemini"
+	default:
+		return ""
+	}
+}
+
+func isOpenAIReasoningModel(model string) bool {
+	return len(model) >= 2 && model[0] == 'o' && model[1] >= '0' && model[1] <= '9'
+}
+
 // NewProvider parses a "provider:model" string and returns the appropriate Provider.
 // The API key is read from the environment at construction time and validated immediately.
 // Example: "anthropic:claude-sonnet-4-20250514" or "openai:gpt-4o".
@@ -61,7 +99,8 @@ func NewProvider(providerModel string) (Provider, error) {
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return nil, fmt.Errorf("invalid model format %q: expected provider:model (e.g. anthropic:claude-sonnet-4-20250514)", providerModel)
 	}
-	switch parts[0] {
+	provider := strings.ToLower(parts[0])
+	switch provider {
 	case "anthropic":
 		apiKey := os.Getenv("ANTHROPIC_API_KEY")
 		if apiKey == "" {

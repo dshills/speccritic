@@ -140,9 +140,7 @@ func (p *openaiProvider) completeOnce(ctx context.Context, model string, message
 
 func openaiUsesMaxCompletionTokens(model string) bool {
 	model = strings.ToLower(model)
-	return strings.HasPrefix(model, "o1") ||
-		strings.HasPrefix(model, "o3") ||
-		strings.HasPrefix(model, "o4") ||
+	return isOpenAIReasoningModel(model) ||
 		strings.HasPrefix(model, "gpt-5")
 }
 

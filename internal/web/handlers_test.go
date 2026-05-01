@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -129,8 +130,15 @@ func TestIndex(t *testing.T) {
 	if len(rec.Result().Cookies()) == 0 {
 		t.Fatal("expected session cookie")
 	}
+	cookies := map[string]string{}
+	for _, cookie := range rec.Result().Cookies() {
+		cookies[cookie.Name] = cookie.Value
+	}
+	if cookies["speccritic_session"] == "" || cookies["speccritic_session"] != cookies["speccritic_form"] {
+		t.Fatalf("session/form cookies should share nonce: %#v", cookies)
+	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", "Configured model", "openai", "gpt-5", `name="spec_file"`, `required`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
+	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
@@ -153,6 +161,53 @@ func TestAssets(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s status = %d", path, rec.Code)
 		}
+	}
+}
+
+func TestModelsEndpoint(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":[{"id":"gpt-5"},{"id":"text-embedding-3-large"}]}`))
+	}))
+	defer modelServer.Close()
+	old := llm.OpenAIModelsAPIURLForTest()
+	llm.SetOpenAIModelsAPIURL(modelServer.URL)
+	t.Cleanup(func() { llm.SetOpenAIModelsAPIURL(old) })
+	server, err := NewServer(DefaultConfig())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/models?provider=openai", nil)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "same"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var payload modelsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Provider != "openai" || payload.DefaultModel != "gpt-4o" || len(payload.Models) != 1 || payload.Models[0].ID != "gpt-5" {
+		t.Fatalf("payload = %#v", payload)
+	}
+}
+
+func TestModelsEndpointRequiresSessionCookies(t *testing.T) {
+	server, err := NewServer(DefaultConfig())
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/models?provider=openai", nil)
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
 	}
 }
 
@@ -202,6 +257,9 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	if checker.req.Chunking != "auto" || checker.req.ChunkLines == 0 || checker.req.ChunkConcurrency == 0 {
 		t.Fatalf("chunking request = mode %q lines %d concurrency %d", checker.req.Chunking, checker.req.ChunkLines, checker.req.ChunkConcurrency)
 	}
+	if checker.req.LLMProvider != llm.DefaultProvider || checker.req.LLMModel != llm.DefaultModel {
+		t.Fatalf("model request = %q/%q, want defaults", checker.req.LLMProvider, checker.req.LLMModel)
+	}
 	if !strings.Contains(rec.Body.String(), "INVALID") {
 		t.Fatalf("response missing verdict: %s", rec.Body.String())
 	}
@@ -216,6 +274,82 @@ func TestCheckStubAcceptedNonce(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Preflight") {
 		t.Fatalf("response missing preflight label: %s", rec.Body.String())
+	}
+}
+
+func TestCheckStubAcceptsProviderAndModel(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"llm_provider": "OpenAI",
+		"llm_model":    "gpt-5",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if checker.req.LLMProvider != "openai" || checker.req.LLMModel != "gpt-5" {
+		t.Fatalf("model request = %q/%q, want openai/gpt-5", checker.req.LLMProvider, checker.req.LLMModel)
+	}
+}
+
+func TestCheckStubDefaultsModelForSelectedProvider(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"llm_provider": "openai",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if checker.req.LLMProvider != "openai" || checker.req.LLMModel != "gpt-4o" {
+		t.Fatalf("model request = %q/%q, want openai/gpt-4o", checker.req.LLMProvider, checker.req.LLMModel)
+	}
+}
+
+func TestCheckStubInfersProviderFromModel(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"llm_model": "gpt-5",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if checker.req.LLMProvider != "openai" || checker.req.LLMModel != "gpt-5" {
+		t.Fatalf("model request = %q/%q, want openai/gpt-5", checker.req.LLMProvider, checker.req.LLMModel)
 	}
 }
 
@@ -251,6 +385,13 @@ func TestConfiguredModelDisplay(t *testing.T) {
 	provider, model = configuredModelDisplay()
 	if provider != "openai" || model != "gpt-5" {
 		t.Fatalf("configured model = %q/%q", provider, model)
+	}
+
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "gemini")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+	provider, model = configuredModelDisplay()
+	if provider != "gemini" || model != "gemini-2.0-flash" {
+		t.Fatalf("partial configured model = %q/%q", provider, model)
 	}
 }
 

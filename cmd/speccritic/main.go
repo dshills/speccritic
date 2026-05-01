@@ -43,6 +43,8 @@ type checkFlags struct {
 	failOn                 string
 	severityThreshold      string
 	patchOut               string
+	llmProvider            string
+	llmModel               string
 	temperature            float64
 	maxTokens              int
 	offline                bool
@@ -89,9 +91,11 @@ func main() {
 	f.StringVar(&flags.failOn, "fail-on", "", "Exit 2 if verdict >= this level (VALID_WITH_GAPS or INVALID)")
 	f.StringVar(&flags.severityThreshold, "severity-threshold", "info", "Minimum severity to emit: info, warn, or critical")
 	f.StringVar(&flags.patchOut, "patch-out", "", "Write suggested patches in diff-match-patch format to this file")
+	f.StringVar(&flags.llmProvider, "llm-provider", "", "LLM provider override: anthropic, openai, or gemini")
+	f.StringVar(&flags.llmModel, "llm-model", "", "LLM model override")
 	f.Float64Var(&flags.temperature, "temperature", 0.2, "LLM temperature")
 	f.IntVar(&flags.maxTokens, "max-tokens", 4096, "Maximum response tokens")
-	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if SPECCRITIC_MODEL env var is not set; use to enforce explicit model config in CI")
+	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if LLM provider/model config is not set; use to enforce explicit model config in CI")
 	f.BoolVar(&flags.verbose, "verbose", false, "Print processing steps to stderr")
 	f.BoolVar(&flags.debug, "debug", false, "Dump full prompt (including spec and context file contents) to stderr; use only in trusted environments")
 	f.BoolVar(&flags.preflight, "preflight", true, "Run deterministic preflight checks before LLM review")
@@ -132,6 +136,8 @@ func runCheck(specPath string, flags checkFlags) error {
 		Profile:                flags.profileName,
 		Strict:                 flags.strict,
 		SeverityThreshold:      flags.severityThreshold,
+		LLMProvider:            flags.llmProvider,
+		LLMModel:               flags.llmModel,
 		Temperature:            flags.temperature,
 		MaxTokens:              flags.maxTokens,
 		Offline:                flags.offline,
@@ -367,6 +373,10 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 	envBool("strict", "SPECCRITIC_STRICT", &flags.strict)
 	envStr("fail-on", "SPECCRITIC_FAIL_ON", &flags.failOn)
 	envStr("severity-threshold", "SPECCRITIC_SEVERITY_THRESHOLD", &flags.severityThreshold)
+	if !cmd.Flags().Changed("llm-provider") && !cmd.Flags().Changed("llm-model") {
+		envStr("llm-provider", "SPECCRITIC_LLM_PROVIDER", &flags.llmProvider)
+		envStr("llm-model", "SPECCRITIC_LLM_MODEL", &flags.llmModel)
+	}
 	envFloat64("temperature", "SPECCRITIC_LLM_TEMPERATURE", &flags.temperature)
 	envInt("max-tokens", "SPECCRITIC_LLM_MAX_TOKENS", &flags.maxTokens)
 	envBool("verbose", "SPECCRITIC_VERBOSE", &flags.verbose)

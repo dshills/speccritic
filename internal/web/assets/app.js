@@ -4,6 +4,7 @@
   // Supports the small HTMX-style subset used by this app: hx-post, hx-get,
   // hx-target, and data-modal-target.
   function submitForm(form) {
+    hideModelMenu(form);
     if (specFileInput(form) && !formHasSelectedFile(form)) {
       updateSubmitAvailability(form);
       return;
@@ -236,7 +237,81 @@
       if (!form.getAttribute || !(form.getAttribute("hx-post") || form.getAttribute("hx-get"))) {
         return;
       }
+      initializeModelPicker(form);
       updateSubmitAvailability(form);
+    });
+  }
+
+  function initializeModelPicker(form) {
+    var provider = form.querySelector('select[name="llm_provider"]');
+    var model = form.querySelector('input[name="llm_model"]');
+    if (!provider || !model) {
+      return;
+    }
+    model.dataset.lastProviderDefault = selectedProviderDefault(provider);
+    loadProviderModels(form);
+  }
+
+  function selectedProviderDefault(provider) {
+    var selected = provider.options[provider.selectedIndex];
+    return selected ? selected.getAttribute("data-default-model") || "" : "";
+  }
+
+  function loadProviderModels(form) {
+    var provider = form.querySelector('select[name="llm_provider"]');
+    var model = form.querySelector('input[name="llm_model"]');
+    var status = form.querySelector("#model_picker_status");
+    if (!provider || !model) {
+      return;
+    }
+    var fallbackDefault = selectedProviderDefault(provider);
+    var requestID = String(Date.now()) + ":" + provider.value;
+    form.dataset.modelRequestId = requestID;
+    if (form.modelRequestController) {
+      form.modelRequestController.abort();
+    }
+    var controller = window.AbortController ? new AbortController() : null;
+    form.modelRequestController = controller;
+    if (status) {
+      status.textContent = "Loading available models...";
+    }
+    var options = {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { "Accept": "application/json" }
+    };
+    if (controller) {
+      options.signal = controller.signal;
+    }
+    fetch("/models?provider=" + encodeURIComponent(provider.value), options).then(function (response) {
+      return response.json().then(function (payload) {
+        if (!response.ok) {
+          throw new Error(payload && payload.error ? payload.error : response.statusText);
+        }
+        return payload;
+      });
+    }).then(function (payload) {
+      if (form.dataset.modelRequestId !== requestID) {
+        return;
+      }
+      var models = Array.isArray(payload.models) ? payload.models : [];
+      form.modelOptions = models;
+      var nextDefault = payload.default_model || fallbackDefault;
+      model.dataset.lastProviderDefault = nextDefault || fallbackDefault;
+      if (status) {
+        status.textContent = models.length ? models.length + " models loaded." : "No models returned; enter a model manually.";
+      }
+    }).catch(function (error) {
+      if (error && error.name === "AbortError") {
+        return;
+      }
+      if (form.dataset.modelRequestId !== requestID) {
+        return;
+      }
+      model.dataset.lastProviderDefault = fallbackDefault;
+      if (status) {
+        status.textContent = "Could not load models; enter a model manually.";
+      }
     });
   }
 
@@ -259,6 +334,114 @@
       updateSubmitAvailability(form);
     }
   });
+
+  document.addEventListener("change", function (event) {
+    var provider = event.target;
+    if (!provider || !provider.matches || !provider.matches('select[name="llm_provider"]')) {
+      return;
+    }
+    var form = provider.form;
+    var model = form ? form.querySelector('input[name="llm_model"]') : null;
+    if (!model) {
+      return;
+    }
+    var nextDefault = selectedProviderDefault(provider);
+    model.value = "";
+    model.dataset.lastProviderDefault = nextDefault;
+    loadProviderModels(form);
+    showModelMenu(form, "");
+  });
+
+  document.addEventListener("focusin", function (event) {
+    var model = event.target;
+    if (!model || !model.matches || !model.matches('input[name="llm_model"]')) {
+      return;
+    }
+    showModelMenu(model.form, "");
+  });
+
+  document.addEventListener("input", function (event) {
+    var model = event.target;
+    if (!model || !model.matches || !model.matches('input[name="llm_model"]')) {
+      return;
+    }
+    showModelMenu(model.form, model.value);
+  });
+
+  document.addEventListener("mousedown", function (event) {
+    var option = event.target.closest ? event.target.closest("[data-model-option]") : null;
+    if (!option) {
+      return;
+    }
+    event.preventDefault();
+  });
+
+  document.addEventListener("click", function (event) {
+    var option = event.target.closest ? event.target.closest("[data-model-option]") : null;
+    if (option) {
+      var form = option.closest("form");
+      var model = form ? form.querySelector('input[name="llm_model"]') : null;
+      if (model) {
+        model.value = option.getAttribute("data-model-option") || "";
+        model.focus();
+      }
+      hideModelMenu(form);
+      return;
+    }
+    if (!event.target.closest || !event.target.closest(".model-picker")) {
+      document.querySelectorAll("form").forEach(hideModelMenu);
+    }
+  });
+
+  function showModelMenu(form, filter) {
+    var menu = form ? form.querySelector("#model_options") : null;
+    var model = form ? form.querySelector('input[name="llm_model"]') : null;
+    if (!menu || !model) {
+      return;
+    }
+    var models = Array.isArray(form.modelOptions) ? form.modelOptions : [];
+    var needle = (filter || "").trim().toLowerCase();
+    var visible = models.filter(function (item) {
+      if (!item || !item.id) {
+        return false;
+      }
+      if (!needle) {
+        return true;
+      }
+      return item.id.toLowerCase().indexOf(needle) >= 0 ||
+        (item.display_name || "").toLowerCase().indexOf(needle) >= 0;
+    });
+    menu.replaceChildren();
+    visible.forEach(function (item) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "model-option";
+      button.setAttribute("role", "option");
+      button.setAttribute("data-model-option", item.id);
+      var id = document.createElement("span");
+      id.textContent = item.id;
+      button.append(id);
+      if (item.display_name) {
+        var name = document.createElement("small");
+        name.textContent = item.display_name;
+        button.append(name);
+      }
+      menu.append(button);
+    });
+    menu.hidden = visible.length === 0;
+    model.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
+  }
+
+  function hideModelMenu(form) {
+    var menu = form ? form.querySelector("#model_options") : null;
+    var model = form ? form.querySelector('input[name="llm_model"]') : null;
+    if (menu) {
+      menu.hidden = true;
+    }
+    if (model) {
+      model.setAttribute("aria-expanded", "false");
+    }
+  }
 
   document.addEventListener("click", function (event) {
     var link = event.target.closest ? event.target.closest("[hx-get]") : null;

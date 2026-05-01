@@ -62,6 +62,8 @@ type CheckRequest struct {
 	Profile                string
 	Strict                 bool
 	SeverityThreshold      string
+	LLMProvider            string
+	LLMModel               string
 	Temperature            float64
 	MaxTokens              int
 	Offline                bool
@@ -114,9 +116,11 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	if err != nil {
 		return nil, appError(ErrorInput, fmt.Errorf("loading spec: %w", err))
 	}
+	originalRaw := s.Raw
 
 	s.Numbered = redact.Redact(s.Numbered)
 	s.Raw = redact.Redact(s.Raw)
+	redactedSpec := s.Raw != originalRaw
 
 	preflightIssues, preflightOnly, err := runPreflight(s, req, errw)
 	if err != nil {
@@ -126,13 +130,13 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		report := buildReport(req, s, preflightIssues, nil, nil, "preflight")
 		return &CheckResult{
 			Report:       report,
-			OriginalSpec: s.Raw,
+			OriginalSpec: originalRaw,
 			LineCount:    s.LineCount,
 			Model:        "preflight",
 		}, nil
 	}
 
-	llmProvider, llmModel, err := resolveModel(req.Offline, errw)
+	llmProvider, llmModel, err := resolveModel(req, errw)
 	if err != nil {
 		return nil, appError(ErrorInput, err)
 	}
@@ -189,10 +193,11 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		if err != nil {
 			return nil, appError(ErrorModelOutput, err)
 		}
+		patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
 		return &CheckResult{
 			Report:       report,
-			PatchDiff:    patch.GenerateDiff(s.Raw, report.Patches, errw),
-			OriginalSpec: s.Raw,
+			PatchDiff:    patchDiff,
+			OriginalSpec: originalRaw,
 			LineCount:    s.LineCount,
 			Model:        responseModel,
 		}, nil
@@ -205,14 +210,22 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	report.Issues = mergeIssues(preflightIssues, report.Issues, knownPreflightIDs)
 
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
+	patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
 
 	return &CheckResult{
 		Report:       report,
-		PatchDiff:    patch.GenerateDiff(s.Raw, report.Patches, errw),
-		OriginalSpec: s.Raw,
+		PatchDiff:    patchDiff,
+		OriginalSpec: originalRaw,
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+func patchDiffForReport(originalRaw string, report *schema.Report, redactedSpec bool, errw io.Writer) string {
+	if redactedSpec {
+		return ""
+	}
+	return patch.GenerateDiff(originalRaw, report.Patches, errw)
 }
 
 func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, contextFiles []ctxpkg.ContextFile, preflightIssues []schema.Issue, sysPrompt, preflightContext string, cfg chunk.Config, errw io.Writer) (*schema.Report, string, error) {
@@ -608,20 +621,30 @@ func validateRequest(req CheckRequest) error {
 	return nil
 }
 
-func resolveModel(offline bool, errw io.Writer) (string, string, error) {
-	llmProvider := os.Getenv("SPECCRITIC_LLM_PROVIDER")
-	llmModel := os.Getenv("SPECCRITIC_LLM_MODEL")
-	if offline && (llmProvider == "" || llmModel == "") {
-		return "", "", fmt.Errorf("SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL environment variables must be set (required with --offline)")
+func resolveModel(req CheckRequest, errw io.Writer) (string, string, error) {
+	llmProvider := strings.TrimSpace(req.LLMProvider)
+	llmModel := strings.TrimSpace(req.LLMModel)
+	if llmProvider == "" {
+		llmProvider = strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_PROVIDER"))
 	}
-	providerSet := llmProvider != ""
-	modelSet := llmModel != ""
-	if providerSet != modelSet {
-		return "", "", fmt.Errorf("SPECCRITIC_LLM_PROVIDER and SPECCRITIC_LLM_MODEL must both be set or both be unset")
+	if llmModel == "" {
+		llmModel = strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_MODEL"))
+	}
+	configured := llmProvider != "" || llmModel != ""
+	if req.Offline && !configured {
+		return "", "", fmt.Errorf("LLM provider or model must be configured when --offline is set")
 	}
 	if llmProvider == "" {
-		llmProvider = llm.DefaultProvider
-		llmModel = llm.DefaultModel
+		if inferred := llm.ProviderForModel(llmModel); inferred != "" {
+			llmProvider = inferred
+		} else {
+			llmProvider = llm.DefaultProvider
+		}
+	}
+	if llmModel == "" {
+		llmModel = llm.DefaultModelForProvider(llmProvider)
+	}
+	if !configured {
 		fmt.Fprintf(errw, "WARN: SPECCRITIC_LLM_PROVIDER/SPECCRITIC_LLM_MODEL not set, using default %s:%s\n", llmProvider, llmModel)
 	}
 	return llmProvider, llmModel, nil

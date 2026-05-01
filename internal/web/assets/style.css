@@ -89,7 +89,7 @@ h1 {
   font-size: 13px;
 }
 
-.configured-model {
+.model-picker {
   margin: 0 0 24px;
   padding: 12px;
   border: 1px solid var(--border);
@@ -97,42 +97,24 @@ h1 {
   background: var(--panel-muted);
 }
 
-.configured-model h2 {
+.model-picker legend {
+  padding: 0;
   margin: 0 0 10px;
   color: var(--text);
   font-size: 14px;
+  font-weight: 800;
   line-height: 1.2;
   letter-spacing: 0;
 }
 
-.configured-model dl {
+.model-picker {
   display: grid;
   gap: 8px;
-  margin: 0;
 }
 
-.configured-model div {
-  min-width: 0;
+.model-picker .field + .field {
   padding-top: 8px;
   border-top: 1px solid var(--border);
-}
-
-.configured-model dt {
-  margin-bottom: 3px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.configured-model dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.25;
 }
 
 form {
@@ -143,6 +125,7 @@ form {
 .field {
   display: grid;
   gap: 7px;
+  position: relative;
 }
 
 label {
@@ -150,6 +133,59 @@ label {
   color: #344054;
   font-size: 13px;
   font-weight: 700;
+}
+
+.field-status {
+  min-height: 18px;
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.model-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% - 23px);
+  right: 0;
+  left: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.model-option {
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 0;
+  padding: 8px 11px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.model-option:hover,
+.model-option:focus {
+  background: var(--panel-muted);
+}
+
+.model-option span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.model-option small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 input,

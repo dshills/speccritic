@@ -5,21 +5,26 @@
       <h1 id="check-heading">SpecCritic</h1>
       <p>Specification review</p>
     </div>
-    <section class="configured-model" aria-labelledby="configured-model-heading">
-      <h2 id="configured-model-heading">Configured model</h2>
-      <dl>
-        <div>
-          <dt>Provider</dt>
-          <dd>{{ .ModelProvider }}</dd>
-        </div>
-        <div>
-          <dt>Model</dt>
-          <dd>{{ .ModelName }}</dd>
-        </div>
-      </dl>
-    </section>
     <form method="post" action="/checks" enctype="multipart/form-data" hx-post="/checks" hx-target="#status">
       <input type="hidden" name="csrf_token" value="{{ .Nonce }}">
+
+      <fieldset class="model-picker" aria-labelledby="model-picker-heading">
+        <legend id="model-picker-heading">Model</legend>
+        <div class="field">
+          <label for="llm_provider">Provider</label>
+          <select id="llm_provider" name="llm_provider">
+            <option value="anthropic" data-default-model="claude-sonnet-4-20250514" {{ if eq .ModelProvider "anthropic" }}selected{{ end }}>Anthropic</option>
+            <option value="openai" data-default-model="gpt-4o" {{ if eq .ModelProvider "openai" }}selected{{ end }}>OpenAI</option>
+            <option value="gemini" data-default-model="gemini-2.0-flash" {{ if eq .ModelProvider "gemini" }}selected{{ end }}>Gemini</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="llm_model">Model</label>
+          <input id="llm_model" name="llm_model" type="text" value="{{ .ModelName }}" autocomplete="off" maxlength="120" required aria-controls="model_options" aria-expanded="false">
+          <div id="model_options" class="model-menu" role="listbox" hidden></div>
+          <p id="model_picker_status" class="field-status" aria-live="polite"></p>
+        </div>
+      </fieldset>
 
       <div class="field">
         <label for="spec_file">Spec file</label>

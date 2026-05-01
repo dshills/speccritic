@@ -21,7 +21,7 @@ func AnthropicAPIURL() string { return anthropicAPIURL }
 // Intended for use in tests only.
 func SetAnthropicAPIURL(u string) { anthropicAPIURL = u }
 
-const anthropicVersion = "2023-06-01"
+const AnthropicVersion = "2023-06-01"
 
 type anthropicProvider struct {
 	model  string
@@ -121,7 +121,7 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", p.apiKey)
-	httpReq.Header.Set("anthropic-version", anthropicVersion)
+	httpReq.Header.Set("anthropic-version", AnthropicVersion)
 
 	resp, err := sharedHTTPClient.Do(httpReq)
 	if err != nil {

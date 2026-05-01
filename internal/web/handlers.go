@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/dshills/speccritic/internal/app"
@@ -31,6 +33,7 @@ type indexData struct {
 }
 
 const maxWebTokens = 4096
+const maxWebModelNameLen = 120
 const multipartMemoryLimit = 1 << 20
 const multipartOverheadLimit = 1 << 20
 
@@ -47,6 +50,12 @@ type findingDetail struct {
 	CheckID  string
 	Issue    *schema.Issue
 	Question *schema.Question
+}
+
+type modelsResponse struct {
+	Provider     string          `json:"provider"`
+	DefaultModel string          `json:"default_model"`
+	Models       []llm.ModelInfo `json:"models"`
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -90,16 +99,10 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			SameSite: http.SameSiteStrictMode,
 		})
 	}
-	if sessionErr != nil || sessionCookie.Value == "" {
-		sessionValue, err := newNonce()
-		if err != nil {
-			log.Printf("generate session nonce: %v", err)
-			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
+	if sessionErr != nil || sessionCookie.Value != nonce {
 		http.SetCookie(w, &http.Cookie{
 			Name:     "speccritic_session",
-			Value:    sessionValue,
+			Value:    nonce,
 			Path:     "/",
 			HttpOnly: true,
 			Secure:   isSecureRequest(r),
@@ -113,6 +116,37 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	if !s.validSessionCookies(r) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("provider")))
+	if provider == "" {
+		provider = llm.DefaultProvider
+	}
+	if !llm.IsSupportedProvider(provider) {
+		http.Error(w, sanitizeWebError(webInputError("invalid provider %q", provider)), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	models, err := llm.ListModels(ctx, provider)
+	if err != nil {
+		log.Printf("list models failed: %v", err)
+		http.Error(w, "Unable to load provider models.", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(modelsResponse{
+		Provider:     provider,
+		DefaultModel: llm.DefaultModelForProvider(provider),
+		Models:       models,
+	}); err != nil {
+		log.Printf("write models response: %v", err)
+	}
+}
+
 func configuredModelDisplay() (string, string) {
 	provider := strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_PROVIDER"))
 	model := strings.TrimSpace(os.Getenv("SPECCRITIC_LLM_MODEL"))
@@ -120,12 +154,16 @@ func configuredModelDisplay() (string, string) {
 		return llm.DefaultProvider, llm.DefaultModel
 	}
 	if provider == "" {
-		provider = defaultProviderDisplay
+		provider = llm.DefaultProvider
 	}
 	if model == "" {
-		model = defaultModelDisplay
+		model = defaultModelForProvider(provider)
 	}
 	return provider, model
+}
+
+func defaultModelForProvider(provider string) string {
+	return llm.DefaultModelForProvider(provider)
 }
 
 func isSecureRequest(r *http.Request) bool {
@@ -148,6 +186,10 @@ func sanitizeWebError(err error) string {
 		return "Request timed out."
 	}
 	return "Internal server error."
+}
+
+func webInputError(format string, args ...any) error {
+	return &app.Error{Kind: app.ErrorInput, Err: fmt.Errorf(format, args...)}
 }
 
 func parseSeverity(raw string) schema.Severity {
@@ -501,6 +543,25 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		return app.CheckRequest{}, fmt.Errorf("invalid severity threshold %q", severity)
 	}
 
+	llmProvider := strings.ToLower(strings.TrimSpace(r.FormValue("llm_provider")))
+	llmModel := strings.TrimSpace(r.FormValue("llm_model"))
+	if llmProvider == "" {
+		if inferred := llm.ProviderForModel(llmModel); inferred != "" {
+			llmProvider = inferred
+		} else {
+			llmProvider = llm.DefaultProvider
+		}
+	}
+	if !llm.IsSupportedProvider(llmProvider) {
+		return app.CheckRequest{}, webInputError("invalid provider %q", llmProvider)
+	}
+	if llmModel == "" {
+		llmModel = defaultModelForProvider(llmProvider)
+	}
+	if len(llmModel) > maxWebModelNameLen {
+		return app.CheckRequest{}, webInputError("model name is too long")
+	}
+
 	temperature := 0.2
 	if raw := r.FormValue("temperature"); raw != "" {
 		v, err := strconv.ParseFloat(raw, 64)
@@ -535,6 +596,8 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		Profile:                profile,
 		Strict:                 r.FormValue("strict") == "true",
 		SeverityThreshold:      severity,
+		LLMProvider:            llmProvider,
+		LLMModel:               llmModel,
 		Temperature:            temperature,
 		MaxTokens:              maxTokens,
 		Preflight:              preflightEnabled,
@@ -597,4 +660,16 @@ func (s *Server) validNonce(r *http.Request) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(submitted), []byte(formCookie.Value)) == 1
+}
+
+func (s *Server) validSessionCookies(r *http.Request) bool {
+	sessionCookie, err := r.Cookie("speccritic_session")
+	if err != nil || sessionCookie.Value == "" {
+		return false
+	}
+	formCookie, err := r.Cookie("speccritic_form")
+	if err != nil || formCookie.Value == "" || len(sessionCookie.Value) != len(formCookie.Value) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(sessionCookie.Value), []byte(formCookie.Value)) == 1
 }

@@ -52,6 +52,162 @@ func TestCheckerTextBackedCheck(t *testing.T) {
 	}
 }
 
+func TestCheckerKeepsOriginalSpecOutOfLLMRedaction(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &fakeProvider{content: `{"issues":[{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Secret handling unclear","description":"d","evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"[REDACTED]"}],"impact":"i","recommendation":"r","blocking":false,"tags":[]}],"questions":[],"patches":[{"issue_id":"ISSUE-0001","before":"password=[REDACTED]","after":"password is configured out of band"}]}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	secretSpec := "The service password=supersecret and key sk-12345678901234567890.\n"
+
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          secretSpec,
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if result.OriginalSpec != secretSpec {
+		t.Fatalf("original spec = %q, want unredacted input", result.OriginalSpec)
+	}
+	if len(provider.reqs) != 1 || strings.Contains(provider.reqs[0].UserPrompt, "supersecret") || strings.Contains(provider.reqs[0].UserPrompt, "sk-12345678901234567890") {
+		t.Fatalf("LLM prompt was not redacted: %#v", provider.reqs)
+	}
+	if !strings.Contains(provider.reqs[0].UserPrompt, "[REDACTED]") {
+		t.Fatalf("LLM prompt missing redaction marker: %s", provider.reqs[0].UserPrompt)
+	}
+	if result.PatchDiff != "" || len(result.Report.Patches) != 1 {
+		t.Fatalf("patch diff should be suppressed and report patches preserved when redaction changes the spec, diff %q patches %#v", result.PatchDiff, result.Report.Patches)
+	}
+}
+
+func TestCheckerUsesRequestModelOverride(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+
+	provider := &fakeProvider{content: `{"issues":[],"questions":[],"patches":[]}`}
+	var providerModel string
+	checker := &Checker{NewProvider: func(model string) (llm.Provider, error) {
+		providerModel = model
+		return provider, nil
+	}}
+
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "The system must do one thing.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		LLMProvider:       "openai",
+		LLMModel:          "gpt-5",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if providerModel != "openai:gpt-5" {
+		t.Fatalf("provider model = %q, want openai:gpt-5", providerModel)
+	}
+}
+
+func TestCheckerDefaultsModelForRequestProvider(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+
+	provider := &fakeProvider{content: `{"issues":[],"questions":[],"patches":[]}`}
+	var providerModel string
+	checker := &Checker{NewProvider: func(model string) (llm.Provider, error) {
+		providerModel = model
+		return provider, nil
+	}}
+
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "The system must do one thing.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		LLMProvider:       "openai",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if providerModel != "openai:gpt-4o" {
+		t.Fatalf("provider model = %q, want openai:gpt-4o", providerModel)
+	}
+}
+
+func TestCheckerMergesRequestModelWithEnvProvider(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "openai")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+
+	provider := &fakeProvider{content: `{"issues":[],"questions":[],"patches":[]}`}
+	var providerModel string
+	checker := &Checker{NewProvider: func(model string) (llm.Provider, error) {
+		providerModel = model
+		return provider, nil
+	}}
+
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "The system must do one thing.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		LLMModel:          "gpt-5",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if providerModel != "openai:gpt-5" {
+		t.Fatalf("provider model = %q, want openai:gpt-5", providerModel)
+	}
+}
+
+func TestCheckerInfersProviderFromRequestModel(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+
+	provider := &fakeProvider{content: `{"issues":[],"questions":[],"patches":[]}`}
+	var providerModel string
+	checker := &Checker{NewProvider: func(model string) (llm.Provider, error) {
+		providerModel = model
+		return provider, nil
+	}}
+
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "The system must do one thing.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		LLMModel:          "gpt-5",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if providerModel != "openai:gpt-5" {
+		t.Fatalf("provider model = %q, want openai:gpt-5", providerModel)
+	}
+}
+
 func TestCheckerReturnsAllIssuesRegardlessOfSeverityThreshold(t *testing.T) {
 	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
 	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
