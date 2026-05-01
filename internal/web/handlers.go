@@ -26,7 +26,7 @@ type indexData struct {
 	Nonce  string
 }
 
-const maxWebTokens = 16384
+const maxWebTokens = 4096
 const multipartMemoryLimit = 1 << 20
 const multipartOverheadLimit = 1 << 20
 
@@ -458,7 +458,7 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		temperature = v
 	}
 
-	maxTokens := 16384
+	maxTokens := 4096
 	if raw := r.FormValue("max_tokens"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v <= 0 || v > maxWebTokens {

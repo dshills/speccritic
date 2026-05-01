@@ -90,7 +90,7 @@ func runCheckFlags() checkFlags {
 		profileName:       "general",
 		severityThreshold: "info",
 		temperature:       0.2,
-		maxTokens:         16384,
+		maxTokens:         4096,
 		preflight:         false,
 		preflightMode:     "warn",
 	}

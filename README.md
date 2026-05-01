@@ -81,11 +81,17 @@ Gate CI before any LLM call:
 speccritic check SPEC.md --preflight-mode gate --fail-on INVALID
 ```
 
+Force parallel section chunking for a large spec:
+
+```bash
+speccritic check SPEC.md --chunking on --chunk-concurrency 4
+```
+
 ## Web UI
 
 SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the uploaded spec with line numbers, summary metrics, finding annotations, and modal issue details.
 
-The web UI is intended for local review sessions. It does not replace the CLI and it does not change CLI behavior.
+The web UI is intended for local review sessions. It does not replace the CLI and it does not change CLI behavior. Large uploaded specs use the same automatic chunked review path as the CLI and still render as one merged result.
 
 Set the same provider configuration used by the CLI:
 
@@ -187,6 +193,35 @@ Suppress a known deterministic false positive with `--preflight-ignore`:
 speccritic check SPEC.md --preflight-ignore PREFLIGHT-ACRONYM-001
 ```
 
+### Chunked Review
+
+Chunked review is an execution strategy for large specs. It splits the redacted spec by Markdown sections, reviews chunks with bounded parallel LLM calls, validates each chunk against the same schema and evidence rules, optionally runs one cross-section synthesis pass, and merges everything back into one normal report.
+
+Small specs still use the existing single-call path by default.
+
+Modes:
+
+| Mode | Behavior |
+|------|----------|
+| `auto` | Use chunking when the spec has at least `--chunk-min-lines` lines or the estimated prompt is at least `--chunk-token-threshold` tokens. This is the default. |
+| `on` | Force chunking whenever an LLM review is needed. |
+| `off` | Always use the original single-call LLM path. |
+
+Examples:
+
+```bash
+# Force chunking for a large spec and allow four concurrent chunk calls.
+speccritic check SPEC.md --chunking on --chunk-concurrency 4
+
+# Disable chunking while debugging prompt behavior.
+speccritic check SPEC.md --chunking off --debug
+
+# Tune for a rate-limited provider.
+speccritic check SPEC.md --chunk-concurrency 1 --chunk-lines 140
+```
+
+Chunking usually reduces wall-clock latency for large specs, but it may increase the total number of provider calls. Provider rate limits, low concurrency, and cross-section synthesis can reduce the speedup. Cross-section defects are still hard: chunk prompts receive a table of contents and summaries, and synthesis can catch contradictions across sections, but no chunking strategy is a substitute for a well-structured spec.
+
 ### Flags
 
 ```
@@ -212,6 +247,25 @@ speccritic check <spec-file> [flags]
 | `--preflight-mode` | `warn` | Preflight mode: `warn`, `gate`, or `only` |
 | `--preflight-profile` | same as `--profile` | Override the preflight rule profile |
 | `--preflight-ignore` | (none) | Suppress a preflight rule ID; can be repeated |
+| `--chunking` | `auto` | Chunking mode: `auto`, `on`, or `off` |
+| `--chunk-lines` | `180` | Target maximum source lines per chunk before overlap |
+| `--chunk-overlap` | `20` | Neighboring lines included before and after each chunk for context |
+| `--chunk-min-lines` | `120` | Minimum line count before `auto` may use chunking |
+| `--chunk-token-threshold` | `4000` | Estimated prompt-token count before `auto` may use chunking |
+| `--chunk-concurrency` | `3` | Maximum concurrent chunk LLM calls |
+| `--synthesis-line-threshold` | `240` | Minimum total line count before a no-finding chunked review may run synthesis |
+
+Chunking environment defaults are also supported when the matching flag is not provided:
+
+| Env Var | Matching Flag |
+|---------|---------------|
+| `SPECCRITIC_CHUNKING` | `--chunking` |
+| `SPECCRITIC_CHUNK_LINES` | `--chunk-lines` |
+| `SPECCRITIC_CHUNK_OVERLAP` | `--chunk-overlap` |
+| `SPECCRITIC_CHUNK_MIN_LINES` | `--chunk-min-lines` |
+| `SPECCRITIC_CHUNK_TOKEN_THRESHOLD` | `--chunk-token-threshold` |
+| `SPECCRITIC_CHUNK_CONCURRENCY` | `--chunk-concurrency` |
+| `SPECCRITIC_SYNTHESIS_LINE_THRESHOLD` | `--synthesis-line-threshold` |
 
 ## Profiles
 

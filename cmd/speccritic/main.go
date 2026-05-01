@@ -90,7 +90,7 @@ func main() {
 	f.StringVar(&flags.severityThreshold, "severity-threshold", "info", "Minimum severity to emit: info, warn, or critical")
 	f.StringVar(&flags.patchOut, "patch-out", "", "Write suggested patches in diff-match-patch format to this file")
 	f.Float64Var(&flags.temperature, "temperature", 0.2, "LLM temperature")
-	f.IntVar(&flags.maxTokens, "max-tokens", 16384, "Maximum response tokens")
+	f.IntVar(&flags.maxTokens, "max-tokens", 4096, "Maximum response tokens")
 	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if SPECCRITIC_MODEL env var is not set; use to enforce explicit model config in CI")
 	f.BoolVar(&flags.verbose, "verbose", false, "Print processing steps to stderr")
 	f.BoolVar(&flags.debug, "debug", false, "Dump full prompt (including spec and context file contents) to stderr; use only in trusted environments")
