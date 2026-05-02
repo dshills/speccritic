@@ -96,6 +96,17 @@ cp SPEC.md SPEC.previous.md
 speccritic check SPEC.md --incremental-from previous.json --incremental-base SPEC.previous.md
 ```
 
+Generate advisory completion patches for common profile gaps:
+
+```bash
+speccritic check SPEC.md \
+  --preflight-mode only \
+  --completion-suggestions \
+  --patch-out completion.patch
+```
+
+This works with preflight-only runs because completion can use deterministic preflight findings as its source findings.
+
 ## Web UI
 
 SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the uploaded spec with line numbers, summary metrics, finding annotations, provider/model metadata, and modal issue details.
@@ -130,10 +141,13 @@ From the browser:
 2. Select a profile and severity threshold.
 3. Optionally upload a previous JSON result for convergence tracking and/or incremental rerun, and a previous spec file when using incremental rerun.
 4. Optionally set convergence mode to track finding status across review iterations.
-5. Optionally enable strict mode or disable the default preflight pass.
-6. Click `Check spec`.
+5. Optionally enable completion suggestions to generate draft/advisory patch text for profile-specific missing structure.
+6. Optionally enable strict mode or disable the default preflight pass.
+7. Click `Check spec`.
 
-The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, incremental and convergence metadata are shown in the summary when available, and clicking any finding opens its detail in a modal so the annotated document stays in place.
+The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually.
+
+The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec. Deterministic findings are labeled `Preflight`. Incremental, convergence, and completion metadata are shown in the summary when available. Completion patches are labeled `draft/advisory`, and clicking any finding opens its detail in a modal so the annotated document stays in place.
 
 Use a different address or port with `WEB_ADDR`:
 
@@ -325,6 +339,54 @@ Important behavior:
 - When `--convergence-report` is enabled, JSON output includes `meta.convergence` and Markdown output includes a human-readable convergence summary.
 - The web UI can use the uploaded previous JSON result for convergence tracking and/or incremental rerun; incremental rerun also needs the previous spec file when the spec changed. Uploaded previous results are not stored server-side.
 
+### Completion Suggestions
+
+Completion suggestions are an optional advisory layer that turns current findings into draft patch text for common missing profile structure. They are never applied automatically, never reduce or suppress findings, and never affect score, verdict, or `--fail-on` behavior.
+
+Completion patch construction is deterministic for the same spec text, findings, questions, profile, and completion options. Completion runs after preflight, chunk merge, incremental merge, and convergence processing. It uses validated current findings/questions and the same redacted review inputs used by the preflight or LLM reviewer, but exact-match patch construction targets the unredacted current spec text so `--patch-out` remains applicable. Suggested patches are emitted only when SpecCritic can find a safe, exact edit location. When multiple suggestions target overlapping text, the first suggestion by target line, supported severity order, source ID, template section order, and text is emitted; later overlapping suggestions are skipped. Patches are also skipped when the `before` or `after` text contains redaction markers or secret-looking values. Missing behavior that requires user judgment is represented with `OPEN DECISION` placeholders instead of invented requirements.
+
+Supported built-in templates:
+
+| Template | Intended use |
+|----------|--------------|
+| `profile` | Use the selected `--profile` template. This is the default; the supported review profiles each have a matching completion template. |
+| `general` | General-purpose spec structure and testability gaps. |
+| `backend-api` | Authentication, authorization, error responses, rate limits, and idempotency gaps. |
+| `regulated-system` | Audit trail, access control, retention, deletion, and compliance evidence gaps. |
+| `event-driven` | Event schema, delivery guarantees, ordering, retry, and dead-letter behavior gaps. |
+
+Examples:
+
+```bash
+# Add advisory completion patches to normal review output.
+speccritic check SPEC.md --completion-suggestions --format md
+
+# Require safe completion patches for blocking missing-section findings.
+speccritic check SPEC.md --completion-mode on
+
+# Generate at most three backend API completion patches.
+speccritic check SPEC.md \
+  --profile backend-api \
+  --completion-suggestions \
+  --completion-max-patches 3 \
+  --patch-out completion.patch
+```
+
+Completion mode behavior:
+
+| Mode | Behavior |
+|------|----------|
+| `auto` | Emit suggestions only when `--completion-suggestions` is true; suggestions must be tied to current findings/questions and have safe patch locations. |
+| `on` | Enable completion even if `--completion-suggestions` is omitted. Require safe generation for blocking missing-section findings; if required patches cannot be generated, exit with code `3` as a patch requirement error. |
+| `off` | Disable completion output even when `--completion-suggestions` is set. |
+
+When completion metadata is present, JSON output includes `meta.completion` with the enabled status, effective mode, template, `generated_patches`, `skipped_suggestions`, and `open_decisions`. Markdown and web output label completion text as `draft/advisory`.
+
+A blocking missing-section finding is a current finding with `blocking: true`, category `UNSPECIFIED_CONSTRAINT`, and the `missing-section` tag.
+
+In `auto` mode, completion output is produced only when `--completion-suggestions` or `SPECCRITIC_COMPLETION_SUGGESTIONS=true` is set. `--completion-max-patches=0` is valid in all modes; in `on` mode it causes exit code `3` when any blocking missing-section finding requires a patch. Hitting the patch limit for a required blocking finding also counts as a failure to generate the required patch and exits with code `3`.
+`--completion-mode` takes precedence over `--completion-suggestions`: `off` disables completion, `on` enables completion, and `auto` follows the boolean flag.
+
 ### Flags
 
 ```
@@ -371,8 +433,13 @@ speccritic check <spec-file> [flags]
 | `--convergence-mode` | `auto` | Convergence mode: `auto`, `on`, or `off` |
 | `--convergence-strict` | `false` | Require strict profile, strict-mode, threshold, and redaction compatibility; in `on` mode, mismatches exit 3 |
 | `--convergence-report` | `true` | Include optional convergence metadata when convergence is requested |
+| `--completion-suggestions` | `false` | Generate profile-specific advisory completion patches after review |
+| `--completion-mode` | `auto` | Completion mode: `auto`, `on`, or `off` |
+| `--completion-template` | `profile` | Template set to use: `profile`, `general`, `backend-api`, `regulated-system`, or `event-driven` |
+| `--completion-max-patches` | `8` | Maximum completion patches to emit |
+| `--completion-open-decisions` | `true` | Include `OPEN DECISION` placeholders for missing behavior that requires judgment |
 
-Chunking, incremental, and convergence environment defaults are also supported when the matching flag is not provided:
+Chunking, incremental, convergence, and completion environment defaults are also supported when the matching flag is not provided:
 
 | Env Var | Matching Flag |
 |---------|---------------|
@@ -395,6 +462,11 @@ Chunking, incremental, and convergence environment defaults are also supported w
 | `SPECCRITIC_CONVERGENCE_MODE` | `--convergence-mode` |
 | `SPECCRITIC_CONVERGENCE_STRICT` | `--convergence-strict` |
 | `SPECCRITIC_CONVERGENCE_REPORT` | `--convergence-report` |
+| `SPECCRITIC_COMPLETION_SUGGESTIONS` | `--completion-suggestions` |
+| `SPECCRITIC_COMPLETION_MODE` | `--completion-mode` |
+| `SPECCRITIC_COMPLETION_TEMPLATE` | `--completion-template` |
+| `SPECCRITIC_COMPLETION_MAX_PATCHES` | `--completion-max-patches` |
+| `SPECCRITIC_COMPLETION_OPEN_DECISIONS` | `--completion-open-decisions` |
 
 Validation rules:
 
@@ -411,6 +483,10 @@ Validation rules:
 - `--incremental-context-lines` must be `>= 0`.
 - `--convergence-mode` must be `auto`, `on`, or `off`.
 - `--convergence-mode on` requires `--convergence-from`.
+- `--completion-mode` must be `auto`, `on`, or `off`.
+- `--completion-mode on` enables completion output and does not require `--completion-suggestions`.
+- `--completion-template` must be `profile`, `general`, `backend-api`, `regulated-system`, or `event-driven`.
+- `--completion-max-patches` must be `>= 0`.
 
 ## Profiles
 
@@ -530,7 +606,15 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
   "patches": [...],
   "meta": {
     "model": "anthropic:claude-sonnet-4-20250514",
-    "temperature": 0.2
+    "temperature": 0.2,
+    "completion": {
+      "enabled": true,
+      "mode": "auto",
+      "template": "backend-api",
+      "generated_patches": 2,
+      "skipped_suggestions": 1,
+      "open_decisions": 3
+    }
   }
 }
 ```
@@ -545,7 +629,7 @@ When the LLM suggests corrections, they are included in the `patches` array and 
 speccritic check SPEC.md --patch-out spec.patch
 ```
 
-Patches are advisory—they are minimal textual corrections, never wholesale rewrites.
+Patches are advisory—they are minimal textual corrections, never wholesale rewrites. Completion patches are also advisory and are labeled separately in Markdown, web output, and patch comments when written with `--patch-out`.
 
 ## Exit Codes
 
