@@ -87,6 +87,15 @@ Force parallel section chunking for a large spec:
 speccritic check SPEC.md --chunking on --chunk-concurrency 4
 ```
 
+Reuse a previous JSON result while iterating on a changed spec:
+
+```bash
+speccritic check SPEC.md --format json --out previous.json
+cp SPEC.md SPEC.previous.md
+# edit SPEC.md
+speccritic check SPEC.md --incremental-from previous.json --incremental-base SPEC.previous.md
+```
+
 ## Web UI
 
 SpecCritic also includes a local Go web UI for reviewing specs in the browser. It uses the same review pipeline as the CLI, then renders the uploaded spec with line numbers, summary metrics, finding annotations, provider/model metadata, and modal issue details.
@@ -119,10 +128,11 @@ From the browser:
 
 1. Choose a Markdown or text spec file. Manual text entry is intentionally not supported.
 2. Select a profile and severity threshold.
-3. Optionally enable strict mode or disable the default preflight pass.
-4. Click `Check spec`.
+3. Optionally upload a previous JSON result and previous spec file for an incremental rerun.
+4. Optionally enable strict mode or disable the default preflight pass.
+5. Click `Check spec`.
 
-The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, and clicking any finding opens its detail in a modal so the annotated document stays in place.
+The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, incremental reuse metadata is shown in the summary when available, and clicking any finding opens its detail in a modal so the annotated document stays in place.
 
 Use a different address or port with `WEB_ADDR`:
 
@@ -253,6 +263,38 @@ Implementation details:
 - If one chunk fails permanently after the built-in repair attempt, the check fails with model-output/provider error rather than returning partial results.
 - Synthesis runs when chunked review has findings or when the spec is at least `--synthesis-line-threshold` lines. A no-finding chunked review below that threshold skips synthesis.
 
+### Incremental Rerun
+
+Incremental rerun is an execution strategy for iterative edits. It takes a previous SpecCritic JSON report, compares the current spec with the previous spec text, reuses eligible findings from unchanged sections, and reviews only changed ranges when reuse is safe.
+
+The default behavior is conservative. If incremental safety cannot be proven in `auto` mode, SpecCritic falls back to a normal full review. Use `--incremental-mode on` only when you want unsafe incremental conditions to fail instead of falling back.
+
+Typical CLI workflow:
+
+```bash
+# 1. Save a full JSON result for the current spec.
+speccritic check SPEC.md --format json --out previous.json
+
+# 2. Preserve the exact spec text that produced previous.json.
+cp SPEC.md SPEC.previous.md
+
+# 3. Edit SPEC.md, then rerun against only changed sections when safe.
+speccritic check SPEC.md \
+  --incremental-from previous.json \
+  --incremental-base SPEC.previous.md \
+  --incremental-report
+```
+
+Important behavior:
+
+- `--incremental-from` must point to valid SpecCritic JSON output.
+- `--incremental-base` is required when the current spec content differs from the previous report hash. The JSON report contains findings and metadata, not the old spec text needed for section diffing.
+- If the current spec hash matches the previous report hash, SpecCritic can reuse eligible findings without a base file.
+- Preflight still runs against the full current spec before any incremental LLM call.
+- Reused findings are tagged `incremental-reused`; new findings from changed ranges are tagged `incremental-review`.
+- `--incremental-report` adds optional `meta.incremental` details to JSON output. Markdown output keeps the normal human-readable report shape.
+- The web UI exposes the same workflow with optional `Previous JSON result`, `Previous spec file`, and `Mode` controls. Uploaded previous results are used only for the current request.
+
 ### Flags
 
 ```
@@ -287,8 +329,16 @@ speccritic check <spec-file> [flags]
 | `--chunk-token-threshold` | `4000` | Estimated prompt-token count before `auto` may use chunking |
 | `--chunk-concurrency` | `3` | Maximum concurrent chunk LLM calls |
 | `--synthesis-line-threshold` | `240` | Minimum total line count before a no-finding chunked review may run synthesis |
+| `--incremental-from` | (none) | Previous SpecCritic JSON report used as the incremental baseline |
+| `--incremental-base` | (none) | Previous spec text used for section diffing when the current spec changed |
+| `--incremental-mode` | `auto` | Incremental mode: `auto`, `on`, or `off` |
+| `--incremental-max-change-ratio` | `0.35` | Maximum changed-line ratio allowed before fallback or failure |
+| `--incremental-max-remap-failure-ratio` | `0.25` | Maximum prior-finding remap failure ratio allowed before fallback or failure |
+| `--incremental-context-lines` | `20` | Neighboring unchanged lines included around changed sections |
+| `--incremental-strict-reuse` | `true` | Reuse prior findings only when evidence remaps exactly or by unchanged line hash |
+| `--incremental-report` | `false` | Include optional incremental metadata in JSON output |
 
-Chunking environment defaults are also supported when the matching flag is not provided:
+Chunking and incremental environment defaults are also supported when the matching flag is not provided:
 
 | Env Var | Matching Flag |
 |---------|---------------|
@@ -299,6 +349,14 @@ Chunking environment defaults are also supported when the matching flag is not p
 | `SPECCRITIC_CHUNK_TOKEN_THRESHOLD` | `--chunk-token-threshold` |
 | `SPECCRITIC_CHUNK_CONCURRENCY` | `--chunk-concurrency` |
 | `SPECCRITIC_SYNTHESIS_LINE_THRESHOLD` | `--synthesis-line-threshold` |
+| `SPECCRITIC_INCREMENTAL_FROM` | `--incremental-from` |
+| `SPECCRITIC_INCREMENTAL_BASE` | `--incremental-base` |
+| `SPECCRITIC_INCREMENTAL_MODE` | `--incremental-mode` |
+| `SPECCRITIC_INCREMENTAL_MAX_CHANGE_RATIO` | `--incremental-max-change-ratio` |
+| `SPECCRITIC_INCREMENTAL_MAX_REMAP_FAILURE_RATIO` | `--incremental-max-remap-failure-ratio` |
+| `SPECCRITIC_INCREMENTAL_CONTEXT_LINES` | `--incremental-context-lines` |
+| `SPECCRITIC_INCREMENTAL_STRICT_REUSE` | `--incremental-strict-reuse` |
+| `SPECCRITIC_INCREMENTAL_REPORT` | `--incremental-report` |
 
 Validation rules:
 
@@ -308,6 +366,11 @@ Validation rules:
 - `--chunk-token-threshold` must be greater than `0`.
 - `--chunk-concurrency` must be between `1` and `16`.
 - `--synthesis-line-threshold` must be `>= 0`.
+- `--incremental-mode` must be `auto`, `on`, or `off`.
+- `--incremental-mode on` requires `--incremental-from`.
+- `--incremental-max-change-ratio` must be `> 0` and `<= 1`.
+- `--incremental-max-remap-failure-ratio` must be `>= 0` and `<= 1`.
+- `--incremental-context-lines` must be `>= 0`.
 
 ## Profiles
 
