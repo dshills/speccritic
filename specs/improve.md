@@ -142,7 +142,7 @@ I’d prioritize this order:
 1. Add deterministic preflight checks. (DONE)
 2. Add section-level chunking with parallel LLM calls. (DONE)
 3. Add incremental rerun mode using previous result + changed sections. (DONE)
-4. Add convergence tracking: resolved/still-open/new.
+4. Add convergence tracking: resolved/still-open/new. (DONE)
 5. Add profile-specific completion templates and patch suggestions.
 
 That should improve perceived speed and reduce the number of full-spec model calls. The biggest UX improvement will come from making each run tell the user exactly what to fix before rerunning, instead of just producing another large critique.
