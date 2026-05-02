@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	issueIDPattern   = regexp.MustCompile(`^ISSUE-\d{4}$`)
+	issueIDPattern    = regexp.MustCompile(`^ISSUE-\d{4}$`)
 	questionIDPattern = regexp.MustCompile(`^Q-\d{4}$`)
 )
 
@@ -77,6 +77,26 @@ func validateReport(r *schema.Report, lineCount int) error {
 			return fmt.Errorf("duplicate question ID %q", q.ID)
 		}
 		seenQuestionIDs[q.ID] = true
+	}
+	if err := validateMeta(r.Meta); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateMeta(meta schema.Meta) error {
+	if meta.Convergence == nil {
+		return nil
+	}
+	switch meta.Convergence.Mode {
+	case "", schema.ConvergenceModeAuto, schema.ConvergenceModeOn, schema.ConvergenceModeOff:
+	default:
+		return fmt.Errorf("meta.convergence.mode %q must be auto, on, or off", meta.Convergence.Mode)
+	}
+	switch meta.Convergence.Status {
+	case schema.ConvergenceStatusComplete, schema.ConvergenceStatusPartial, schema.ConvergenceStatusUnavailable:
+	default:
+		return fmt.Errorf("meta.convergence.status %q must be complete, partial, or unavailable", meta.Convergence.Status)
 	}
 	return nil
 }

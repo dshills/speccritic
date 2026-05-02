@@ -15,6 +15,7 @@ type markdownView struct {
 	PreflightIssues []schema.Issue
 	LLMIssues       []schema.Issue
 	HasIssues       bool
+	HasConvergence  bool
 }
 
 var mdTemplate = template.Must(template.New("report").Parse(`# SpecCritic Report
@@ -23,6 +24,19 @@ var mdTemplate = template.Must(template.New("report").Parse(`# SpecCritic Report
 **Score:** {{ .Summary.Score }}/100
 **Critical:** {{ .Summary.CriticalCount }} | **Warn:** {{ .Summary.WarnCount }} | **Info:** {{ .Summary.InfoCount }}
 > Note: counts reflect all findings; --severity-threshold may hide some from this output.
+{{ if .HasConvergence }}
+
+**Convergence:**
+- {{ .Meta.Convergence.Current.New }} new
+- {{ .Meta.Convergence.Current.StillOpen }} still open
+- {{ .Meta.Convergence.Previous.Resolved }} resolved
+- {{ .Meta.Convergence.Previous.Dropped }} dropped
+- {{ .Meta.Convergence.Current.Untracked }} current untracked
+- {{ .Meta.Convergence.Previous.Untracked }} previous untracked
+{{ range .Meta.Convergence.Notes }}
+> {{ . }}
+{{ end }}
+{{ end }}
 {{ if .HasIssues }}
 ---
 
@@ -90,6 +104,7 @@ func (r *markdownRenderer) Render(report *schema.Report) ([]byte, error) {
 
 func newMarkdownView(report *schema.Report) markdownView {
 	view := markdownView{Report: report}
+	view.HasConvergence = report.Meta.Convergence != nil && report.Meta.Convergence.Enabled
 	for _, issue := range report.Issues {
 		if hasTag(issue.Tags, "preflight") {
 			view.PreflightIssues = append(view.PreflightIssues, issue)

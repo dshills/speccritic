@@ -134,3 +134,11 @@ func TestParse_InvalidQuestionIDFormat(t *testing.T) {
 		t.Error("expected error for bad question ID format, got nil")
 	}
 }
+
+func TestParse_InvalidConvergenceStatus(t *testing.T) {
+	bad := strings.Replace(validJSON, `"meta": {}`, `"meta": {"convergence":{"enabled":true,"mode":"auto","status":"bad"}}`, 1)
+	_, err := Parse(bad, 10)
+	if err == nil || !strings.Contains(err.Error(), "meta.convergence.status") {
+		t.Fatalf("expected convergence status error, got %v", err)
+	}
+}

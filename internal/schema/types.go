@@ -38,6 +38,7 @@ type Meta struct {
 	Temperature  float64          `json:"temperature"`
 	ChunkSummary string           `json:"chunk_summary,omitempty"`
 	Incremental  *IncrementalMeta `json:"incremental,omitempty"`
+	Convergence  *ConvergenceMeta `json:"convergence,omitempty"`
 }
 
 // IncrementalMeta describes optional incremental rerun execution details.
@@ -52,6 +53,50 @@ type IncrementalMeta struct {
 	ReusedQuestions  int     `json:"reused_questions"`
 	DroppedFindings  int     `json:"dropped_findings"`
 	ChangedLineRatio float64 `json:"changed_line_ratio"`
+}
+
+// ConvergenceMeta describes optional report-to-report progress tracking.
+type ConvergenceMeta struct {
+	Enabled          bool                         `json:"enabled"`
+	Mode             string                       `json:"mode"`
+	Status           string                       `json:"status"`
+	PreviousSpecHash string                       `json:"previous_spec_hash"`
+	CurrentSpecHash  string                       `json:"current_spec_hash"`
+	Current          ConvergenceCurrentCounts     `json:"current"`
+	Previous         ConvergenceHistoricalCounts  `json:"previous"`
+	BySeverity       map[string]ConvergenceCounts `json:"by_severity"`
+	ByKind           map[string]ConvergenceCounts `json:"by_kind"`
+	Notes            []string                     `json:"notes"`
+}
+
+const (
+	ConvergenceModeAuto = "auto"
+	ConvergenceModeOn   = "on"
+	ConvergenceModeOff  = "off"
+
+	ConvergenceStatusComplete    = "complete"
+	ConvergenceStatusPartial     = "partial"
+	ConvergenceStatusUnavailable = "unavailable"
+)
+
+type ConvergenceCurrentCounts struct {
+	New       int `json:"new"`
+	StillOpen int `json:"still_open"`
+	Untracked int `json:"untracked"`
+}
+
+type ConvergenceHistoricalCounts struct {
+	Resolved  int `json:"resolved"`
+	Dropped   int `json:"dropped"`
+	Untracked int `json:"untracked"`
+}
+
+type ConvergenceCounts struct {
+	New       int `json:"new"`
+	StillOpen int `json:"still_open"`
+	Resolved  int `json:"resolved"`
+	Dropped   int `json:"dropped"`
+	Untracked int `json:"untracked"`
 }
 
 // Severity levels for issues and questions.

@@ -116,6 +116,34 @@ func TestNewRenderer_MarkdownSeparatesPreflightFindings(t *testing.T) {
 	}
 }
 
+func TestNewRenderer_MarkdownRendersConvergenceSummary(t *testing.T) {
+	report := sampleReport()
+	report.Meta.Convergence = &schema.ConvergenceMeta{
+		Enabled: true,
+		Mode:    "auto",
+		Status:  "complete",
+		Current: schema.ConvergenceCurrentCounts{
+			New:       2,
+			StillOpen: 4,
+		},
+		Previous: schema.ConvergenceHistoricalCounts{
+			Resolved: 3,
+			Dropped:  1,
+		},
+	}
+	r, err := NewRenderer("md")
+	if err != nil {
+		t.Fatalf("NewRenderer md: %v", err)
+	}
+	out, err := r.Render(report)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if !strings.Contains(string(out), "Convergence:") || !strings.Contains(string(out), "2 new") {
+		t.Fatalf("markdown missing convergence summary: %q", string(out))
+	}
+}
+
 func TestNewRenderer_MarkdownRejectsNilReport(t *testing.T) {
 	r, err := NewRenderer("md")
 	if err != nil {
