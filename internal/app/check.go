@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dshills/speccritic/internal/chunk"
+	"github.com/dshills/speccritic/internal/completion"
 	ctxpkg "github.com/dshills/speccritic/internal/context"
 	"github.com/dshills/speccritic/internal/convergence"
 	"github.com/dshills/speccritic/internal/incremental"
@@ -157,8 +158,13 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		if err := c.applyConvergence(req, report, convergence.CoveragePreflightOnly, errw); err != nil {
 			return nil, appError(ErrorInput, err)
 		}
+		if err := c.applyCompletion(req, s, report); err != nil {
+			return nil, appError(ErrorInput, err)
+		}
+		patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
 		return &CheckResult{
 			Report:       report,
+			PatchDiff:    patchDiff,
 			OriginalSpec: originalRaw,
 			LineCount:    s.LineCount,
 			Model:        "preflight",
@@ -222,6 +228,10 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 			if err := c.applyConvergence(req, result.Report, convergence.CoverageIncremental, errw); err != nil {
 				return nil, appError(ErrorInput, err)
 			}
+			if err := c.applyCompletion(req, s, result.Report); err != nil {
+				return nil, appError(ErrorInput, err)
+			}
+			result.PatchDiff = patchDiffForReport(originalRaw, result.Report, redactedSpec, errw)
 			return result, nil
 		}
 		logVerbose(errw, req.Verbose, "Incremental review fell back to full review")
@@ -236,10 +246,13 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		if err != nil {
 			return nil, appError(ErrorModelOutput, err)
 		}
-		patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
 		if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
 			return nil, appError(ErrorInput, err)
 		}
+		if err := c.applyCompletion(req, s, report); err != nil {
+			return nil, appError(ErrorInput, err)
+		}
+		patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
 		return &CheckResult{
 			Report:       report,
 			PatchDiff:    patchDiff,
@@ -257,6 +270,9 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
 	if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
+		return nil, appError(ErrorInput, err)
+	}
+	if err := c.applyCompletion(req, s, report); err != nil {
 		return nil, appError(ErrorInput, err)
 	}
 	patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
@@ -311,6 +327,42 @@ func (c *Checker) applyConvergence(req CheckRequest, report *schema.Report, cove
 	result := convergence.CompareReports(prev.Report, report, cfg, compat)
 	report.Meta.Convergence = convergence.ToSchemaMeta(result, cfg.Mode, prev.Report.Input.SpecHash, report.Input.SpecHash)
 	logVerbose(errw, req.Verbose, "Convergence: %d new, %d still open, %d resolved", result.Summary.Current.New, result.Summary.Current.StillOpen, result.Summary.Previous.Resolved)
+	return nil
+}
+
+func (c *Checker) applyCompletion(req CheckRequest, s *spec.Spec, report *schema.Report) error {
+	cfg := completionConfigFromRequest(req)
+	if cfg.Mode == completion.ModeOff || (cfg.Mode == completion.ModeAuto && !cfg.Suggestions) {
+		return nil
+	}
+	tmpl, err := completion.GetTemplate(cfg.Template, req.Profile)
+	if err != nil {
+		return err
+	}
+	candidates := completion.GenerateCandidates(completion.Input{
+		SpecText:  s.Raw,
+		Profile:   req.Profile,
+		Template:  tmpl,
+		Issues:    report.Issues,
+		Questions: report.Questions,
+		Config:    cfg,
+	})
+	result, issues, err := completion.BuildResult(completion.BuildInput{
+		OriginalSpec:    s.Raw,
+		Candidates:      candidates,
+		ExistingPatches: report.Patches,
+		Issues:          report.Issues,
+		Config:          cfg,
+		Template:        tmpl.Name,
+	})
+	if err != nil {
+		return err
+	}
+	report.Issues = issues
+	report.Patches = result.Patches
+	meta := report.Meta
+	meta.Completion = &result.Meta
+	report.Meta = meta
 	return nil
 }
 
@@ -870,6 +922,9 @@ func validateRequest(req CheckRequest) error {
 			return err
 		}
 	}
+	if err := validateCompletionRequest(req); err != nil {
+		return err
+	}
 	if req.Source == SourceWeb {
 		if req.SpecPath != "" {
 			return fmt.Errorf("web checks must not use SpecPath")
@@ -883,6 +938,21 @@ func validateRequest(req CheckRequest) error {
 	}
 	if req.SpecPath != "" && req.SpecText != "" {
 		return fmt.Errorf("spec path and spec text are mutually exclusive")
+	}
+	return nil
+}
+
+func validateCompletionRequest(req CheckRequest) error {
+	switch req.CompletionMode {
+	case "", schema.CompletionModeAuto, schema.CompletionModeOn, schema.CompletionModeOff:
+	default:
+		return fmt.Errorf("completion mode %q must be auto, on, or off", req.CompletionMode)
+	}
+	if req.CompletionTemplate != "" && !schema.IsCompletionInputTemplateName(req.CompletionTemplate) {
+		return fmt.Errorf("completion template %q must be one of %s", req.CompletionTemplate, strings.Join(schema.CompletionInputTemplateNames(), ", "))
+	}
+	if req.CompletionMaxPatches < 0 {
+		return fmt.Errorf("completion max patches must be >= 0, got %d", req.CompletionMaxPatches)
 	}
 	return nil
 }
@@ -918,6 +988,23 @@ func incrementalConfigFromRequest(req CheckRequest) incremental.Config {
 	cfg.Profile = req.Profile
 	cfg.Strict = req.Strict
 	cfg.SeverityThreshold = req.SeverityThreshold
+	return cfg
+}
+
+func completionConfigFromRequest(req CheckRequest) completion.Config {
+	cfg := completion.Config{
+		Suggestions:   req.CompletionSuggestions,
+		Mode:          completion.ModeAuto,
+		Template:      req.CompletionTemplate,
+		MaxPatches:    req.CompletionMaxPatches,
+		OpenDecisions: req.CompletionOpenDecisions,
+	}
+	if cfg.Template == "" {
+		cfg.Template = schema.CompletionTemplateProfile
+	}
+	if req.CompletionMode != "" {
+		cfg.Mode = completion.Mode(req.CompletionMode)
+	}
 	return cfg
 }
 

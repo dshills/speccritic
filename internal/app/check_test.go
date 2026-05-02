@@ -380,6 +380,78 @@ func TestCheckerPreflightOnlyAddsConvergenceMetadata(t *testing.T) {
 	}
 }
 
+func TestCheckerPreflightOnlyAddsCompletion(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) {
+		return nil, errors.New("provider should not be called")
+	}}
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:                 "test",
+		SpecName:                "SPEC.md",
+		SpecText:                "# Spec\n",
+		Profile:                 "general",
+		SeverityThreshold:       "info",
+		Temperature:             0.2,
+		MaxTokens:               1000,
+		Preflight:               true,
+		PreflightMode:           "only",
+		CompletionSuggestions:   true,
+		CompletionMode:          "auto",
+		CompletionTemplate:      "profile",
+		CompletionMaxPatches:    8,
+		CompletionOpenDecisions: true,
+		Source:                  SourceCLI,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if result.Report.Meta.Completion == nil || result.Report.Meta.Completion.GeneratedPatches == 0 {
+		t.Fatalf("completion meta = %#v patches=%#v", result.Report.Meta.Completion, result.Report.Patches)
+	}
+	if !hasIssueTag(result.Report.Issues[0].Tags, "completion-suggested") {
+		t.Fatalf("first issue tags = %#v", result.Report.Issues[0].Tags)
+	}
+}
+
+func TestCheckerCompletionModeOnFailsRequiredUnsafePatch(t *testing.T) {
+	checker := NewChecker()
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:                 "test",
+		SpecName:                "SPEC.md",
+		SpecText:                "same\nsame\n",
+		Profile:                 "general",
+		SeverityThreshold:       "info",
+		Preflight:               true,
+		PreflightMode:           "only",
+		CompletionMode:          "on",
+		CompletionTemplate:      "profile",
+		CompletionMaxPatches:    8,
+		CompletionOpenDecisions: true,
+		Source:                  SourceCLI,
+	})
+	if err == nil || !strings.Contains(err.Error(), "required completion patch") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCheckerRejectsInvalidCompletionMode(t *testing.T) {
+	checker := NewChecker()
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "# Spec\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		CompletionMode:    "bad",
+		Source:            SourceCLI,
+	})
+	if err == nil || !strings.Contains(err.Error(), "completion mode") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCheckerConvergenceOnModeRejectsInvalidPreviousReport(t *testing.T) {
 	checker := NewChecker()
 	_, err := checker.Check(context.Background(), CheckRequest{
@@ -460,6 +532,38 @@ func TestCheckerPreflightWarnCallsProviderAndMergesIssues(t *testing.T) {
 	}
 	if !hasIssue(result.Report.Issues, "PREFLIGHT-TODO-001") {
 		t.Fatalf("issues = %#v, want merged preflight issue", result.Report.Issues)
+	}
+}
+
+func TestCheckerFullReviewAddsCompletion(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &fakeProvider{content: `{"issues":[{"id":"ISSUE-0001","severity":"WARN","category":"MISSING_FAILURE_MODE","title":"Missing timeout behavior","description":"d","evidence":[{"path":"SPEC.md","line_start":3,"line_end":3,"quote":"The system must work."}],"impact":"i","recommendation":"r","blocking":false,"tags":[]}],"questions":[],"patches":[]}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:                 "test",
+		SpecName:                "SPEC.md",
+		SpecText:                "# Spec\n\n## Purpose\nThe system must work.\n",
+		Profile:                 "general",
+		SeverityThreshold:       "info",
+		Temperature:             0.2,
+		MaxTokens:               1000,
+		CompletionSuggestions:   true,
+		CompletionMode:          "auto",
+		CompletionTemplate:      "profile",
+		CompletionMaxPatches:    8,
+		CompletionOpenDecisions: true,
+		Source:                  SourceCLI,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if result.Report.Meta.Completion == nil || result.Report.Meta.Completion.GeneratedPatches != 1 {
+		t.Fatalf("completion meta = %#v patches=%#v", result.Report.Meta.Completion, result.Report.Patches)
+	}
+	if result.Report.Summary.WarnCount != 1 || result.Report.Summary.Verdict != schema.VerdictValidWithGaps {
+		t.Fatalf("summary changed: %#v", result.Report.Summary)
 	}
 }
 
