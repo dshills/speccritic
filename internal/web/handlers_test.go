@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -176,12 +177,27 @@ func TestAssets(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	for _, path := range []string{"/assets/style.css", "/assets/app.js"} {
+	for _, tc := range []struct {
+		path        string
+		contentType string
+	}{
+		{"/assets/style.css", "text/css"},
+		{"/assets/app.js", "text/javascript"},
+		{"/assets/favicon.svg", "image/svg+xml"},
+	} {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		server.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("%s status = %d", path, rec.Code)
+			t.Errorf("%s status = %d", tc.path, rec.Code)
+			continue
+		}
+		contentType := rec.Header().Get("Content-Type")
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err != nil {
+			t.Errorf("%s invalid content-type %q: %v", tc.path, contentType, err)
+		} else if mediaType != tc.contentType {
+			t.Errorf("%s content-type = %q, want %q", tc.path, mediaType, tc.contentType)
 		}
 	}
 }
