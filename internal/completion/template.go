@@ -60,9 +60,11 @@ type Candidate struct {
 	Template          string
 	Section           string
 	// TargetLine is the 1-based target line in the current spec. Zero means unknown.
-	TargetLine int
-	Status     Status
-	Text       string
+	TargetLine   int
+	Status       Status
+	Text         string
+	Severity     schema.Severity
+	SectionOrder int
 }
 
 type Result struct {
