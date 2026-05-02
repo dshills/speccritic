@@ -86,13 +86,17 @@ func setTestEnv(t *testing.T) {
 // runCheckFlags returns a checkFlags populated with safe defaults for testing.
 func runCheckFlags() checkFlags {
 	return checkFlags{
-		format:            "json",
-		profileName:       "general",
-		severityThreshold: "info",
-		temperature:       0.2,
-		maxTokens:         4096,
-		preflight:         false,
-		preflightMode:     "warn",
+		format:                  "json",
+		profileName:             "general",
+		severityThreshold:       "info",
+		temperature:             0.2,
+		maxTokens:               4096,
+		preflight:               false,
+		preflightMode:           "warn",
+		completionMode:          "auto",
+		completionTemplate:      "profile",
+		completionMaxPatches:    8,
+		completionOpenDecisions: true,
 	}
 }
 
@@ -416,6 +420,97 @@ func TestApplyEnvDefaultsDoesNotMixModelFlagWithProviderEnv(t *testing.T) {
 
 	if flags.llmProvider != "" || flags.llmModel != "gpt-5" {
 		t.Fatalf("provider/model = %q/%q, want empty/gpt-5", flags.llmProvider, flags.llmModel)
+	}
+}
+
+func TestValidateFlagsCompletion(t *testing.T) {
+	flags := runCheckFlags()
+	flags.completionMode = "sometimes"
+	if err := validateFlags(flags); err == nil || !strings.Contains(err.Error(), "--completion-mode") {
+		t.Fatalf("expected completion mode validation error, got %v", err)
+	}
+
+	flags = runCheckFlags()
+	flags.completionTemplate = "custom"
+	if err := validateFlags(flags); err == nil || !strings.Contains(err.Error(), "--completion-template") {
+		t.Fatalf("expected completion template validation error, got %v", err)
+	}
+
+	flags = runCheckFlags()
+	flags.completionMaxPatches = -1
+	if err := validateFlags(flags); err == nil || !strings.Contains(err.Error(), "--completion-max-patches") {
+		t.Fatalf("expected completion max patches validation error, got %v", err)
+	}
+}
+
+func TestApplyEnvDefaultsCompletion(t *testing.T) {
+	t.Setenv("SPECCRITIC_COMPLETION_SUGGESTIONS", "true")
+	t.Setenv("SPECCRITIC_COMPLETION_MODE", "on")
+	t.Setenv("SPECCRITIC_COMPLETION_TEMPLATE", "backend-api")
+	t.Setenv("SPECCRITIC_COMPLETION_MAX_PATCHES", "3")
+	t.Setenv("SPECCRITIC_COMPLETION_OPEN_DECISIONS", "false")
+
+	cmd := &cobra.Command{Use: "check"}
+	flags := runCheckFlags()
+	cmd.Flags().BoolVar(&flags.completionSuggestions, "completion-suggestions", false, "")
+	cmd.Flags().StringVar(&flags.completionMode, "completion-mode", "auto", "")
+	cmd.Flags().StringVar(&flags.completionTemplate, "completion-template", "profile", "")
+	cmd.Flags().IntVar(&flags.completionMaxPatches, "completion-max-patches", 8, "")
+	cmd.Flags().BoolVar(&flags.completionOpenDecisions, "completion-open-decisions", true, "")
+
+	applyEnvDefaults(cmd, &flags)
+
+	if !flags.completionSuggestions {
+		t.Fatal("completionSuggestions = false, want true")
+	}
+	if flags.completionMode != "on" {
+		t.Fatalf("completionMode = %q, want on", flags.completionMode)
+	}
+	if flags.completionTemplate != "backend-api" {
+		t.Fatalf("completionTemplate = %q, want backend-api", flags.completionTemplate)
+	}
+	if flags.completionMaxPatches != 3 {
+		t.Fatalf("completionMaxPatches = %d, want 3", flags.completionMaxPatches)
+	}
+	if flags.completionOpenDecisions {
+		t.Fatal("completionOpenDecisions = true, want false")
+	}
+	if err := validateFlags(flags); err != nil {
+		t.Fatalf("validateFlags: %v", err)
+	}
+}
+
+func TestApplyEnvDefaultsCompletionInvalidEnv(t *testing.T) {
+	t.Setenv("SPECCRITIC_COMPLETION_MAX_PATCHES", "nope")
+
+	cmd := &cobra.Command{Use: "check"}
+	flags := runCheckFlags()
+	cmd.Flags().IntVar(&flags.completionMaxPatches, "completion-max-patches", 8, "")
+
+	applyEnvDefaults(cmd, &flags)
+
+	if err := validateFlags(flags); err == nil || !strings.Contains(err.Error(), "SPECCRITIC_COMPLETION_MAX_PATCHES") {
+		t.Fatalf("expected invalid completion env error, got %v", err)
+	}
+}
+
+func TestApplyEnvDefaultsCompletionCLITakesPrecedence(t *testing.T) {
+	t.Setenv("SPECCRITIC_COMPLETION_MODE", "bad")
+
+	cmd := &cobra.Command{Use: "check"}
+	flags := runCheckFlags()
+	cmd.Flags().StringVar(&flags.completionMode, "completion-mode", "auto", "")
+	if err := cmd.Flags().Set("completion-mode", "off"); err != nil {
+		t.Fatalf("set completion-mode: %v", err)
+	}
+
+	applyEnvDefaults(cmd, &flags)
+
+	if flags.completionMode != "off" {
+		t.Fatalf("completionMode = %q, want off", flags.completionMode)
+	}
+	if err := validateFlags(flags); err != nil {
+		t.Fatalf("validateFlags: %v", err)
 	}
 }
 

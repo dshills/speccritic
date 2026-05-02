@@ -142,3 +142,38 @@ func TestParse_InvalidConvergenceStatus(t *testing.T) {
 		t.Fatalf("expected convergence status error, got %v", err)
 	}
 }
+
+func TestParse_ValidCompletionMeta(t *testing.T) {
+	raw := strings.Replace(validJSON, `"meta": {}`, `"meta": {"completion":{"enabled":true,"mode":"auto","template":"backend-api","generated_patches":1,"skipped_suggestions":2,"open_decisions":3}}`, 1)
+	report, err := Parse(raw, 10)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if report.Meta.Completion == nil || report.Meta.Completion.Template != "backend-api" {
+		t.Fatalf("completion meta = %#v", report.Meta.Completion)
+	}
+}
+
+func TestParse_InvalidCompletionMode(t *testing.T) {
+	raw := strings.Replace(validJSON, `"meta": {}`, `"meta": {"completion":{"enabled":true,"mode":"bad","template":"backend-api"}}`, 1)
+	_, err := Parse(raw, 10)
+	if err == nil || !strings.Contains(err.Error(), "meta.completion.mode") {
+		t.Fatalf("expected completion mode error, got %v", err)
+	}
+}
+
+func TestParse_InvalidCompletionTemplate(t *testing.T) {
+	raw := strings.Replace(validJSON, `"meta": {}`, `"meta": {"completion":{"enabled":true,"mode":"auto","template":"profile"}}`, 1)
+	_, err := Parse(raw, 10)
+	if err == nil || !strings.Contains(err.Error(), "meta.completion.template") {
+		t.Fatalf("expected completion template error, got %v", err)
+	}
+}
+
+func TestParse_InvalidCompletionCounter(t *testing.T) {
+	raw := strings.Replace(validJSON, `"meta": {}`, `"meta": {"completion":{"enabled":true,"mode":"auto","template":"backend-api","generated_patches":-1}}`, 1)
+	_, err := Parse(raw, 10)
+	if err == nil || !strings.Contains(err.Error(), "meta.completion.generated_patches") {
+		t.Fatalf("expected completion counter error, got %v", err)
+	}
+}

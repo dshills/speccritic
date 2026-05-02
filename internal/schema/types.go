@@ -39,6 +39,64 @@ type Meta struct {
 	ChunkSummary string           `json:"chunk_summary,omitempty"`
 	Incremental  *IncrementalMeta `json:"incremental,omitempty"`
 	Convergence  *ConvergenceMeta `json:"convergence,omitempty"`
+	Completion   *CompletionMeta  `json:"completion,omitempty"`
+}
+
+// CompletionMeta describes optional profile-specific completion generation.
+type CompletionMeta struct {
+	Enabled            bool   `json:"enabled"`
+	Mode               string `json:"mode"`
+	Template           string `json:"template"`
+	GeneratedPatches   int    `json:"generated_patches"`
+	SkippedSuggestions int    `json:"skipped_suggestions"`
+	OpenDecisions      int    `json:"open_decisions"`
+}
+
+const (
+	CompletionModeAuto = "auto"
+	CompletionModeOn   = "on"
+	CompletionModeOff  = "off"
+
+	CompletionTemplateProfile         = "profile"
+	CompletionTemplateGeneral         = "general"
+	CompletionTemplateBackendAPI      = "backend-api"
+	CompletionTemplateRegulatedSystem = "regulated-system"
+	CompletionTemplateEventDriven     = "event-driven"
+)
+
+var completionTemplateNames = []string{
+	CompletionTemplateGeneral,
+	CompletionTemplateBackendAPI,
+	CompletionTemplateRegulatedSystem,
+	CompletionTemplateEventDriven,
+}
+
+// CompletionTemplateNames returns the concrete template names accepted in report metadata.
+func CompletionTemplateNames() []string {
+	return append([]string(nil), completionTemplateNames...)
+}
+
+// CompletionInputTemplateNames returns template names accepted from user configuration.
+func CompletionInputTemplateNames() []string {
+	return append([]string{CompletionTemplateProfile}, completionTemplateNames...)
+}
+
+// IsCompletionTemplateName reports whether name is a concrete completion template name.
+func IsCompletionTemplateName(name string) bool {
+	for _, valid := range completionTemplateNames {
+		if name == valid {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCompletionInputTemplateName reports whether name is accepted from user configuration.
+func IsCompletionInputTemplateName(name string) bool {
+	if name == CompletionTemplateProfile {
+		return true
+	}
+	return IsCompletionTemplateName(name)
 }
 
 // IncrementalMeta describes optional incremental rerun execution details.

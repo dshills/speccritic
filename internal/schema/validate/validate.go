@@ -85,6 +85,25 @@ func validateReport(r *schema.Report, lineCount int) error {
 }
 
 func validateMeta(meta schema.Meta) error {
+	if meta.Completion != nil {
+		switch meta.Completion.Mode {
+		case schema.CompletionModeAuto, schema.CompletionModeOn, schema.CompletionModeOff:
+		default:
+			return fmt.Errorf("meta.completion.mode %q must be auto, on, or off", meta.Completion.Mode)
+		}
+		if !schema.IsCompletionTemplateName(meta.Completion.Template) {
+			return fmt.Errorf("meta.completion.template %q must be one of %s", meta.Completion.Template, strings.Join(schema.CompletionTemplateNames(), ", "))
+		}
+		if meta.Completion.GeneratedPatches < 0 {
+			return fmt.Errorf("meta.completion.generated_patches must be >= 0, got %d", meta.Completion.GeneratedPatches)
+		}
+		if meta.Completion.SkippedSuggestions < 0 {
+			return fmt.Errorf("meta.completion.skipped_suggestions must be >= 0, got %d", meta.Completion.SkippedSuggestions)
+		}
+		if meta.Completion.OpenDecisions < 0 {
+			return fmt.Errorf("meta.completion.open_decisions must be >= 0, got %d", meta.Completion.OpenDecisions)
+		}
+	}
 	if meta.Convergence == nil {
 		return nil
 	}

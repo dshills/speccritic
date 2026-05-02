@@ -75,6 +75,12 @@ type checkFlags struct {
 	convergenceMode                 string
 	convergenceStrict               bool
 	convergenceReport               bool
+	completionSuggestions           bool
+	completionMode                  string
+	completionTemplate              string
+	completionMaxPatches            int
+	completionOpenDecisions         bool
+	envErrors                       []string
 }
 
 func main() {
@@ -135,6 +141,11 @@ func main() {
 	f.StringVar(&flags.convergenceMode, "convergence-mode", "auto", "Convergence mode: auto, on, or off")
 	f.BoolVar(&flags.convergenceStrict, "convergence-strict", false, "Require strict convergence compatibility checks")
 	f.BoolVar(&flags.convergenceReport, "convergence-report", true, "Include optional meta.convergence details when convergence is requested")
+	f.BoolVar(&flags.completionSuggestions, "completion-suggestions", false, "Generate profile-specific advisory completion patches after review")
+	f.StringVar(&flags.completionMode, "completion-mode", "auto", "Completion mode: auto, on, or off")
+	f.StringVar(&flags.completionTemplate, "completion-template", "profile", "Completion template: profile, general, backend-api, regulated-system, or event-driven")
+	f.IntVar(&flags.completionMaxPatches, "completion-max-patches", 8, "Maximum completion patches to emit")
+	f.BoolVar(&flags.completionOpenDecisions, "completion-open-decisions", true, "Insert OPEN DECISION placeholders instead of inventing unstated behavior")
 
 	root.AddCommand(checkCmd)
 
@@ -192,6 +203,11 @@ func runCheck(specPath string, flags checkFlags) error {
 		ConvergenceMode:                 flags.convergenceMode,
 		ConvergenceStrict:               flags.convergenceStrict,
 		ConvergenceReport:               flags.convergenceReport,
+		CompletionSuggestions:           flags.completionSuggestions,
+		CompletionMode:                  flags.completionMode,
+		CompletionTemplate:              flags.completionTemplate,
+		CompletionMaxPatches:            flags.completionMaxPatches,
+		CompletionOpenDecisions:         flags.completionOpenDecisions,
 		Source:                          app.SourceCLI,
 		ErrWriter:                       os.Stderr,
 	})
@@ -283,6 +299,9 @@ func cloneReport(report *schema.Report) *schema.Report {
 
 // validateFlags returns an error if any flag value is invalid.
 func validateFlags(flags checkFlags) error {
+	if len(flags.envErrors) > 0 {
+		return fmt.Errorf("%s", strings.Join(flags.envErrors, "; "))
+	}
 	switch flags.format {
 	case "json", "md":
 	default:
@@ -356,6 +375,17 @@ func validateFlags(flags checkFlags) error {
 	default:
 		return fmt.Errorf("--preflight-mode must be warn, gate, or only, got %q", flags.preflightMode)
 	}
+	switch flags.completionMode {
+	case schema.CompletionModeAuto, schema.CompletionModeOn, schema.CompletionModeOff:
+	default:
+		return fmt.Errorf("--completion-mode must be auto, on, or off, got %q", flags.completionMode)
+	}
+	if !schema.IsCompletionInputTemplateName(flags.completionTemplate) {
+		return fmt.Errorf("--completion-template must be one of %s, got %q", strings.Join(schema.CompletionInputTemplateNames(), ", "), flags.completionTemplate)
+	}
+	if flags.completionMaxPatches < 0 {
+		return fmt.Errorf("--completion-max-patches must be >= 0, got %d", flags.completionMaxPatches)
+	}
 
 	return nil
 }
@@ -418,6 +448,36 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 			}
 		}
 	}
+	envBoolStrict := func(flagName, envKey string, dst *bool) {
+		if cmd.Flags().Changed(flagName) {
+			return
+		}
+		v := os.Getenv(envKey)
+		if v == "" {
+			return
+		}
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			flags.envErrors = append(flags.envErrors, fmt.Sprintf("%s=%q is invalid: %v", envKey, v, err))
+			return
+		}
+		*dst = b
+	}
+	envIntStrict := func(flagName, envKey string, dst *int) {
+		if cmd.Flags().Changed(flagName) {
+			return
+		}
+		v := os.Getenv(envKey)
+		if v == "" {
+			return
+		}
+		i, err := strconv.Atoi(v)
+		if err != nil {
+			flags.envErrors = append(flags.envErrors, fmt.Sprintf("%s=%q is invalid: %v", envKey, v, err))
+			return
+		}
+		*dst = i
+	}
 	envStringArray := func(flagName, envKey string, dst *[]string) {
 		if cmd.Flags().Changed(flagName) {
 			return
@@ -472,6 +532,11 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 	envStr("convergence-mode", "SPECCRITIC_CONVERGENCE_MODE", &flags.convergenceMode)
 	envBool("convergence-strict", "SPECCRITIC_CONVERGENCE_STRICT", &flags.convergenceStrict)
 	envBool("convergence-report", "SPECCRITIC_CONVERGENCE_REPORT", &flags.convergenceReport)
+	envBoolStrict("completion-suggestions", "SPECCRITIC_COMPLETION_SUGGESTIONS", &flags.completionSuggestions)
+	envStr("completion-mode", "SPECCRITIC_COMPLETION_MODE", &flags.completionMode)
+	envStr("completion-template", "SPECCRITIC_COMPLETION_TEMPLATE", &flags.completionTemplate)
+	envIntStrict("completion-max-patches", "SPECCRITIC_COMPLETION_MAX_PATCHES", &flags.completionMaxPatches)
+	envBoolStrict("completion-open-decisions", "SPECCRITIC_COMPLETION_OPEN_DECISIONS", &flags.completionOpenDecisions)
 }
 
 // logVerbose writes a timestamped message to stderr when verbose mode is enabled.

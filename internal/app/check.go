@@ -101,6 +101,11 @@ type CheckRequest struct {
 	ConvergenceMode                 string
 	ConvergenceStrict               bool
 	ConvergenceReport               bool
+	CompletionSuggestions           bool
+	CompletionMode                  string
+	CompletionTemplate              string
+	CompletionMaxPatches            int
+	CompletionOpenDecisions         bool
 	Source                          Source
 	ErrWriter                       io.Writer
 }
