@@ -128,11 +128,12 @@ From the browser:
 
 1. Choose a Markdown or text spec file. Manual text entry is intentionally not supported.
 2. Select a profile and severity threshold.
-3. Optionally upload a previous JSON result and previous spec file for an incremental rerun.
-4. Optionally enable strict mode or disable the default preflight pass.
-5. Click `Check spec`.
+3. Optionally upload a previous JSON result for convergence tracking and/or incremental rerun, and a previous spec file when using incremental rerun.
+4. Optionally set convergence mode to track finding status across review iterations.
+5. Optionally enable strict mode or disable the default preflight pass.
+6. Click `Check spec`.
 
-The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, incremental reuse metadata is shown in the summary when available, and clicking any finding opens its detail in a modal so the annotated document stays in place.
+The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, incremental and convergence metadata are shown in the summary when available, and clicking any finding opens its detail in a modal so the annotated document stays in place.
 
 Use a different address or port with `WEB_ADDR`:
 
@@ -295,6 +296,35 @@ Important behavior:
 - `--incremental-report` adds optional `meta.incremental` details to JSON output. Markdown output keeps the normal human-readable report shape.
 - The web UI exposes the same workflow with optional `Previous JSON result`, `Previous spec file`, and `Mode` controls. Uploaded previous results are used only for the current request.
 
+### Convergence Tracking
+
+Convergence tracking compares the current review result with a previous SpecCritic JSON report and reports progress across iterations. It classifies active findings as `new` or `still_open`, and historical findings as `resolved`, `dropped`, or `untracked`.
+
+Typical CLI workflow:
+
+```bash
+# 1. Save a baseline JSON result.
+speccritic check SPEC.md --format json --out review-1.json
+
+# 2. Edit SPEC.md, then compare the new result with the baseline.
+speccritic check SPEC.md \
+  --convergence-from review-1.json \
+  --format md
+```
+
+Use `--convergence-mode auto` for normal iteration. It keeps the current review successful even when comparison is partial or unavailable, including strict compatibility mismatches. Use `--convergence-mode on` when a missing, invalid, or strictly incompatible previous report should fail with exit code `3`. Use `--convergence-mode off` to ignore a configured convergence baseline.
+
+Important behavior:
+
+- Convergence runs after the current review is complete.
+- Current score, verdict, patches, and `--fail-on` behavior are based only on current findings.
+- Resolved historical findings do not affect the current score or verdict.
+- `dropped` means a historical finding no longer participates because the current threshold filters it out or its prior content is no longer applicable.
+- Preflight-only runs cannot prove prior LLM findings are resolved, so those findings are marked `untracked` unless they match current preflight findings.
+- Convergence matching is local and does not send previous report contents to a provider.
+- When `--convergence-report` is enabled, JSON output includes `meta.convergence` and Markdown output includes a human-readable convergence summary.
+- The web UI can use the uploaded previous JSON result for convergence tracking and/or incremental rerun; incremental rerun also needs the previous spec file when the spec changed. Uploaded previous results are not stored server-side.
+
 ### Flags
 
 ```
@@ -337,8 +367,12 @@ speccritic check <spec-file> [flags]
 | `--incremental-context-lines` | `20` | Neighboring unchanged lines included around changed sections |
 | `--incremental-strict-reuse` | `true` | Reuse prior findings only when evidence remaps exactly or by unchanged line hash |
 | `--incremental-report` | `false` | Include optional incremental metadata in JSON output |
+| `--convergence-from` | (none) | Previous SpecCritic JSON report used as the convergence baseline |
+| `--convergence-mode` | `auto` | Convergence mode: `auto`, `on`, or `off` |
+| `--convergence-strict` | `false` | Require strict profile, strict-mode, threshold, and redaction compatibility; in `on` mode, mismatches exit 3 |
+| `--convergence-report` | `true` | Include optional convergence metadata when convergence is requested |
 
-Chunking and incremental environment defaults are also supported when the matching flag is not provided:
+Chunking, incremental, and convergence environment defaults are also supported when the matching flag is not provided:
 
 | Env Var | Matching Flag |
 |---------|---------------|
@@ -357,6 +391,10 @@ Chunking and incremental environment defaults are also supported when the matchi
 | `SPECCRITIC_INCREMENTAL_CONTEXT_LINES` | `--incremental-context-lines` |
 | `SPECCRITIC_INCREMENTAL_STRICT_REUSE` | `--incremental-strict-reuse` |
 | `SPECCRITIC_INCREMENTAL_REPORT` | `--incremental-report` |
+| `SPECCRITIC_CONVERGENCE_FROM` | `--convergence-from` |
+| `SPECCRITIC_CONVERGENCE_MODE` | `--convergence-mode` |
+| `SPECCRITIC_CONVERGENCE_STRICT` | `--convergence-strict` |
+| `SPECCRITIC_CONVERGENCE_REPORT` | `--convergence-report` |
 
 Validation rules:
 
@@ -371,6 +409,8 @@ Validation rules:
 - `--incremental-max-change-ratio` must be `> 0` and `<= 1`.
 - `--incremental-max-remap-failure-ratio` must be `>= 0` and `<= 1`.
 - `--incremental-context-lines` must be `>= 0`.
+- `--convergence-mode` must be `auto`, `on`, or `off`.
+- `--convergence-mode on` requires `--convergence-from`.
 
 ## Profiles
 
