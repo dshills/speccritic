@@ -94,6 +94,7 @@ type TrackedFinding struct {
 	Severity    schema.Severity
 	Category    string
 	Text        string
+	SectionPath []string
 	Evidence    []schema.Evidence
 	Tags        []string
 	SourceIndex int
