@@ -514,6 +514,64 @@ func TestApplyEnvDefaultsCompletionCLITakesPrecedence(t *testing.T) {
 	}
 }
 
+func TestRunCheckCompletionPreflightPatchOut(t *testing.T) {
+	specFile := writeTempSpec(t, "# Spec\n")
+	flags := runCheckFlags()
+	flags.preflight = true
+	flags.preflightMode = "only"
+	flags.completionSuggestions = true
+	flags.out = filepath.Join(t.TempDir(), "out.json")
+	flags.patchOut = filepath.Join(t.TempDir(), "completion.patch")
+
+	if err := runCheck(specFile, flags); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+	report := readJSONReport(t, flags.out)
+	if report.Meta.Completion == nil || report.Meta.Completion.GeneratedPatches == 0 {
+		t.Fatalf("completion meta = %#v patches=%#v", report.Meta.Completion, report.Patches)
+	}
+	patchData, err := os.ReadFile(flags.patchOut)
+	if err != nil {
+		t.Fatalf("read patchOut: %v", err)
+	}
+	if !strings.Contains(string(patchData), "# completion patch for") {
+		t.Fatalf("patch output missing completion comment: %s", string(patchData))
+	}
+}
+
+func TestRunCheckCompletionModeOffOmitsMetadata(t *testing.T) {
+	specFile := writeTempSpec(t, "# Spec\n")
+	flags := runCheckFlags()
+	flags.preflight = true
+	flags.preflightMode = "only"
+	flags.completionSuggestions = true
+	flags.completionMode = "off"
+	flags.out = filepath.Join(t.TempDir(), "out.json")
+
+	if err := runCheck(specFile, flags); err != nil {
+		t.Fatalf("runCheck: %v", err)
+	}
+	report := readJSONReport(t, flags.out)
+	if report.Meta.Completion != nil {
+		t.Fatalf("completion meta = %#v, want nil", report.Meta.Completion)
+	}
+}
+
+func TestRunCheckCompletionModeOnUnsafeExit3(t *testing.T) {
+	specFile := writeTempSpec(t, "same\nsame\n")
+	flags := runCheckFlags()
+	flags.preflight = true
+	flags.preflightMode = "only"
+	flags.completionMode = "on"
+	flags.out = filepath.Join(t.TempDir(), "out.json")
+
+	err := runCheck(specFile, flags)
+	var ee *exitErr
+	if err == nil || !asExitErr(err, &ee) || ee.code != 3 {
+		t.Fatalf("error = %#v, want exit code 3", err)
+	}
+}
+
 func TestRunCheck_RetryOnInvalidResponse(t *testing.T) {
 	setTestEnv(t)
 
@@ -607,6 +665,28 @@ func TestRunCheck_OutputContainsInputMetadata(t *testing.T) {
 // asExitErr is an errors.As helper for *exitErr.
 func asExitErr(err error, out **exitErr) bool {
 	return errors.As(err, out)
+}
+
+func writeTempSpec(t *testing.T, text string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "SPEC.md")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatalf("write temp spec: %v", err)
+	}
+	return path
+}
+
+func readJSONReport(t *testing.T, path string) schema.Report {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read report: %v", err)
+	}
+	var report schema.Report
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, data)
+	}
+	return report
 }
 
 func reportHasIssue(issues []schema.Issue, id string) bool {
