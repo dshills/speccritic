@@ -128,12 +128,13 @@ From the browser:
 
 1. Choose a Markdown or text spec file. Manual text entry is intentionally not supported.
 2. Select a profile and severity threshold.
-3. Optionally upload a previous JSON result for convergence tracking and/or incremental rerun, and a previous spec file when using incremental rerun.
-4. Optionally set convergence mode to track finding status across review iterations.
-5. Optionally enable strict mode or disable the default preflight pass.
-6. Click `Check spec`.
+3. Optionally enter the local spec path and open it in the default editor, VS Code, Xcode, or MacVim.
+4. Optionally upload a previous JSON result for convergence tracking and/or incremental rerun, and a previous spec file when using incremental rerun.
+5. Optionally set convergence mode to track finding status across review iterations.
+6. Optionally enable strict mode or disable the default preflight pass.
+7. Click `Check spec`.
 
-The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, incremental and convergence metadata are shown in the summary when available, and clicking any finding opens its detail in a modal so the annotated document stays in place.
+The left pane lets you choose the provider and model before the review starts. It defaults to the configured environment values when present, otherwise it uses the normal SpecCritic defaults. When the provider changes, the web UI queries that provider's models API using the matching local API key and refreshes the model dropdown; if the query fails, you can still type a model manually. The browser upload field does not reveal the original file path, so opening a spec in an external editor requires entering the local path explicitly. External editor opening is available only when the web server is bound to a loopback address, and the path must be inside the project directory. The `Check spec` button is disabled until a file is selected and remains disabled while a check is running. During review, the page shows a running indicator and elapsed timer. When the check completes, findings are shown beside the annotated spec; deterministic findings are labeled `Preflight`, incremental and convergence metadata are shown in the summary when available, and clicking any finding opens its detail in a modal so the annotated document stays in place.
 
 Use a different address or port with `WEB_ADDR`:
 

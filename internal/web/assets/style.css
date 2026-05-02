@@ -89,7 +89,8 @@ h1 {
   font-size: 13px;
 }
 
-.model-picker {
+.model-picker,
+.editor-panel {
   margin: 0 0 24px;
   padding: 12px;
   border: 1px solid var(--border);
@@ -97,7 +98,8 @@ h1 {
   background: var(--panel-muted);
 }
 
-.model-picker legend {
+.model-picker legend,
+.editor-panel legend {
   padding: 0;
   margin: 0 0 10px;
   color: var(--text);
@@ -107,12 +109,14 @@ h1 {
   letter-spacing: 0;
 }
 
-.model-picker {
+.model-picker,
+.editor-panel {
   display: grid;
   gap: 8px;
 }
 
-.model-picker .field + .field {
+.model-picker .field + .field,
+.editor-panel .field + .field {
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
@@ -262,6 +266,17 @@ button {
 
 button:hover:not(:disabled) {
   background: var(--primary-dark);
+}
+
+.secondary-action {
+  border: 1px solid var(--border-strong);
+  color: var(--primary);
+  background: var(--panel);
+}
+
+.secondary-action:hover:not(:disabled) {
+  color: var(--primary-dark);
+  background: var(--panel-muted);
 }
 
 button:disabled {

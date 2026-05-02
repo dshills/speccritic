@@ -78,6 +78,52 @@
     });
   }
 
+  function openExternalEditor(button) {
+    var form = button.closest("form");
+    var pathInput = form ? form.querySelector('input[name="spec_path"]') : null;
+    var editorSelect = form ? form.querySelector('select[name="editor"]') : null;
+    var csrf = form ? form.querySelector('input[name="csrf_token"]') : null;
+    var status = form ? form.querySelector("#editor_status") : null;
+    var specPath = pathInput ? pathInput.value.trim() : "";
+    if (!specPath || !csrf) {
+      updateEditorAvailability(form);
+      return;
+    }
+    button.disabled = true;
+    button.dataset.opening = "true";
+    if (status) {
+      status.textContent = "Opening...";
+    }
+    var body = new URLSearchParams();
+    body.set("csrf_token", csrf.value);
+    body.set("spec_path", specPath);
+    body.set("editor", editorSelect ? editorSelect.value : "default");
+    fetch("/editor/open", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body
+    }).then(function (response) {
+      return response.text().then(function (text) {
+        if (!response.ok) {
+          throw new Error(text || response.statusText || "Unable to open editor.");
+        }
+        return text;
+      });
+    }).then(function (text) {
+      if (status) {
+        status.textContent = text;
+      }
+    }).catch(function (error) {
+      if (status) {
+        status.textContent = error.message || "Unable to open editor.";
+      }
+    }).finally(function () {
+      delete button.dataset.opening;
+      updateEditorAvailability(form);
+    });
+  }
+
   function startRunningState(form, target, started) {
     var button = form.querySelector('button[type="submit"]');
     if (button) {
@@ -239,6 +285,7 @@
       }
       initializeModelPicker(form);
       updateSubmitAvailability(form);
+      updateEditorAvailability(form);
     });
   }
 
@@ -368,6 +415,18 @@
     showModelMenu(model.form, model.value);
   });
 
+  document.addEventListener("input", function (event) {
+    var input = event.target;
+    if (!input || !input.matches || !input.matches('input[name="spec_path"]')) {
+      return;
+    }
+    var status = input.form ? input.form.querySelector("#editor_status") : null;
+    if (status) {
+      status.textContent = "";
+    }
+    updateEditorAvailability(input.form);
+  });
+
   document.addEventListener("mousedown", function (event) {
     var option = event.target.closest ? event.target.closest("[data-model-option]") : null;
     if (!option) {
@@ -377,6 +436,12 @@
   });
 
   document.addEventListener("click", function (event) {
+    var openEditor = event.target.closest ? event.target.closest("[data-open-editor]") : null;
+    if (openEditor) {
+      event.preventDefault();
+      openExternalEditor(openEditor);
+      return;
+    }
     var option = event.target.closest ? event.target.closest("[data-model-option]") : null;
     if (option) {
       var form = option.closest("form");
@@ -486,5 +551,13 @@
     document.addEventListener("DOMContentLoaded", initializeUploadForms);
   } else {
     initializeUploadForms();
+  }
+
+  function updateEditorAvailability(form) {
+    var button = form ? form.querySelector("[data-open-editor]") : null;
+    var pathInput = form ? form.querySelector('input[name="spec_path"]') : null;
+    if (button) {
+      button.disabled = button.dataset.opening === "true" || !pathInput || pathInput.value.trim() === "";
+    }
   }
 })();
