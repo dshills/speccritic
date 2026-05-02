@@ -34,9 +34,24 @@ type Summary struct {
 
 // Meta holds runtime metadata about the LLM call.
 type Meta struct {
-	Model        string  `json:"model"`
-	Temperature  float64 `json:"temperature"`
-	ChunkSummary string  `json:"chunk_summary,omitempty"`
+	Model        string           `json:"model"`
+	Temperature  float64          `json:"temperature"`
+	ChunkSummary string           `json:"chunk_summary,omitempty"`
+	Incremental  *IncrementalMeta `json:"incremental,omitempty"`
+}
+
+// IncrementalMeta describes optional incremental rerun execution details.
+type IncrementalMeta struct {
+	Enabled          bool    `json:"enabled"`
+	PreviousSpecHash string  `json:"previous_spec_hash"`
+	Mode             string  `json:"mode"`
+	Fallback         bool    `json:"fallback"`
+	ReviewedSections int     `json:"reviewed_sections"`
+	ReusedSections   int     `json:"reused_sections"`
+	ReusedIssues     int     `json:"reused_issues"`
+	ReusedQuestions  int     `json:"reused_questions"`
+	DroppedFindings  int     `json:"dropped_findings"`
+	ChangedLineRatio float64 `json:"changed_line_ratio"`
 }
 
 // Severity levels for issues and questions.
