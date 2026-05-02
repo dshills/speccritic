@@ -533,7 +533,7 @@ func patchDiffForReport(originalRaw string, report *schema.Report, redactedSpec 
 	if redactedSpec {
 		return ""
 	}
-	return patch.GenerateDiff(originalRaw, report.Patches, errw)
+	return patch.GenerateDiffWithIssues(originalRaw, report.Patches, report.Issues, errw)
 }
 
 func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, contextFiles []ctxpkg.ContextFile, preflightIssues []schema.Issue, sysPrompt, preflightContext string, cfg chunk.Config, errw io.Writer) (*schema.Report, string, error) {

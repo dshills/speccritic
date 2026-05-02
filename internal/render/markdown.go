@@ -12,10 +12,12 @@ type markdownRenderer struct{}
 
 type markdownView struct {
 	*schema.Report
-	PreflightIssues []schema.Issue
-	LLMIssues       []schema.Issue
-	HasIssues       bool
-	HasConvergence  bool
+	PreflightIssues   []schema.Issue
+	LLMIssues         []schema.Issue
+	CompletionPatches []schema.Patch
+	HasIssues         bool
+	HasConvergence    bool
+	HasCompletion     bool
 }
 
 var mdTemplate = template.Must(template.New("report").Parse(`# SpecCritic Report
@@ -37,6 +39,25 @@ var mdTemplate = template.Must(template.New("report").Parse(`# SpecCritic Report
 > {{ . }}
 {{ end }}
 {{ end }}
+{{ if .HasCompletion }}
+---
+
+## Completion Suggestions
+**draft/advisory**
+
+Generated patches: {{ .Meta.Completion.GeneratedPatches }} | Skipped suggestions: {{ .Meta.Completion.SkippedSuggestions }} | Open decisions: {{ .Meta.Completion.OpenDecisions }}
+{{ range .CompletionPatches }}
+### draft/advisory · {{ .IssueID }}
+
+Before:
+` + "````" + `
+{{ .Before }}
+` + "````" + `
+After:
+` + "````" + `
+{{ .After }}
+` + "````" + `
+{{ end }}{{ end }}
 {{ if .HasIssues }}
 ---
 
@@ -68,13 +89,13 @@ var mdTemplate = template.Must(template.New("report").Parse(`# SpecCritic Report
 **{{ .IssueID }}** (see --patch-out for machine-applicable diff)
 
 Before:
-` + "```" + `
+` + "````" + `
 {{ .Before }}
-` + "```" + `
+` + "````" + `
 After:
-` + "```" + `
+` + "````" + `
 {{ .After }}
-` + "```" + `
+` + "````" + `
 {{ end }}{{ end }}
 ---
 *Model: {{ .Meta.Model }} | Temperature: {{ .Meta.Temperature }}*
@@ -105,7 +126,11 @@ func (r *markdownRenderer) Render(report *schema.Report) ([]byte, error) {
 func newMarkdownView(report *schema.Report) markdownView {
 	view := markdownView{Report: report}
 	view.HasConvergence = report.Meta.Convergence != nil && report.Meta.Convergence.Enabled
+	completionIssues := make(map[string]bool)
 	for _, issue := range report.Issues {
+		if hasTag(issue.Tags, "completion-suggested") {
+			completionIssues[issue.ID] = true
+		}
 		if hasTag(issue.Tags, "preflight") {
 			view.PreflightIssues = append(view.PreflightIssues, issue)
 			continue
@@ -113,6 +138,14 @@ func newMarkdownView(report *schema.Report) markdownView {
 		view.LLMIssues = append(view.LLMIssues, issue)
 	}
 	view.HasIssues = len(view.PreflightIssues) > 0 || len(view.LLMIssues) > 0
+	view.HasCompletion = report.Meta.Completion != nil && report.Meta.Completion.Enabled
+	if view.HasCompletion {
+		for _, p := range report.Patches {
+			if completionIssues[p.IssueID] {
+				view.CompletionPatches = append(view.CompletionPatches, p)
+			}
+		}
+	}
 	return view
 }
 

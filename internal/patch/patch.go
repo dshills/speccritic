@@ -12,9 +12,10 @@ import (
 // diffPatch is the internal processing type for patch generation.
 // schema.Patch is the JSON-serializable type from the LLM output.
 type diffPatch struct {
-	issueID string
-	before  string // text to use as diff source
-	after   string // text to use as diff target
+	issueID    string
+	before     string // text to use as diff source
+	after      string // text to use as diff target
+	completion bool
 }
 
 // GenerateDiff converts schema.Patch entries into a unified diff string
@@ -23,12 +24,17 @@ type diffPatch struct {
 // Both before and after are normalized before diffing to avoid spurious
 // whitespace diffs.
 func GenerateDiff(specRaw string, patches []schema.Patch, w io.Writer) string {
+	return GenerateDiffWithIssues(specRaw, patches, nil, w)
+}
+
+func GenerateDiffWithIssues(specRaw string, patches []schema.Patch, issues []schema.Issue, w io.Writer) string {
 	if len(patches) == 0 {
 		return ""
 	}
 
 	// Pre-normalize the spec once for all patches.
 	normSpec := normalize(specRaw)
+	completionIssues := completionIssueIDs(issues)
 
 	dmp := diffmatchpatch.New()
 	var out strings.Builder
@@ -49,12 +55,30 @@ func GenerateDiff(specRaw string, patches []schema.Patch, w io.Writer) string {
 			continue
 		}
 
-		fmt.Fprintf(&out, "# patch for %s\n", dp.issueID)
+		dp.completion = completionIssues[dp.issueID]
+		if dp.completion {
+			fmt.Fprintf(&out, "# completion patch for %s\n", dp.issueID)
+		} else {
+			fmt.Fprintf(&out, "# patch for %s\n", dp.issueID)
+		}
 		out.WriteString(patchText)
 		out.WriteString("\n")
 	}
 
 	return out.String()
+}
+
+func completionIssueIDs(issues []schema.Issue) map[string]bool {
+	out := make(map[string]bool)
+	for _, issue := range issues {
+		for _, tag := range issue.Tags {
+			if tag == "completion-suggested" {
+				out[issue.ID] = true
+				break
+			}
+		}
+	}
+	return out
 }
 
 // resolve attempts to locate p.Before in specRaw using exact or normalized matching.

@@ -52,6 +52,18 @@ func TestGenerateDiff_UnmatchedBeforeSkipped(t *testing.T) {
 	}
 }
 
+func TestGenerateDiffWithIssues_CompletionComment(t *testing.T) {
+	spec := "The system must be fast.\n"
+	patches := []schema.Patch{
+		{IssueID: "ISSUE-0001", Before: "The system must be fast.", After: "The system must respond within 250ms p95."},
+	}
+	issues := []schema.Issue{{ID: "ISSUE-0001", Tags: []string{"completion-suggested"}}}
+	out := GenerateDiffWithIssues(spec, patches, issues, nil)
+	if !strings.Contains(out, "# completion patch for ISSUE-0001") {
+		t.Fatalf("diff missing completion comment: %q", out)
+	}
+}
+
 func TestGenerateDiff_EmptyPatches(t *testing.T) {
 	out := GenerateDiff("some spec", nil, nil)
 	if out != "" {

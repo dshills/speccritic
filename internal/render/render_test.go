@@ -144,6 +144,50 @@ func TestNewRenderer_MarkdownRendersConvergenceSummary(t *testing.T) {
 	}
 }
 
+func TestNewRenderer_MarkdownRendersCompletionSuggestions(t *testing.T) {
+	report := sampleReport()
+	report.Issues[0].Tags = []string{"completion-suggested"}
+	report.Patches = []schema.Patch{{
+		IssueID: "ISSUE-0001",
+		Before:  "## Purpose",
+		After:   "## Purpose\n\nOPEN DECISION: Define purpose.",
+	}}
+	report.Meta.Completion = &schema.CompletionMeta{
+		Enabled:            true,
+		Mode:               schema.CompletionModeAuto,
+		Template:           schema.CompletionTemplateGeneral,
+		GeneratedPatches:   1,
+		SkippedSuggestions: 0,
+		OpenDecisions:      1,
+	}
+	r, err := NewRenderer("md")
+	if err != nil {
+		t.Fatalf("NewRenderer md: %v", err)
+	}
+	out, err := r.Render(report)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "## Completion Suggestions") || !strings.Contains(s, "draft/advisory · ISSUE-0001") {
+		t.Fatalf("markdown missing completion section: %q", s)
+	}
+}
+
+func TestNewRenderer_MarkdownOmitsCompletionByDefault(t *testing.T) {
+	r, err := NewRenderer("md")
+	if err != nil {
+		t.Fatalf("NewRenderer md: %v", err)
+	}
+	out, err := r.Render(sampleReport())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if strings.Contains(string(out), "Completion Suggestions") {
+		t.Fatalf("markdown should omit completion section: %q", string(out))
+	}
+}
+
 func TestNewRenderer_MarkdownRejectsNilReport(t *testing.T) {
 	r, err := NewRenderer("md")
 	if err != nil {
