@@ -54,7 +54,7 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 			Input:   schema.Input{SeverityThreshold: req.SeverityThreshold},
 			Summary: schema.Summary{Verdict: schema.VerdictInvalid, Score: 80, CriticalCount: 1},
 			Issues:  issues,
-			Meta:    schema.Meta{Model: "openai:gpt-5", Incremental: incrementalMetaForRequest(req)},
+			Meta:    schema.Meta{Model: "openai:gpt-5", Incremental: incrementalMetaForRequest(req), Convergence: convergenceMetaForRequest(req)},
 		},
 	}, nil
 }
@@ -64,6 +64,21 @@ func incrementalMetaForRequest(req app.CheckRequest) *schema.IncrementalMeta {
 		return nil
 	}
 	return &schema.IncrementalMeta{Enabled: true, Mode: req.IncrementalMode, ReusedIssues: 1}
+}
+
+func convergenceMetaForRequest(req app.CheckRequest) *schema.ConvergenceMeta {
+	if req.ConvergenceFromText == "" || !req.ConvergenceReport {
+		return nil
+	}
+	return &schema.ConvergenceMeta{
+		Enabled: true,
+		Mode:    req.ConvergenceMode,
+		Status:  schema.ConvergenceStatusComplete,
+		Current: schema.ConvergenceCurrentCounts{New: 1, StillOpen: 2},
+		Previous: schema.ConvergenceHistoricalCounts{
+			Resolved: 1,
+		},
+	}
 }
 
 func TestExportEndpoints(t *testing.T) {
@@ -145,7 +160,7 @@ func TestIndex(t *testing.T) {
 		t.Fatalf("session/form cookies should share nonce: %#v", cookies)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="previous_result"`, `name="incremental_base_file"`, `name="incremental_mode"`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
+	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="previous_result"`, `name="incremental_base_file"`, `name="incremental_mode"`, `name="convergence_mode"`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
@@ -321,6 +336,7 @@ func TestCheckStubAcceptsIncrementalUploads(t *testing.T) {
 	writer := multipart.NewWriter(&body)
 	writer.WriteField("csrf_token", "same")
 	writer.WriteField("incremental_mode", "on")
+	writer.WriteField("convergence_mode", "on")
 	writeMultipartFile(t, writer, "spec_file", "SPEC.md", "# Spec\n")
 	writeMultipartFile(t, writer, "previous_result", "previous.json", `{"tool":"speccritic"}`)
 	writeMultipartFile(t, writer, "incremental_base_file", "old.md", "# Old\n")
@@ -340,8 +356,35 @@ func TestCheckStubAcceptsIncrementalUploads(t *testing.T) {
 	if checker.req.IncrementalFromText == "" || checker.req.IncrementalBaseText == "" || checker.req.IncrementalMode != "on" {
 		t.Fatalf("incremental request = %#v", checker.req)
 	}
+	if checker.req.ConvergenceFromText == "" || checker.req.ConvergenceMode != "on" || !checker.req.ConvergenceReport {
+		t.Fatalf("convergence request = %#v", checker.req)
+	}
 	if !strings.Contains(rec.Body.String(), "Incremental") {
 		t.Fatalf("response missing incremental metadata: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Convergence") || !strings.Contains(rec.Body.String(), "Still open") {
+		t.Fatalf("response missing convergence metadata: %s", rec.Body.String())
+	}
+}
+
+func TestCheckStubRequiresPreviousUploadForConvergenceOn(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"convergence_mode": "on",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

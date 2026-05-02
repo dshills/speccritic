@@ -527,6 +527,7 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 	if err != nil {
 		return app.CheckRequest{}, fmt.Errorf("reading previous result: %w", err)
 	}
+	previousReport = strings.TrimSpace(previousReport)
 	incrementalBase, err := readOptionalUploadText(r, "incremental_base_file", s.config.MaxUploadBytes)
 	if err != nil {
 		return app.CheckRequest{}, fmt.Errorf("reading incremental base spec: %w", err)
@@ -539,6 +540,18 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 	case "auto", "on", "off":
 	default:
 		return app.CheckRequest{}, fmt.Errorf("invalid incremental mode %q", incrementalMode)
+	}
+	convergenceMode := r.FormValue("convergence_mode")
+	if convergenceMode == "" {
+		convergenceMode = "auto"
+	}
+	switch convergenceMode {
+	case "auto", "on", "off":
+	default:
+		return app.CheckRequest{}, fmt.Errorf("invalid convergence mode %q", convergenceMode)
+	}
+	if convergenceMode == "on" && previousReport == "" {
+		return app.CheckRequest{}, fmt.Errorf("previous result is required when convergence mode is on")
 	}
 
 	profile := r.FormValue("profile")
@@ -641,6 +654,9 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		IncrementalContextLines:         incrementalDefaults.ContextLines,
 		IncrementalStrictReuse:          true,
 		IncrementalReport:               true,
+		ConvergenceFromText:             previousReport,
+		ConvergenceMode:                 convergenceMode,
+		ConvergenceReport:               previousReport != "" && convergenceMode != "off",
 		Source:                          app.SourceWeb,
 		ErrWriter:                       io.Discard,
 	}, nil

@@ -54,5 +54,29 @@
     </div>
   </dl>
   {{ end }}
+  {{ with .Check.Result.Report.Meta.Convergence }}
+  <dl class="convergence-meta" aria-label="Convergence details">
+    <div>
+      <dt>Convergence status</dt>
+      <dd>{{ .Status }}</dd>
+    </div>
+    <div>
+      <dt>New</dt>
+      <dd>{{ .Current.New }}</dd>
+    </div>
+    <div>
+      <dt>Still open</dt>
+      <dd>{{ .Current.StillOpen }}</dd>
+    </div>
+    <div>
+      <dt>Resolved</dt>
+      <dd>{{ .Previous.Resolved }}</dd>
+    </div>
+    <div>
+      <dt>Dropped</dt>
+      <dd>{{ .Previous.Dropped }}</dd>
+    </div>
+  </dl>
+  {{ end }}
 </section>
 {{ end }}
