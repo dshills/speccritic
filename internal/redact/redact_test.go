@@ -65,6 +65,15 @@ func TestRedact_NonSecretUnchanged(t *testing.T) {
 	}
 }
 
+func TestContainsSecret(t *testing.T) {
+	if !ContainsSecret("access_key = AKIAIOSFODNN7EXAMPLE") {
+		t.Fatal("ContainsSecret returned false for AWS access key")
+	}
+	if ContainsSecret("This is a normal specification with no secrets.") {
+		t.Fatal("ContainsSecret returned true for normal text")
+	}
+}
+
 func TestRedact_MixedCasePasswordAlongsideOtherTrigger(t *testing.T) {
 	// Regression: a mixed-case password on one line alongside another
 	// secret type must still be redacted — the per-pattern trigger gate

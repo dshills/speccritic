@@ -9,8 +9,6 @@ import (
 	"github.com/dshills/speccritic/internal/schema"
 )
 
-const openDecisionPrefix = "OPEN DECISION:"
-
 type Input struct {
 	SpecText  string
 	Profile   string
@@ -118,6 +116,8 @@ func candidateForMissingSection(doc Document, tmpl *Template, section TemplateSe
 	patch, status := StableInsertionTarget(doc, tmpl, section, text)
 	candidate.TargetLine = patch.Line
 	candidate.Status = status
+	candidate.Before = patch.Before
+	candidate.After = patch.After
 	return candidate
 }
 
@@ -130,6 +130,8 @@ func candidateForIncompleteSection(doc Document, section TemplateSection, node S
 	patch, status := AppendSubsectionTarget(doc, node, text)
 	candidate.TargetLine = patch.Line
 	candidate.Status = status
+	candidate.Before = patch.Before
+	candidate.After = patch.After
 	return candidate
 }
 

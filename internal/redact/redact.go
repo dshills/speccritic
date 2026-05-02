@@ -52,34 +52,7 @@ var patterns = [numPatterns]redactPattern{
 // Line structure is preserved — the number of newlines in the output
 // always equals the number of newlines in the input.
 func Redact(input string) string {
-	// Single substring sweep: decide per-regex whether its triggers are
-	// present. For case-insensitive patterns, search in a lowercased copy.
-	var hits [numPatterns]bool
-	pemHit := strings.Contains(input, pemTrigger)
-	any := pemHit
-
-	// Only compute lowercase if at least one case-insensitive pattern exists.
-	var lower string
-	for _, p := range patterns {
-		if p.fold {
-			lower = strings.ToLower(input)
-			break
-		}
-	}
-
-	for i, p := range patterns {
-		src := input
-		if p.fold {
-			src = lower
-		}
-		for _, t := range p.triggers {
-			if strings.Contains(src, t) {
-				hits[i] = true
-				any = true
-				break
-			}
-		}
-	}
+	hits, pemHit, any := detectPatternHits(input)
 	if !any {
 		return input
 	}
@@ -103,6 +76,50 @@ func Redact(input string) string {
 		}
 	}
 	return input
+}
+
+// ContainsSecret reports whether input matches any configured redaction pattern.
+func ContainsSecret(input string) bool {
+	hits, pemHit, any := detectPatternHits(input)
+	if !any {
+		return false
+	}
+	if pemHit && pemPattern.MatchString(input) {
+		return true
+	}
+	for i, hit := range hits {
+		if hit && patterns[i].re.MatchString(input) {
+			return true
+		}
+	}
+	return false
+}
+
+func detectPatternHits(input string) ([numPatterns]bool, bool, bool) {
+	var hits [numPatterns]bool
+	pemHit := strings.Contains(input, pemTrigger)
+	any := pemHit
+	var lower string
+	for _, p := range patterns {
+		if p.fold {
+			lower = strings.ToLower(input)
+			break
+		}
+	}
+	for i, p := range patterns {
+		src := input
+		if p.fold {
+			src = lower
+		}
+		for _, t := range p.triggers {
+			if strings.Contains(src, t) {
+				hits[i] = true
+				any = true
+				break
+			}
+		}
+	}
+	return hits, pemHit, any
 }
 
 // RedactFile reads a file, redacts its content, and returns the result.

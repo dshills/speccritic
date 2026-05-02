@@ -55,7 +55,7 @@ type Placeholder struct {
 }
 
 type Candidate struct {
-	SourceIssueID     string
+	SourceIssueID     string // exactly one current issue that sources this candidate
 	SourceQuestionIDs []string
 	Template          string
 	Section           string
@@ -63,6 +63,8 @@ type Candidate struct {
 	TargetLine   int
 	Status       Status
 	Text         string
+	Before       string
+	After        string
 	Severity     schema.Severity
 	SectionOrder int
 }
