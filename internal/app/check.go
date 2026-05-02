@@ -86,6 +86,7 @@ type CheckRequest struct {
 	ChunkConcurrency                int
 	SynthesisLineThreshold          int
 	IncrementalFrom                 string
+	IncrementalFromText             string
 	IncrementalBasePath             string
 	IncrementalBaseText             string
 	IncrementalMode                 string
@@ -198,7 +199,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		return nil, appError(ErrorProvider, fmt.Errorf("creating LLM provider: %w", err))
 	}
 
-	if req.IncrementalFrom != "" && req.IncrementalMode != "off" {
+	if (req.IncrementalFrom != "" || req.IncrementalFromText != "" || req.IncrementalMode == "on") && req.IncrementalMode != "off" {
 		result, handled, err := c.checkIncremental(ctx, provider, req, s, originalRaw, preflightIssues, sysPrompt, errw)
 		if err != nil {
 			return nil, appError(ErrorInput, err)
@@ -251,7 +252,10 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 	if cfg.Mode == incremental.ModeOff {
 		return nil, false, nil
 	}
-	prev, err := incremental.LoadPreviousReport(req.IncrementalFrom)
+	if req.IncrementalFrom == "" && req.IncrementalFromText == "" {
+		return nil, false, fmt.Errorf("incremental source is required when incremental mode is enabled")
+	}
+	prev, err := loadPreviousIncrementalReport(req)
 	if err != nil {
 		return nil, false, fmt.Errorf("loading previous incremental report: %w", err)
 	}
@@ -355,8 +359,9 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 }
 
 func loadIncrementalBase(req CheckRequest, current *spec.Spec, prev *incremental.PreviousReport) (string, bool, error) {
-	if req.IncrementalBaseText != "" {
-		return req.IncrementalBaseText, true, nil
+	baseText := req.IncrementalBaseText
+	if baseText != "" {
+		return baseText, true, nil
 	}
 	if req.IncrementalBasePath != "" {
 		raw, err := os.ReadFile(req.IncrementalBasePath)
@@ -369,6 +374,13 @@ func loadIncrementalBase(req CheckRequest, current *spec.Spec, prev *incremental
 		return current.Raw, true, nil
 	}
 	return "", false, nil
+}
+
+func loadPreviousIncrementalReport(req CheckRequest) (*incremental.PreviousReport, error) {
+	if req.IncrementalFromText != "" {
+		return incremental.ParsePreviousReport([]byte(req.IncrementalFromText))
+	}
+	return incremental.LoadPreviousReport(req.IncrementalFrom)
 }
 
 func firstIncrementalModel(results []incremental.RangeResult) string {
@@ -781,7 +793,7 @@ func validateRequest(req CheckRequest) error {
 	if err := chunk.ValidateConfig(chunkConfigFromRequest(req)); err != nil {
 		return err
 	}
-	if req.IncrementalFrom != "" || req.IncrementalMode != "" {
+	if req.IncrementalFrom != "" || req.IncrementalFromText != "" || req.IncrementalMode != "" {
 		if err := incremental.ValidateConfig(incrementalConfigFromRequest(req)); err != nil {
 			return err
 		}

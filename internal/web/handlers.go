@@ -20,6 +20,7 @@ import (
 
 	"github.com/dshills/speccritic/internal/app"
 	"github.com/dshills/speccritic/internal/chunk"
+	"github.com/dshills/speccritic/internal/incremental"
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/schema"
@@ -522,6 +523,23 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 	if specText == "" {
 		return app.CheckRequest{}, fmt.Errorf("uploaded spec file is required")
 	}
+	previousReport, err := readOptionalUploadText(r, "previous_result", s.config.MaxUploadBytes)
+	if err != nil {
+		return app.CheckRequest{}, fmt.Errorf("reading previous result: %w", err)
+	}
+	incrementalBase, err := readOptionalUploadText(r, "incremental_base_file", s.config.MaxUploadBytes)
+	if err != nil {
+		return app.CheckRequest{}, fmt.Errorf("reading incremental base spec: %w", err)
+	}
+	incrementalMode := r.FormValue("incremental_mode")
+	if incrementalMode == "" {
+		incrementalMode = "auto"
+	}
+	switch incrementalMode {
+	case "auto", "on", "off":
+	default:
+		return app.CheckRequest{}, fmt.Errorf("invalid incremental mode %q", incrementalMode)
+	}
 
 	profile := r.FormValue("profile")
 	if profile == "" {
@@ -594,29 +612,60 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		return app.CheckRequest{}, fmt.Errorf("invalid preflight mode %q", preflightMode)
 	}
 
+	incrementalDefaults := incremental.DefaultConfig()
 	return app.CheckRequest{
-		SpecName:               specName,
-		SpecText:               specText,
-		Profile:                profile,
-		Strict:                 r.FormValue("strict") == "true",
-		SeverityThreshold:      severity,
-		LLMProvider:            llmProvider,
-		LLMModel:               llmModel,
-		Temperature:            temperature,
-		MaxTokens:              maxTokens,
-		Preflight:              preflightEnabled,
-		PreflightMode:          preflightMode,
-		PreflightProfile:       profile,
-		Chunking:               string(chunk.ModeAuto),
-		ChunkLines:             chunk.DefaultChunkLines,
-		ChunkOverlap:           chunk.DefaultChunkOverlap,
-		ChunkMinLines:          chunk.DefaultChunkMinLines,
-		ChunkTokenThreshold:    chunk.DefaultChunkTokenThreshold,
-		ChunkConcurrency:       chunkConcurrency,
-		SynthesisLineThreshold: chunk.DefaultSynthesisLineThreshold,
-		Source:                 app.SourceWeb,
-		ErrWriter:              io.Discard,
+		SpecName:                        specName,
+		SpecText:                        specText,
+		Profile:                         profile,
+		Strict:                          r.FormValue("strict") == "true",
+		SeverityThreshold:               severity,
+		LLMProvider:                     llmProvider,
+		LLMModel:                        llmModel,
+		Temperature:                     temperature,
+		MaxTokens:                       maxTokens,
+		Preflight:                       preflightEnabled,
+		PreflightMode:                   preflightMode,
+		PreflightProfile:                profile,
+		Chunking:                        string(chunk.ModeAuto),
+		ChunkLines:                      chunk.DefaultChunkLines,
+		ChunkOverlap:                    chunk.DefaultChunkOverlap,
+		ChunkMinLines:                   chunk.DefaultChunkMinLines,
+		ChunkTokenThreshold:             chunk.DefaultChunkTokenThreshold,
+		ChunkConcurrency:                chunkConcurrency,
+		SynthesisLineThreshold:          chunk.DefaultSynthesisLineThreshold,
+		IncrementalFromText:             previousReport,
+		IncrementalBaseText:             incrementalBase,
+		IncrementalMode:                 incrementalMode,
+		IncrementalMaxChangeRatio:       incrementalDefaults.MaxChangeRatio,
+		IncrementalMaxRemapFailureRatio: incrementalDefaults.MaxRemapFailureRatio,
+		IncrementalContextLines:         incrementalDefaults.ContextLines,
+		IncrementalStrictReuse:          true,
+		IncrementalReport:               true,
+		Source:                          app.SourceWeb,
+		ErrWriter:                       io.Discard,
 	}, nil
+}
+
+func readOptionalUploadText(r *http.Request, field string, limit int64) (string, error) {
+	file, _, err := r.FormFile(field)
+	if errors.Is(err, http.ErrMissingFile) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	data, err := readUploadedSpec(file, limit)
+	if err != nil {
+		return "", err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "", nil
+	}
+	if !utf8.Valid(data) {
+		return "", fmt.Errorf("uploaded file must be UTF-8 text")
+	}
+	return string(data), nil
 }
 
 func formBoolDefault(r *http.Request, name string, def bool) bool {

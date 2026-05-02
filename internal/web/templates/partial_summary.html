@@ -34,5 +34,25 @@
       <dd>{{ .Check.Result.Report.Summary.InfoCount }}</dd>
     </div>
   </dl>
+  {{ with .Check.Result.Report.Meta.Incremental }}
+  <dl class="incremental-meta" aria-label="Incremental review details">
+    <div>
+      <dt>Incremental</dt>
+      <dd>{{ .Mode }}{{ if .Fallback }} fallback{{ end }}</dd>
+    </div>
+    <div>
+      <dt>Reviewed</dt>
+      <dd>{{ .ReviewedSections }}</dd>
+    </div>
+    <div>
+      <dt>Reused</dt>
+      <dd>{{ .ReusedIssues }} issues, {{ .ReusedQuestions }} questions</dd>
+    </div>
+    <div>
+      <dt>Dropped</dt>
+      <dd>{{ .DroppedFindings }}</dd>
+    </div>
+  </dl>
+  {{ end }}
 </section>
 {{ end }}

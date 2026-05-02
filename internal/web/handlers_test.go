@@ -54,9 +54,16 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 			Input:   schema.Input{SeverityThreshold: req.SeverityThreshold},
 			Summary: schema.Summary{Verdict: schema.VerdictInvalid, Score: 80, CriticalCount: 1},
 			Issues:  issues,
-			Meta:    schema.Meta{Model: "openai:gpt-5"},
+			Meta:    schema.Meta{Model: "openai:gpt-5", Incremental: incrementalMetaForRequest(req)},
 		},
 	}, nil
+}
+
+func incrementalMetaForRequest(req app.CheckRequest) *schema.IncrementalMeta {
+	if req.IncrementalFromText == "" {
+		return nil
+	}
+	return &schema.IncrementalMeta{Enabled: true, Mode: req.IncrementalMode, ReusedIssues: 1}
 }
 
 func TestExportEndpoints(t *testing.T) {
@@ -138,7 +145,7 @@ func TestIndex(t *testing.T) {
 		t.Fatalf("session/form cookies should share nonce: %#v", cookies)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
+	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="previous_result"`, `name="incremental_base_file"`, `name="incremental_mode"`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
@@ -300,6 +307,41 @@ func TestCheckStubAcceptsProviderAndModel(t *testing.T) {
 	}
 	if checker.req.LLMProvider != "openai" || checker.req.LLMModel != "gpt-5" {
 		t.Fatalf("model request = %q/%q, want openai/gpt-5", checker.req.LLMProvider, checker.req.LLMModel)
+	}
+}
+
+func TestCheckStubAcceptsIncrementalUploads(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	writer.WriteField("csrf_token", "same")
+	writer.WriteField("incremental_mode", "on")
+	writeMultipartFile(t, writer, "spec_file", "SPEC.md", "# Spec\n")
+	writeMultipartFile(t, writer, "previous_result", "previous.json", `{"tool":"speccritic"}`)
+	writeMultipartFile(t, writer, "incremental_base_file", "old.md", "# Old\n")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if checker.req.IncrementalFromText == "" || checker.req.IncrementalBaseText == "" || checker.req.IncrementalMode != "on" {
+		t.Fatalf("incremental request = %#v", checker.req)
+	}
+	if !strings.Contains(rec.Body.String(), "Incremental") {
+		t.Fatalf("response missing incremental metadata: %s", rec.Body.String())
 	}
 }
 
@@ -546,15 +588,20 @@ func multipartSpecRequest(t *testing.T, specText string, fields ...map[string]st
 			}
 		}
 	}
-	part, err := writer.CreateFormFile("spec_file", "SPEC.md")
-	if err != nil {
-		t.Fatalf("create spec file part: %v", err)
-	}
-	if _, err := part.Write([]byte(specText)); err != nil {
-		t.Fatalf("write spec file part: %v", err)
-	}
+	writeMultipartFile(t, writer, "spec_file", "SPEC.md", specText)
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close multipart writer: %v", err)
 	}
 	return &body, writer.FormDataContentType()
+}
+
+func writeMultipartFile(t *testing.T, writer *multipart.Writer, field, name, text string) {
+	t.Helper()
+	part, err := writer.CreateFormFile(field, name)
+	if err != nil {
+		t.Fatalf("create %s file part: %v", field, err)
+	}
+	if _, err := part.Write([]byte(text)); err != nil {
+		t.Fatalf("write %s file part: %v", field, err)
+	}
 }

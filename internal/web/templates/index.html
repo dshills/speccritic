@@ -31,6 +31,26 @@
         <input id="spec_file" name="spec_file" type="file" accept=".md,.txt,text/markdown,text/plain" required>
       </div>
 
+      <details class="advanced-options">
+        <summary>Incremental rerun</summary>
+        <div class="field">
+          <label for="previous_result">Previous JSON result</label>
+          <input id="previous_result" name="previous_result" type="file" accept=".json,application/json">
+        </div>
+        <div class="field">
+          <label for="incremental_base_file">Previous spec file</label>
+          <input id="incremental_base_file" name="incremental_base_file" type="file" accept=".md,.txt,text/markdown,text/plain">
+        </div>
+        <div class="field">
+          <label for="incremental_mode">Mode</label>
+          <select id="incremental_mode" name="incremental_mode">
+            <option value="auto">auto</option>
+            <option value="on">on</option>
+            <option value="off">off</option>
+          </select>
+        </div>
+      </details>
+
       <div class="controls">
         <div class="field">
           <label for="profile">Profile</label>
