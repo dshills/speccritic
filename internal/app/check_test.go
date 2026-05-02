@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/schema"
+	"github.com/dshills/speccritic/internal/spec"
 )
 
 type fakeProvider struct {
@@ -609,6 +611,77 @@ func TestCheckerChunkingOffUsesSingleCall(t *testing.T) {
 	}
 }
 
+func TestCheckerIncrementalUnchangedReusesWithoutLLMCall(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	specText := "# Spec\n## Behavior\nThe API must return JSON.\n"
+	s := specForTest("SPEC.md", specText)
+	prevPath := writePreviousReport(t, s.Hash, "general", true, "info", "The API must return JSON.")
+	provider := &fakeProvider{content: `{"issues":[],"questions":[],"patches":[]}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:                         "test",
+		SpecName:                        "SPEC.md",
+		SpecText:                        specText,
+		Profile:                         "general",
+		Strict:                          true,
+		SeverityThreshold:               "info",
+		Temperature:                     0.2,
+		MaxTokens:                       1000,
+		Preflight:                       false,
+		Chunking:                        "off",
+		IncrementalFrom:                 prevPath,
+		IncrementalMode:                 "auto",
+		IncrementalMaxChangeRatio:       0.35,
+		IncrementalMaxRemapFailureRatio: 0.25,
+		IncrementalReport:               true,
+		Source:                          SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(provider.reqs) != 0 {
+		t.Fatalf("provider calls = %d, want no incremental LLM call", len(provider.reqs))
+	}
+	if !hasIssue(result.Report.Issues, "ISSUE-0001") {
+		t.Fatalf("issues = %#v", result.Report.Issues)
+	}
+	if result.Report.Meta.Incremental == nil || result.Report.Meta.Incremental.ReusedIssues != 1 {
+		t.Fatalf("incremental meta = %#v", result.Report.Meta.Incremental)
+	}
+}
+
+func TestCheckerIncrementalChangedNeedsBaseSpec(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	previous := "# Spec\n## Behavior\nThe API must return JSON.\n"
+	current := "# Spec\n## Behavior\nThe API must return XML.\n"
+	prevPath := writePreviousReport(t, specForTest("SPEC.md", previous).Hash, "general", false, "info", "The API must return JSON.")
+	provider := &fakeProvider{content: `{"issues":[],"questions":[],"patches":[]}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:                         "test",
+		SpecName:                        "SPEC.md",
+		SpecText:                        current,
+		Profile:                         "general",
+		SeverityThreshold:               "info",
+		Temperature:                     0.2,
+		MaxTokens:                       1000,
+		Preflight:                       false,
+		Chunking:                        "off",
+		IncrementalFrom:                 prevPath,
+		IncrementalMode:                 "on",
+		IncrementalMaxChangeRatio:       0.35,
+		IncrementalMaxRemapFailureRatio: 0.25,
+		Source:                          SourceWeb,
+	})
+	if err == nil || !strings.Contains(err.Error(), "incremental-base") {
+		t.Fatalf("error = %v, want missing incremental base", err)
+	}
+}
+
 func TestCheckerRejectsInvalidChunkFlags(t *testing.T) {
 	checker := NewChecker()
 	_, err := checker.Check(context.Background(), CheckRequest{
@@ -640,6 +713,51 @@ func hasIssueTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func specForTest(name, raw string) *spec.Spec {
+	return spec.New(name, raw)
+}
+
+func writePreviousReport(t *testing.T, specHash, profile string, strict bool, threshold string, quote string) string {
+	t.Helper()
+	path := t.TempDir() + "/previous.json"
+	strictRaw := "false"
+	if strict {
+		strictRaw = "true"
+	}
+	content := fmt.Sprintf(`{
+  "tool": "speccritic",
+  "version": "1.0",
+  "input": {
+    "spec_file": "SPEC.md",
+    "spec_hash": %q,
+    "context_files": [],
+    "profile": %q,
+    "strict": %s,
+    "severity_threshold": %q
+  },
+  "summary": {"verdict":"VALID_WITH_GAPS","score":93,"critical_count":0,"warn_count":1,"info_count":0},
+  "issues": [{
+    "id": "ISSUE-0001",
+    "severity": "WARN",
+    "category": "UNSPECIFIED_CONSTRAINT",
+    "title": "Finding",
+    "description": "desc",
+    "evidence": [{"path":"SPEC.md","line_start":3,"line_end":3,"quote":%q}],
+    "impact": "impact",
+    "recommendation": "rec",
+    "blocking": false,
+    "tags": []
+  }],
+  "questions": [],
+  "patches": [],
+  "meta": {"model":"fake:model","temperature":0.2}
+}`, specHash, profile, strictRaw, threshold, quote)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 type chunkAwareProvider struct {

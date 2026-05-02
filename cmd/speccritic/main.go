@@ -12,6 +12,7 @@ import (
 
 	"github.com/dshills/speccritic/internal/app"
 	"github.com/dshills/speccritic/internal/chunk"
+	"github.com/dshills/speccritic/internal/incremental"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/review"
 	"github.com/dshills/speccritic/internal/schema"
@@ -35,32 +36,40 @@ func codeError(code int, format string, args ...any) error {
 
 // checkFlags holds the parsed flags for the check command.
 type checkFlags struct {
-	format                 string
-	out                    string
-	contextFiles           []string
-	profileName            string
-	strict                 bool
-	failOn                 string
-	severityThreshold      string
-	patchOut               string
-	llmProvider            string
-	llmModel               string
-	temperature            float64
-	maxTokens              int
-	offline                bool
-	verbose                bool
-	debug                  bool
-	preflight              bool
-	preflightMode          string
-	preflightProfile       string
-	preflightIgnore        []string
-	chunking               string
-	chunkLines             int
-	chunkOverlap           int
-	chunkMinLines          int
-	chunkTokenThreshold    int
-	chunkConcurrency       int
-	synthesisLineThreshold int
+	format                          string
+	out                             string
+	contextFiles                    []string
+	profileName                     string
+	strict                          bool
+	failOn                          string
+	severityThreshold               string
+	patchOut                        string
+	llmProvider                     string
+	llmModel                        string
+	temperature                     float64
+	maxTokens                       int
+	offline                         bool
+	verbose                         bool
+	debug                           bool
+	preflight                       bool
+	preflightMode                   string
+	preflightProfile                string
+	preflightIgnore                 []string
+	chunking                        string
+	chunkLines                      int
+	chunkOverlap                    int
+	chunkMinLines                   int
+	chunkTokenThreshold             int
+	chunkConcurrency                int
+	synthesisLineThreshold          int
+	incrementalFrom                 string
+	incrementalBase                 string
+	incrementalMode                 string
+	incrementalMaxChangeRatio       float64
+	incrementalMaxRemapFailureRatio float64
+	incrementalContextLines         int
+	incrementalStrictReuse          bool
+	incrementalReport               bool
 }
 
 func main() {
@@ -109,6 +118,14 @@ func main() {
 	f.IntVar(&flags.chunkTokenThreshold, "chunk-token-threshold", 4000, "Estimated prompt-token count before auto chunking may run")
 	f.IntVar(&flags.chunkConcurrency, "chunk-concurrency", 3, "Maximum concurrent chunk LLM calls")
 	f.IntVar(&flags.synthesisLineThreshold, "synthesis-line-threshold", 240, "Minimum total line count before no-finding chunked review may run synthesis")
+	f.StringVar(&flags.incrementalFrom, "incremental-from", "", "Path to previous SpecCritic JSON report for incremental rerun")
+	f.StringVar(&flags.incrementalBase, "incremental-base", "", "Path to previous spec text used by --incremental-from when the current spec changed")
+	f.StringVar(&flags.incrementalMode, "incremental-mode", "auto", "Incremental mode: auto, on, or off")
+	f.Float64Var(&flags.incrementalMaxChangeRatio, "incremental-max-change-ratio", 0.35, "Maximum changed-section line ratio before auto fallback")
+	f.Float64Var(&flags.incrementalMaxRemapFailureRatio, "incremental-max-remap-failure-ratio", 0.25, "Maximum prior-finding remap failure ratio before auto fallback")
+	f.IntVar(&flags.incrementalContextLines, "incremental-context-lines", 20, "Neighboring unchanged lines included around each incremental review range")
+	f.BoolVar(&flags.incrementalStrictReuse, "incremental-strict-reuse", true, "Reuse prior findings only when evidence remaps safely")
+	f.BoolVar(&flags.incrementalReport, "incremental-report", false, "Include optional meta.incremental details in JSON output")
 
 	root.AddCommand(checkCmd)
 
@@ -130,32 +147,40 @@ func runCheck(specPath string, flags checkFlags) error {
 	}
 
 	result, err := app.NewChecker().Check(cmdContext(), app.CheckRequest{
-		Version:                version,
-		SpecPath:               specPath,
-		ContextPaths:           flags.contextFiles,
-		Profile:                flags.profileName,
-		Strict:                 flags.strict,
-		SeverityThreshold:      flags.severityThreshold,
-		LLMProvider:            flags.llmProvider,
-		LLMModel:               flags.llmModel,
-		Temperature:            flags.temperature,
-		MaxTokens:              flags.maxTokens,
-		Offline:                flags.offline,
-		Debug:                  flags.debug,
-		Verbose:                flags.verbose,
-		Preflight:              flags.preflight,
-		PreflightMode:          flags.preflightMode,
-		PreflightProfile:       flags.preflightProfile,
-		PreflightIgnore:        flags.preflightIgnore,
-		Chunking:               flags.chunking,
-		ChunkLines:             flags.chunkLines,
-		ChunkOverlap:           flags.chunkOverlap,
-		ChunkMinLines:          flags.chunkMinLines,
-		ChunkTokenThreshold:    flags.chunkTokenThreshold,
-		ChunkConcurrency:       flags.chunkConcurrency,
-		SynthesisLineThreshold: flags.synthesisLineThreshold,
-		Source:                 app.SourceCLI,
-		ErrWriter:              os.Stderr,
+		Version:                         version,
+		SpecPath:                        specPath,
+		ContextPaths:                    flags.contextFiles,
+		Profile:                         flags.profileName,
+		Strict:                          flags.strict,
+		SeverityThreshold:               flags.severityThreshold,
+		LLMProvider:                     flags.llmProvider,
+		LLMModel:                        flags.llmModel,
+		Temperature:                     flags.temperature,
+		MaxTokens:                       flags.maxTokens,
+		Offline:                         flags.offline,
+		Debug:                           flags.debug,
+		Verbose:                         flags.verbose,
+		Preflight:                       flags.preflight,
+		PreflightMode:                   flags.preflightMode,
+		PreflightProfile:                flags.preflightProfile,
+		PreflightIgnore:                 flags.preflightIgnore,
+		Chunking:                        flags.chunking,
+		ChunkLines:                      flags.chunkLines,
+		ChunkOverlap:                    flags.chunkOverlap,
+		ChunkMinLines:                   flags.chunkMinLines,
+		ChunkTokenThreshold:             flags.chunkTokenThreshold,
+		ChunkConcurrency:                flags.chunkConcurrency,
+		SynthesisLineThreshold:          flags.synthesisLineThreshold,
+		IncrementalFrom:                 flags.incrementalFrom,
+		IncrementalBasePath:             flags.incrementalBase,
+		IncrementalMode:                 flags.incrementalMode,
+		IncrementalMaxChangeRatio:       flags.incrementalMaxChangeRatio,
+		IncrementalMaxRemapFailureRatio: flags.incrementalMaxRemapFailureRatio,
+		IncrementalContextLines:         flags.incrementalContextLines,
+		IncrementalStrictReuse:          flags.incrementalStrictReuse,
+		IncrementalReport:               flags.incrementalReport,
+		Source:                          app.SourceCLI,
+		ErrWriter:                       os.Stderr,
 	})
 	if err != nil {
 		return mapAppError(err)
@@ -283,6 +308,21 @@ func validateFlags(flags checkFlags) error {
 	})); err != nil {
 		return err
 	}
+	if flags.incrementalFrom != "" || flags.incrementalMode != "" {
+		incrementalCfg := incremental.DefaultConfig()
+		if flags.incrementalMode != "" {
+			incrementalCfg.Mode = incremental.Mode(flags.incrementalMode)
+		}
+		incrementalCfg.MaxChangeRatio = flags.incrementalMaxChangeRatio
+		incrementalCfg.MaxRemapFailureRatio = flags.incrementalMaxRemapFailureRatio
+		incrementalCfg.ContextLines = flags.incrementalContextLines
+		if flags.chunkTokenThreshold != 0 {
+			incrementalCfg.ChunkTokenThreshold = flags.chunkTokenThreshold
+		}
+		if err := incremental.ValidateConfig(incrementalCfg); err != nil {
+			return err
+		}
+	}
 	switch flags.preflightMode {
 	case "warn", "gate", "only":
 	default:
@@ -392,6 +432,14 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 	envInt("chunk-token-threshold", "SPECCRITIC_CHUNK_TOKEN_THRESHOLD", &flags.chunkTokenThreshold)
 	envInt("chunk-concurrency", "SPECCRITIC_CHUNK_CONCURRENCY", &flags.chunkConcurrency)
 	envInt("synthesis-line-threshold", "SPECCRITIC_SYNTHESIS_LINE_THRESHOLD", &flags.synthesisLineThreshold)
+	envStr("incremental-from", "SPECCRITIC_INCREMENTAL_FROM", &flags.incrementalFrom)
+	envStr("incremental-base", "SPECCRITIC_INCREMENTAL_BASE", &flags.incrementalBase)
+	envStr("incremental-mode", "SPECCRITIC_INCREMENTAL_MODE", &flags.incrementalMode)
+	envFloat64("incremental-max-change-ratio", "SPECCRITIC_INCREMENTAL_MAX_CHANGE_RATIO", &flags.incrementalMaxChangeRatio)
+	envFloat64("incremental-max-remap-failure-ratio", "SPECCRITIC_INCREMENTAL_MAX_REMAP_FAILURE_RATIO", &flags.incrementalMaxRemapFailureRatio)
+	envInt("incremental-context-lines", "SPECCRITIC_INCREMENTAL_CONTEXT_LINES", &flags.incrementalContextLines)
+	envBool("incremental-strict-reuse", "SPECCRITIC_INCREMENTAL_STRICT_REUSE", &flags.incrementalStrictReuse)
+	envBool("incremental-report", "SPECCRITIC_INCREMENTAL_REPORT", &flags.incrementalReport)
 }
 
 // logVerbose writes a timestamped message to stderr when verbose mode is enabled.

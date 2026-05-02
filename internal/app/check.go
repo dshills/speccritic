@@ -10,6 +10,7 @@ import (
 
 	"github.com/dshills/speccritic/internal/chunk"
 	ctxpkg "github.com/dshills/speccritic/internal/context"
+	"github.com/dshills/speccritic/internal/incremental"
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/patch"
 	"github.com/dshills/speccritic/internal/preflight"
@@ -57,35 +58,44 @@ type ContextDocument struct {
 }
 
 type CheckRequest struct {
-	Version                string
-	SpecPath               string
-	SpecName               string
-	SpecText               string
-	ContextPaths           []string
-	ContextDocuments       []ContextDocument
-	Profile                string
-	Strict                 bool
-	SeverityThreshold      string
-	LLMProvider            string
-	LLMModel               string
-	Temperature            float64
-	MaxTokens              int
-	Offline                bool
-	Debug                  bool
-	Verbose                bool
-	Preflight              bool
-	PreflightMode          string
-	PreflightProfile       string
-	PreflightIgnore        []string
-	Chunking               string
-	ChunkLines             int
-	ChunkOverlap           int
-	ChunkMinLines          int
-	ChunkTokenThreshold    int
-	ChunkConcurrency       int
-	SynthesisLineThreshold int
-	Source                 Source
-	ErrWriter              io.Writer
+	Version                         string
+	SpecPath                        string
+	SpecName                        string
+	SpecText                        string
+	ContextPaths                    []string
+	ContextDocuments                []ContextDocument
+	Profile                         string
+	Strict                          bool
+	SeverityThreshold               string
+	LLMProvider                     string
+	LLMModel                        string
+	Temperature                     float64
+	MaxTokens                       int
+	Offline                         bool
+	Debug                           bool
+	Verbose                         bool
+	Preflight                       bool
+	PreflightMode                   string
+	PreflightProfile                string
+	PreflightIgnore                 []string
+	Chunking                        string
+	ChunkLines                      int
+	ChunkOverlap                    int
+	ChunkMinLines                   int
+	ChunkTokenThreshold             int
+	ChunkConcurrency                int
+	SynthesisLineThreshold          int
+	IncrementalFrom                 string
+	IncrementalBasePath             string
+	IncrementalBaseText             string
+	IncrementalMode                 string
+	IncrementalMaxChangeRatio       float64
+	IncrementalMaxRemapFailureRatio float64
+	IncrementalContextLines         int
+	IncrementalStrictReuse          bool
+	IncrementalReport               bool
+	Source                          Source
+	ErrWriter                       io.Writer
 }
 
 type CheckResult struct {
@@ -188,6 +198,17 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		return nil, appError(ErrorProvider, fmt.Errorf("creating LLM provider: %w", err))
 	}
 
+	if req.IncrementalFrom != "" && req.IncrementalMode != "off" {
+		result, handled, err := c.checkIncremental(ctx, provider, req, s, originalRaw, preflightIssues, sysPrompt, errw)
+		if err != nil {
+			return nil, appError(ErrorInput, err)
+		}
+		if handled {
+			return result, nil
+		}
+		logVerbose(errw, req.Verbose, "Incremental review fell back to full review")
+	}
+
 	logVerbose(errw, req.Verbose, "Calling LLM: %s", modelStr)
 	chunkCfg := chunkConfigFromRequest(req)
 	estimatedPromptTokens := estimatePromptTokens(llmReq)
@@ -223,6 +244,158 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, originalRaw string, preflightIssues []schema.Issue, sysPrompt string, errw io.Writer) (*CheckResult, bool, error) {
+	cfg := incrementalConfigFromRequest(req)
+	if cfg.Mode == incremental.ModeOff {
+		return nil, false, nil
+	}
+	prev, err := incremental.LoadPreviousReport(req.IncrementalFrom)
+	if err != nil {
+		return nil, false, fmt.Errorf("loading previous incremental report: %w", err)
+	}
+	if err := incremental.ValidatePreviousCompatibility(prev, cfg); err != nil {
+		if cfg.Mode == incremental.ModeAuto {
+			logVerbose(errw, req.Verbose, "Incremental compatibility failed, falling back: %s", err)
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	previousRaw, ok, err := loadIncrementalBase(req, s, prev)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		if cfg.Mode == incremental.ModeAuto {
+			logVerbose(errw, req.Verbose, "Incremental base spec unavailable, falling back")
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("--incremental-base is required when previous report hash differs from the current spec hash")
+	}
+	previousRedacted := redact.Redact(previousRaw)
+	currentRedacted := redact.Redact(s.Raw)
+	plan, err := incremental.PlanChanges(previousRedacted, currentRedacted, cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	reuse, err := incremental.ReuseFindings(incremental.ReuseInput{
+		Plan:            plan,
+		Previous:        prev.Report,
+		CurrentRaw:      s.Raw,
+		CurrentRedacted: currentRedacted,
+		Config:          cfg,
+		PreflightIssues: preflightIssues,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if reuse.Fallback != nil {
+		if cfg.Mode == incremental.ModeAuto {
+			logVerbose(errw, req.Verbose, "Incremental reuse unsafe, falling back: %s", reuse.Fallback.Message)
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("%s", reuse.Fallback.Message)
+	}
+	var rangeResults []incremental.RangeResult
+	model := "incremental-reuse"
+	if len(plan.ReviewRanges) > 0 {
+		logVerbose(errw, req.Verbose, "Incremental review: %d range(s), %d reused issue(s)", len(plan.ReviewRanges), len(reuse.Issues))
+		rangeResults, err = incremental.ReviewRanges(ctx, provider, s, plan, incremental.ExecutorConfig{
+			SystemPrompt: sysPrompt,
+			Temperature:  req.Temperature,
+			MaxTokens:    req.MaxTokens,
+			Concurrency:  req.ChunkConcurrency,
+			Issues:       reuse.Issues,
+			Questions:    reuse.Questions,
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		model = firstIncrementalModel(rangeResults)
+	}
+	meta := &schema.IncrementalMeta{
+		Enabled:          true,
+		PreviousSpecHash: prev.Report.Input.SpecHash,
+		Mode:             string(cfg.Mode),
+		Fallback:         false,
+		ReviewedSections: len(plan.ReviewRanges),
+		ReusedSections:   len(plan.ReuseRanges),
+		ReusedIssues:     len(reuse.Issues),
+		ReusedQuestions:  len(reuse.Questions),
+		DroppedFindings:  len(reuse.Dropped),
+		ChangedLineRatio: changedLineRatio(plan, s.LineCount),
+	}
+	report, err := incremental.MergeReport(incremental.MergeInput{
+		Spec:                s,
+		PreflightIssues:     preflightIssues,
+		ReusedIssues:        reuse.Issues,
+		ReusedQuestions:     reuse.Questions,
+		RangeResults:        rangeResults,
+		Model:               model,
+		Temperature:         req.Temperature,
+		Profile:             req.Profile,
+		Strict:              req.Strict,
+		SeverityThreshold:   req.SeverityThreshold,
+		ContextFiles:        req.ContextPaths,
+		IncrementalMetadata: meta,
+		IncludeMetadata:     req.IncrementalReport,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	redactedSpec := s.Raw != originalRaw
+	return &CheckResult{
+		Report:       report,
+		PatchDiff:    patchDiffForReport(originalRaw, report, redactedSpec, errw),
+		OriginalSpec: originalRaw,
+		LineCount:    s.LineCount,
+		Model:        model,
+	}, true, nil
+}
+
+func loadIncrementalBase(req CheckRequest, current *spec.Spec, prev *incremental.PreviousReport) (string, bool, error) {
+	if req.IncrementalBaseText != "" {
+		return req.IncrementalBaseText, true, nil
+	}
+	if req.IncrementalBasePath != "" {
+		raw, err := os.ReadFile(req.IncrementalBasePath)
+		if err != nil {
+			return "", false, fmt.Errorf("reading incremental base spec: %w", err)
+		}
+		return string(raw), true, nil
+	}
+	if prev.Report.Input.SpecHash == current.Hash {
+		return current.Raw, true, nil
+	}
+	return "", false, nil
+}
+
+func firstIncrementalModel(results []incremental.RangeResult) string {
+	for _, result := range results {
+		if result.Model != "" {
+			return result.Model
+		}
+	}
+	return "incremental-reuse"
+}
+
+func changedLineRatio(plan incremental.Plan, lineCount int) float64 {
+	if lineCount <= 0 {
+		return 0
+	}
+	changed := 0
+	for _, rr := range plan.ReviewRanges {
+		if rr.Primary.End < rr.Primary.Start {
+			continue
+		}
+		changed += rr.Primary.End - rr.Primary.Start + 1
+	}
+	ratio := float64(changed) / float64(lineCount)
+	if ratio > 1 {
+		return 1
+	}
+	return ratio
 }
 
 func patchDiffForReport(originalRaw string, report *schema.Report, redactedSpec bool, errw io.Writer) string {
@@ -608,6 +781,11 @@ func validateRequest(req CheckRequest) error {
 	if err := chunk.ValidateConfig(chunkConfigFromRequest(req)); err != nil {
 		return err
 	}
+	if req.IncrementalFrom != "" || req.IncrementalMode != "" {
+		if err := incremental.ValidateConfig(incrementalConfigFromRequest(req)); err != nil {
+			return err
+		}
+	}
 	if req.Source == SourceWeb {
 		if req.SpecPath != "" {
 			return fmt.Errorf("web checks must not use SpecPath")
@@ -623,6 +801,25 @@ func validateRequest(req CheckRequest) error {
 		return fmt.Errorf("spec path and spec text are mutually exclusive")
 	}
 	return nil
+}
+
+func incrementalConfigFromRequest(req CheckRequest) incremental.Config {
+	cfg := incremental.DefaultConfig()
+	if req.IncrementalMode != "" {
+		cfg.Mode = incremental.Mode(req.IncrementalMode)
+	}
+	cfg.MaxChangeRatio = req.IncrementalMaxChangeRatio
+	cfg.MaxRemapFailureRatio = req.IncrementalMaxRemapFailureRatio
+	cfg.ContextLines = req.IncrementalContextLines
+	if req.ChunkTokenThreshold != 0 {
+		cfg.ChunkTokenThreshold = req.ChunkTokenThreshold
+	}
+	cfg.StrictReuse = req.IncrementalStrictReuse
+	cfg.ReportMetadata = req.IncrementalReport
+	cfg.Profile = req.Profile
+	cfg.Strict = req.Strict
+	cfg.SeverityThreshold = req.SeverityThreshold
+	return cfg
 }
 
 func resolveModel(req CheckRequest, errw io.Writer) (string, string, error) {
