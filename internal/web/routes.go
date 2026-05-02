@@ -6,7 +6,6 @@ func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleIndex)
 	mux.HandleFunc("GET /models", s.handleModels)
-	mux.HandleFunc("POST /editor/open", s.handleOpenEditor)
 	mux.HandleFunc("POST /checks", s.handleCheckStub)
 	mux.HandleFunc("GET /checks/{id}/issues/{finding_id}", s.handleIssueDetail)
 	mux.HandleFunc("GET /checks/{id}/export.json", s.handleExportJSON)

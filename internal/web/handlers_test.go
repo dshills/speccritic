@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -21,20 +20,6 @@ import (
 type fakeChecker struct {
 	req app.CheckRequest
 	err error
-}
-
-type fakeEditor struct {
-	path   string
-	editor string
-	err    error
-	calls  int
-}
-
-func (f *fakeEditor) Open(path string, editor string) error {
-	f.calls++
-	f.path = path
-	f.editor = editor
-	return f.err
 }
 
 func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.CheckResult, error) {
@@ -176,13 +161,15 @@ func TestIndex(t *testing.T) {
 		t.Fatalf("session/form cookies should share nonce: %#v", cookies)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="spec_path"`, `name="editor"`, `value="vscode"`, `data-open-editor`, `name="previous_result"`, `name="incremental_base_file"`, `name="incremental_mode"`, `name="convergence_mode"`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
+	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="previous_result"`, `name="incremental_base_file"`, `name="incremental_mode"`, `name="convergence_mode"`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
 	}
-	if strings.Contains(body, `name="spec_text"`) {
-		t.Fatal("index body should not include manual spec text input")
+	for _, unwanted := range []string{`name="spec_text"`, `name="spec_path"`, `name="editor"`, `data-open-editor`} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("index body should not include %q", unwanted)
+		}
 	}
 }
 
@@ -261,156 +248,6 @@ func TestModelsEndpointRequiresSessionCookies(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
-	}
-}
-
-func TestOpenEditorEndpoint(t *testing.T) {
-	server, err := NewServerWithChecker(DefaultConfig(), &fakeChecker{})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	editor := &fakeEditor{}
-	server.editor = editor
-
-	form := url.Values{
-		"csrf_token": {"same"},
-		"spec_path":  {"/tmp/SPEC.md"},
-		"editor":     {"vscode"},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/editor/open", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "same"})
-	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
-	server.Handler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
-	}
-	if editor.calls != 1 || editor.path != "/tmp/SPEC.md" || editor.editor != "vscode" {
-		t.Fatalf("editor call = %#v", editor)
-	}
-	if !strings.Contains(rec.Body.String(), "Opened spec in editor.") {
-		t.Fatalf("body = %q", rec.Body.String())
-	}
-}
-
-func TestOpenEditorEndpointRejectsBadNonce(t *testing.T) {
-	server, err := NewServerWithChecker(DefaultConfig(), &fakeChecker{})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	editor := &fakeEditor{}
-	server.editor = editor
-
-	form := url.Values{
-		"csrf_token": {"wrong"},
-		"spec_path":  {"/tmp/SPEC.md"},
-		"editor":     {"vscode"},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/editor/open", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "same"})
-	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
-	server.Handler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rec.Code)
-	}
-	if editor.calls != 0 {
-		t.Fatalf("editor should not be called, got %d calls", editor.calls)
-	}
-}
-
-func TestOpenEditorEndpointReportsEditorErrors(t *testing.T) {
-	server, err := NewServerWithChecker(DefaultConfig(), &fakeChecker{})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	editor := &fakeEditor{err: errors.New("unsupported editor")}
-	server.editor = editor
-
-	form := url.Values{
-		"csrf_token": {"same"},
-		"spec_path":  {"/tmp/SPEC.md"},
-		"editor":     {"unknown"},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/editor/open", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "same"})
-	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
-	server.Handler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "Unable to open editor") {
-		t.Fatalf("body = %q", rec.Body.String())
-	}
-}
-
-func TestOpenEditorEndpointRejectsNonLoopbackRequests(t *testing.T) {
-	server, err := NewServerWithChecker(DefaultConfig(), &fakeChecker{})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	editor := &fakeEditor{}
-	server.editor = editor
-
-	form := url.Values{
-		"csrf_token": {"same"},
-		"spec_path":  {"/tmp/SPEC.md"},
-		"editor":     {"vscode"},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/editor/open", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.RemoteAddr = "203.0.113.10:1234"
-	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "same"})
-	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
-	server.Handler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rec.Code)
-	}
-	if editor.calls != 0 {
-		t.Fatalf("editor should not be called, got %d calls", editor.calls)
-	}
-}
-
-func TestOpenEditorEndpointDisabledOnNonLoopbackBind(t *testing.T) {
-	config := DefaultConfig()
-	config.Addr = "0.0.0.0:8080"
-	server, err := NewServerWithChecker(config, &fakeChecker{})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	editor := &fakeEditor{}
-	server.editor = editor
-
-	form := url.Values{
-		"csrf_token": {"same"},
-		"spec_path":  {"/tmp/SPEC.md"},
-		"editor":     {"vscode"},
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/editor/open", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "same"})
-	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
-	server.Handler().ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rec.Code)
-	}
-	if editor.calls != 0 {
-		t.Fatalf("editor should not be called, got %d calls", editor.calls)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -147,57 +146,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		log.Printf("write models response: %v", err)
 	}
-}
-
-func (s *Server) handleOpenEditor(w http.ResponseWriter, r *http.Request) {
-	if !s.editorOK || !isLoopbackRequest(r) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
-	if err := s.parseRequestForm(r); err != nil {
-		http.Error(w, sanitizeWebError(err), http.StatusBadRequest)
-		return
-	}
-	if !s.validNonce(r) {
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-	if err := s.editor.Open(r.PostFormValue("spec_path"), r.PostFormValue("editor")); err != nil {
-		log.Printf("open editor failed: %v", err)
-		http.Error(w, "Unable to open editor. Check that the path is inside the project directory and the selected editor is installed.", http.StatusBadRequest)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("Opened spec in editor."))
-}
-
-func isLoopbackRequest(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	return hostIsLoopback(host)
-}
-
-func addrIsLoopback(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	if host == "" {
-		return false
-	}
-	return hostIsLoopback(host)
-}
-
-func hostIsLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func configuredModelDisplay() (string, string) {

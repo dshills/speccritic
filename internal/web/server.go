@@ -5,7 +5,6 @@ import (
 	"embed"
 	"html/template"
 	"net/http"
-	"os"
 
 	"github.com/dshills/speccritic/internal/app"
 )
@@ -16,8 +15,6 @@ var content embed.FS
 type Server struct {
 	config    Config
 	checker   checker
-	editor    editorOpener
-	editorOK  bool
 	store     *Store
 	templates *template.Template
 	handler   http.Handler
@@ -46,15 +43,9 @@ func NewServerWithChecker(config Config, c checker) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	editorRoot, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
 	s := &Server{
 		config:    config,
 		checker:   c,
-		editor:    externalEditorOpener{root: editorRoot},
-		editorOK:  addrIsLoopback(config.Addr),
 		store:     store,
 		templates: tmpl,
 	}

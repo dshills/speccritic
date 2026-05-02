@@ -31,25 +31,6 @@
         <input id="spec_file" name="spec_file" type="file" accept=".md,.txt,text/markdown,text/plain" required>
       </div>
 
-      <fieldset class="editor-panel" aria-labelledby="editor-heading">
-        <legend id="editor-heading">External editor</legend>
-        <div class="field">
-          <label for="spec_path">Local spec path</label>
-          <input id="spec_path" name="spec_path" type="text" placeholder="/path/to/SPEC.md" autocomplete="off">
-        </div>
-        <div class="field">
-          <label for="editor">Editor</label>
-          <select id="editor" name="editor">
-            <option value="default">Default app</option>
-            <option value="vscode">VS Code</option>
-            <option value="xcode">Xcode</option>
-            <option value="macvim">MacVim</option>
-          </select>
-        </div>
-        <button type="button" class="secondary-action" data-open-editor disabled>Open spec</button>
-        <p id="editor_status" class="field-status" aria-live="polite"></p>
-      </fieldset>
-
       <details class="advanced-options">
         <summary>Incremental rerun</summary>
         <div class="field">
