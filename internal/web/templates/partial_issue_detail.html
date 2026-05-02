@@ -12,5 +12,16 @@
     <p>{{ .Question.Question }}</p>
     <p>{{ .Question.WhyNeeded }}</p>
   {{ end }}
+  {{ if .CompletionPatches }}
+    <section class="completion-suggestions" aria-label="Completion suggestions">
+      <h4>Completion Suggestions <span>draft/advisory</span></h4>
+      {{ range .CompletionPatches }}
+        <article class="completion-suggestion">
+          <p>Suggested replacement</p>
+          <pre><code>{{ .After }}</code></pre>
+        </article>
+      {{ end }}
+    </section>
+  {{ end }}
 </section>
 {{ end }}

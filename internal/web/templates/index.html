@@ -59,6 +59,37 @@
         </div>
       </details>
 
+      <details class="advanced-options">
+        <summary>Completion suggestions</summary>
+        <label class="checkbox">
+          <input name="completion_suggestions" type="checkbox" value="true">
+          Generate draft/advisory patches
+        </label>
+        <input name="completion_suggestions" type="hidden" value="false">
+        <div class="field">
+          <label for="completion_mode">Mode</label>
+          <select id="completion_mode" name="completion_mode">
+            <option value="auto">auto</option>
+            <option value="on">require safe patches</option>
+            <option value="off">off</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="completion_template">Template</label>
+          <select id="completion_template" name="completion_template">
+            <option value="profile">selected profile</option>
+            <option value="general">general</option>
+            <option value="backend-api">backend-api</option>
+            <option value="regulated-system">regulated-system</option>
+            <option value="event-driven">event-driven</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="completion_max_patches">Max patches</label>
+          <input id="completion_max_patches" name="completion_max_patches" type="number" min="0" max="50" step="1" value="8">
+        </div>
+      </details>
+
       <div class="controls">
         <div class="field">
           <label for="profile">Profile</label>

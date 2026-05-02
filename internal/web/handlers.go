@@ -35,6 +35,7 @@ type indexData struct {
 
 const maxWebTokens = 16384
 const maxWebModelNameLen = 120
+const maxWebCompletionPatches = 50
 const multipartMemoryLimit = 1 << 20
 const multipartOverheadLimit = 1 << 20
 
@@ -48,9 +49,10 @@ type resultView struct {
 }
 
 type findingDetail struct {
-	CheckID  string
-	Issue    *schema.Issue
-	Question *schema.Question
+	CheckID           string
+	Issue             *schema.Issue
+	Question          *schema.Question
+	CompletionPatches []schema.Patch
 }
 
 type modelsResponse struct {
@@ -337,6 +339,7 @@ func (s *Server) handleIssueDetail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	detail.CompletionPatches = relatedCompletionPatches(check.Result.Report, findingID)
 	var buf bytes.Buffer
 	if err := s.templates.ExecuteTemplate(&buf, "partial_issue_detail.html", detail); err != nil {
 		log.Printf("render issue detail: %v", err)
@@ -610,6 +613,31 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		}
 		maxTokens = v
 	}
+	completionSuggestions := formBoolDefault(r, "completion_suggestions", false)
+	completionMode := r.FormValue("completion_mode")
+	if completionMode == "" {
+		completionMode = schema.CompletionModeAuto
+	}
+	switch completionMode {
+	case schema.CompletionModeAuto, schema.CompletionModeOn, schema.CompletionModeOff:
+	default:
+		return app.CheckRequest{}, fmt.Errorf("invalid completion mode %q", completionMode)
+	}
+	completionTemplate := r.FormValue("completion_template")
+	if completionTemplate == "" {
+		completionTemplate = schema.CompletionTemplateProfile
+	}
+	if !schema.IsCompletionInputTemplateName(completionTemplate) {
+		return app.CheckRequest{}, fmt.Errorf("invalid completion template %q", completionTemplate)
+	}
+	completionMaxPatches := 8
+	if raw := r.FormValue("completion_max_patches"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v < 0 || v > maxWebCompletionPatches {
+			return app.CheckRequest{}, fmt.Errorf("invalid completion max patches")
+		}
+		completionMaxPatches = v
+	}
 	chunkConcurrency := chunk.DefaultChunkConcurrency
 	if llmProvider == "gemini" {
 		chunkConcurrency = 1
@@ -657,9 +685,46 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		ConvergenceFromText:             previousReport,
 		ConvergenceMode:                 convergenceMode,
 		ConvergenceReport:               previousReport != "" && convergenceMode != "off",
+		CompletionSuggestions:           completionSuggestions,
+		CompletionMode:                  completionMode,
+		CompletionTemplate:              completionTemplate,
+		CompletionMaxPatches:            completionMaxPatches,
+		CompletionOpenDecisions:         true,
 		Source:                          app.SourceWeb,
 		ErrWriter:                       io.Discard,
 	}, nil
+}
+
+func relatedCompletionPatches(report *schema.Report, findingID string) []schema.Patch {
+	if report == nil {
+		return nil
+	}
+	if report.Meta.Completion == nil || findingID == "" {
+		return nil
+	}
+	issueHasCompletionTag := false
+	for _, issue := range report.Issues {
+		if issue.ID != findingID {
+			continue
+		}
+		for _, tag := range issue.Tags {
+			if tag == "completion-suggested" {
+				issueHasCompletionTag = true
+				break
+			}
+		}
+		break
+	}
+	if !issueHasCompletionTag {
+		return nil
+	}
+	patches := make([]schema.Patch, 0, len(report.Patches))
+	for _, patch := range report.Patches {
+		if patch.IssueID == findingID {
+			patches = append(patches, patch)
+		}
+	}
+	return patches
 }
 
 func readOptionalUploadText(r *http.Request, field string, limit int64) (string, error) {

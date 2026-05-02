@@ -78,5 +78,25 @@
     </div>
   </dl>
   {{ end }}
+  {{ with .Check.Result.Report.Meta.Completion }}
+  <dl class="completion-meta" aria-label="Completion suggestion details">
+    <div>
+      <dt>Completion</dt>
+      <dd>{{ .Mode }} / {{ .Template }}</dd>
+    </div>
+    <div>
+      <dt>Draft patches</dt>
+      <dd>{{ .GeneratedPatches }}</dd>
+    </div>
+    <div>
+      <dt>Skipped</dt>
+      <dd>{{ .SkippedSuggestions }}</dd>
+    </div>
+    <div>
+      <dt>Open decisions</dt>
+      <dd>{{ .OpenDecisions }}</dd>
+    </div>
+  </dl>
+  {{ end }}
 </section>
 {{ end }}

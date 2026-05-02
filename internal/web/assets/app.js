@@ -79,13 +79,13 @@
   }
 
   function startRunningState(form, target, started) {
+    setFormControlsDisabled(form, true);
     var button = form.querySelector('button[type="submit"]');
     if (button) {
       if (!button.dataset.idleLabel) {
         button.dataset.idleLabel = button.textContent;
       }
       button.textContent = button.dataset.runningLabel || "Checking...";
-      button.disabled = true;
     }
     form.setAttribute("aria-busy", "true");
     if (target) {
@@ -102,12 +102,31 @@
   function stopRunningState(form, timer) {
     window.clearInterval(timer);
     form.removeAttribute("aria-busy");
+    setFormControlsDisabled(form, false);
     var button = form.querySelector('button[type="submit"]');
     if (button) {
-      button.disabled = false;
       button.textContent = button.dataset.idleLabel;
     }
     updateSubmitAvailability(form);
+  }
+
+  function setFormControlsDisabled(form, disabled) {
+    if (!form) {
+      return;
+    }
+    Array.prototype.forEach.call(form.querySelectorAll("input:not([type='hidden']), select, textarea, button"), function (control) {
+      if (disabled) {
+        if (!control.disabled) {
+          control.dataset.runningDisabled = "true";
+          control.disabled = true;
+        }
+        return;
+      }
+      if (control.dataset.runningDisabled === "true") {
+        control.disabled = false;
+        delete control.dataset.runningDisabled;
+      }
+    });
   }
 
   function runningNode(label, started) {

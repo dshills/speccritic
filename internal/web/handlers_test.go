@@ -46,6 +46,31 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 			Tags:        []string{"preflight", "preflight-rule:PREFLIGHT-TODO-001"},
 		}}, issues...)
 	}
+	meta := schema.Meta{Model: "openai:gpt-5", Incremental: incrementalMetaForRequest(req), Convergence: convergenceMetaForRequest(req)}
+	patches := []schema.Patch(nil)
+	if req.CompletionSuggestions && req.CompletionMode != schema.CompletionModeOff {
+		completionIssue := 0
+		for i := range issues {
+			if issues[i].ID == "ISSUE-0001" {
+				completionIssue = i
+				break
+			}
+		}
+		issues[completionIssue].Tags = append(issues[completionIssue].Tags, "completion-suggested")
+		patches = append(patches, schema.Patch{
+			IssueID: issues[completionIssue].ID,
+			Before:  "The system must work.",
+			After:   "The system must define acceptance criteria.\n\nOPEN DECISION: Define acceptance criteria.",
+		})
+		meta.Completion = &schema.CompletionMeta{
+			Enabled:            true,
+			Mode:               req.CompletionMode,
+			Template:           req.CompletionTemplate,
+			GeneratedPatches:   1,
+			SkippedSuggestions: 0,
+			OpenDecisions:      1,
+		}
+	}
 	return &app.CheckResult{
 		OriginalSpec: req.SpecText,
 		PatchDiff:    "# patch\n",
@@ -55,7 +80,8 @@ func (f *fakeChecker) Check(_ context.Context, req app.CheckRequest) (*app.Check
 			Input:   schema.Input{SeverityThreshold: req.SeverityThreshold},
 			Summary: schema.Summary{Verdict: schema.VerdictInvalid, Score: 80, CriticalCount: 1},
 			Issues:  issues,
-			Meta:    schema.Meta{Model: "openai:gpt-5", Incremental: incrementalMetaForRequest(req), Convergence: convergenceMetaForRequest(req)},
+			Patches: patches,
+			Meta:    meta,
 		},
 	}, nil
 }
@@ -161,7 +187,7 @@ func TestIndex(t *testing.T) {
 		t.Fatalf("session/form cookies should share nonce: %#v", cookies)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="previous_result"`, `name="incremental_base_file"`, `name="incremental_mode"`, `name="convergence_mode"`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
+	for _, want := range []string{"SpecCritic", "Model", `name="llm_provider"`, `value="openai"`, `selected`, `name="llm_model"`, `value="gpt-5"`, `name="spec_file"`, `required`, `name="previous_result"`, `name="incremental_base_file"`, `name="incremental_mode"`, `name="convergence_mode"`, `name="completion_suggestions"`, `name="completion_mode"`, `name="completion_template"`, `name="completion_max_patches"`, `name="preflight"`, `checked`, `button type="submit"`, `disabled`, `name="csrf_token"`, `id="status"`, `id="annotated-spec"`, `id="issue-modal"`, `role="dialog"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("index body missing %q", want)
 		}
@@ -385,6 +411,65 @@ func TestCheckStubAcceptsIncrementalUploads(t *testing.T) {
 	}
 }
 
+func TestCheckStubAcceptsCompletionOptions(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"completion_suggestions": "true",
+		"completion_mode":        "auto",
+		"completion_template":    "backend-api",
+		"completion_max_patches": "3",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !checker.req.CompletionSuggestions || checker.req.CompletionMode != "auto" || checker.req.CompletionTemplate != "backend-api" || checker.req.CompletionMaxPatches != 3 || !checker.req.CompletionOpenDecisions {
+		t.Fatalf("completion request = %#v", checker.req)
+	}
+	bodyText := rec.Body.String()
+	for _, want := range []string{"Completion", "Draft patches", "Open decisions", "backend-api"} {
+		if !strings.Contains(bodyText, want) {
+			t.Fatalf("response missing %q: %s", want, bodyText)
+		}
+	}
+}
+
+func TestCheckStubRejectsInvalidCompletionMaxPatches(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"completion_max_patches": "51",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if checker.req.SpecText != "" {
+		t.Fatal("checker should not be called")
+	}
+}
+
 func TestCheckStubRequiresPreviousUploadForConvergenceOn(t *testing.T) {
 	checker := &fakeChecker{}
 	server, err := NewServerWithChecker(DefaultConfig(), checker)
@@ -605,7 +690,9 @@ func TestIssueDetail(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	body, contentType := multipartSpecRequest(t, "The system must work.")
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"completion_suggestions": "true",
+	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/checks", body)
 	req.Header.Set("Content-Type", contentType)
@@ -632,6 +719,9 @@ func TestIssueDetail(t *testing.T) {
 	}
 	if !strings.Contains(detail.Body.String(), `id="issue-modal-title"`) {
 		t.Fatalf("detail missing modal title: %s", detail.Body.String())
+	}
+	if !strings.Contains(detail.Body.String(), "Completion Suggestions") || !strings.Contains(detail.Body.String(), "draft/advisory") {
+		t.Fatalf("detail missing completion suggestions: %s", detail.Body.String())
 	}
 }
 
