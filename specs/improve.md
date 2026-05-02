@@ -140,8 +140,8 @@ Good candidates:
 I’d prioritize this order:
 
 1. Add deterministic preflight checks. (DONE)
-2. Add section-level chunking with parallel LLM calls.
-3. Add incremental rerun mode using previous result + changed sections.
+2. Add section-level chunking with parallel LLM calls. (DONE)
+3. Add incremental rerun mode using previous result + changed sections. (DONE)
 4. Add convergence tracking: resolved/still-open/new.
 5. Add profile-specific completion templates and patch suggestions.
 
