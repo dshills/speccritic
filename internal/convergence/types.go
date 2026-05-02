@@ -140,6 +140,8 @@ type Summary struct {
 type CountSet struct {
 	New       int
 	StillOpen int
+	Resolved  int
+	Dropped   int
 	Untracked int
 }
 
