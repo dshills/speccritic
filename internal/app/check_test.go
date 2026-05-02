@@ -345,6 +345,61 @@ func TestCheckerPreflightOnlySkipsProvider(t *testing.T) {
 	}
 }
 
+func TestCheckerPreflightOnlyAddsConvergenceMetadata(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "")
+
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) {
+		return nil, errors.New("provider should not be called")
+	}}
+
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:             "test",
+		SpecName:            "SPEC.md",
+		SpecText:            "TODO define authentication behavior.\n",
+		Profile:             "general",
+		SeverityThreshold:   "info",
+		Temperature:         0.2,
+		MaxTokens:           1000,
+		Preflight:           true,
+		PreflightMode:       "only",
+		ConvergenceFromText: previousConvergenceReportJSON(),
+		ConvergenceMode:     "auto",
+		ConvergenceReport:   true,
+		Source:              SourceCLI,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	meta := result.Report.Meta.Convergence
+	if meta == nil || !meta.Enabled {
+		t.Fatalf("convergence meta = %#v", meta)
+	}
+	if meta.Current.New == 0 || meta.Status == "" {
+		t.Fatalf("convergence meta = %#v", meta)
+	}
+}
+
+func TestCheckerConvergenceOnModeRejectsInvalidPreviousReport(t *testing.T) {
+	checker := NewChecker()
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:             "test",
+		SpecName:            "SPEC.md",
+		SpecText:            "TODO define authentication behavior.\n",
+		Profile:             "general",
+		SeverityThreshold:   "info",
+		Preflight:           true,
+		PreflightMode:       "only",
+		ConvergenceFromText: `{`,
+		ConvergenceMode:     "on",
+		ConvergenceReport:   true,
+		Source:              SourceCLI,
+	})
+	if err == nil || !strings.Contains(err.Error(), "previous convergence report") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestCheckerPreflightGateSkipsProviderOnBlockingIssue(t *testing.T) {
 	t.Setenv("SPECCRITIC_LLM_PROVIDER", "")
 	t.Setenv("SPECCRITIC_LLM_MODEL", "")
@@ -713,6 +768,43 @@ func hasIssueTag(tags []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func previousConvergenceReportJSON() string {
+	return `{
+		"tool":"speccritic",
+		"version":"test",
+		"input":{
+			"spec_file":"SPEC.md",
+			"spec_hash":"sha256:old",
+			"context_files":[],
+			"profile":"general",
+			"strict":false,
+			"severity_threshold":"info"
+		},
+		"summary":{
+			"verdict":"INVALID",
+			"score":80,
+			"critical_count":1,
+			"warn_count":0,
+			"info_count":0
+		},
+		"issues":[{
+			"id":"ISSUE-0001",
+			"severity":"CRITICAL",
+			"category":"AMBIGUOUS_BEHAVIOR",
+			"title":"Prior issue",
+			"description":"d",
+			"evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"old"}],
+			"impact":"i",
+			"recommendation":"r",
+			"blocking":true,
+			"tags":[]
+		}],
+		"questions":[],
+		"patches":[],
+		"meta":{"model":"test:model","temperature":0.2}
+	}`
 }
 
 func specForTest(name, raw string) *spec.Spec {

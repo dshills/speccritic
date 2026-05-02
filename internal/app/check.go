@@ -10,6 +10,7 @@ import (
 
 	"github.com/dshills/speccritic/internal/chunk"
 	ctxpkg "github.com/dshills/speccritic/internal/context"
+	"github.com/dshills/speccritic/internal/convergence"
 	"github.com/dshills/speccritic/internal/incremental"
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/patch"
@@ -95,6 +96,11 @@ type CheckRequest struct {
 	IncrementalContextLines         int
 	IncrementalStrictReuse          bool
 	IncrementalReport               bool
+	ConvergenceFrom                 string
+	ConvergenceFromText             string
+	ConvergenceMode                 string
+	ConvergenceStrict               bool
+	ConvergenceReport               bool
 	Source                          Source
 	ErrWriter                       io.Writer
 }
@@ -143,6 +149,9 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	}
 	if preflightOnly {
 		report := buildReport(req, s, preflightIssues, nil, nil, "preflight")
+		if err := c.applyConvergence(req, report, convergence.CoveragePreflightOnly, errw); err != nil {
+			return nil, appError(ErrorInput, err)
+		}
 		return &CheckResult{
 			Report:       report,
 			OriginalSpec: originalRaw,
@@ -205,6 +214,9 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 			return nil, appError(ErrorInput, err)
 		}
 		if handled {
+			if err := c.applyConvergence(req, result.Report, convergence.CoverageIncremental, errw); err != nil {
+				return nil, appError(ErrorInput, err)
+			}
 			return result, nil
 		}
 		logVerbose(errw, req.Verbose, "Incremental review fell back to full review")
@@ -220,6 +232,9 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 			return nil, appError(ErrorModelOutput, err)
 		}
 		patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
+		if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
+			return nil, appError(ErrorInput, err)
+		}
 		return &CheckResult{
 			Report:       report,
 			PatchDiff:    patchDiff,
@@ -236,6 +251,9 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	report.Issues = mergeIssues(preflightIssues, report.Issues, knownPreflightIDs)
 
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
+	if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
+		return nil, appError(ErrorInput, err)
+	}
 	patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
 
 	return &CheckResult{
@@ -245,6 +263,50 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+func (c *Checker) applyConvergence(req CheckRequest, report *schema.Report, coverage convergence.ReviewCoverage, errw io.Writer) error {
+	cfg := convergenceConfigFromRequest(req, coverage)
+	if cfg.Mode == convergence.ModeOff {
+		return nil
+	}
+	if req.ConvergenceFrom == "" && req.ConvergenceFromText == "" {
+		if cfg.Mode == convergence.ModeOn {
+			return fmt.Errorf("convergence source is required when convergence mode is enabled")
+		}
+		return nil
+	}
+	if !cfg.Report {
+		return nil
+	}
+	var prev *convergence.PreviousReport
+	var loadErr error
+	if req.ConvergenceFromText != "" {
+		prev, loadErr = convergence.ParsePreviousReport([]byte(req.ConvergenceFromText))
+	} else {
+		prev, loadErr = convergence.LoadPreviousReport(req.ConvergenceFrom)
+	}
+	if loadErr != nil {
+		if cfg.Mode == convergence.ModeOn {
+			return fmt.Errorf("loading previous convergence report: %w", loadErr)
+		}
+		result := convergence.CompareReports(nil, report, cfg, convergence.Compatibility{
+			Status: convergence.StatusUnavailable,
+			Notes:  []string{fmt.Sprintf("previous convergence report unavailable: %s", loadErr)},
+			Err:    loadErr,
+		})
+		report.Meta.Convergence = convergence.ToSchemaMeta(result, cfg.Mode, "", report.Input.SpecHash)
+		logVerbose(errw, req.Verbose, "Convergence unavailable: %s", loadErr)
+		return nil
+	}
+	compat := convergence.CheckCompatibility(prev, cfg)
+	if compat.Err != nil && cfg.Mode == convergence.ModeOn {
+		return fmt.Errorf("previous convergence report incompatible: %w", compat.Err)
+	}
+	result := convergence.CompareReports(prev.Report, report, cfg, compat)
+	report.Meta.Convergence = convergence.ToSchemaMeta(result, cfg.Mode, prev.Report.Input.SpecHash, report.Input.SpecHash)
+	logVerbose(errw, req.Verbose, "Convergence: %d new, %d still open, %d resolved", result.Summary.Current.New, result.Summary.Current.StillOpen, result.Summary.Previous.Resolved)
+	return nil
 }
 
 func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, originalRaw string, preflightIssues []schema.Issue, sysPrompt string, errw io.Writer) (*CheckResult, bool, error) {
@@ -798,6 +860,11 @@ func validateRequest(req CheckRequest) error {
 			return err
 		}
 	}
+	if req.ConvergenceFrom != "" || req.ConvergenceFromText != "" || req.ConvergenceMode != "" {
+		if err := convergence.ValidateConfig(convergenceConfigFromRequest(req, convergence.CoverageUnknown)); err != nil {
+			return err
+		}
+	}
 	if req.Source == SourceWeb {
 		if req.SpecPath != "" {
 			return fmt.Errorf("web checks must not use SpecPath")
@@ -813,6 +880,21 @@ func validateRequest(req CheckRequest) error {
 		return fmt.Errorf("spec path and spec text are mutually exclusive")
 	}
 	return nil
+}
+
+func convergenceConfigFromRequest(req CheckRequest, coverage convergence.ReviewCoverage) convergence.Config {
+	cfg := convergence.DefaultConfig()
+	if req.ConvergenceMode != "" {
+		cfg.Mode = convergence.Mode(req.ConvergenceMode)
+	}
+	cfg.Report = req.ConvergenceReport || req.ConvergenceFrom != "" || req.ConvergenceFromText != ""
+	cfg.StrictCompatibility = req.ConvergenceStrict
+	cfg.Profile = req.Profile
+	cfg.ReviewStrict = req.Strict
+	cfg.SeverityThreshold = req.SeverityThreshold
+	cfg.CurrentSpecHash = ""
+	cfg.CurrentReviewCoverage = coverage
+	return cfg
 }
 
 func incrementalConfigFromRequest(req CheckRequest) incremental.Config {

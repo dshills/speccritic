@@ -12,6 +12,7 @@ import (
 
 	"github.com/dshills/speccritic/internal/app"
 	"github.com/dshills/speccritic/internal/chunk"
+	"github.com/dshills/speccritic/internal/convergence"
 	"github.com/dshills/speccritic/internal/incremental"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/review"
@@ -70,6 +71,10 @@ type checkFlags struct {
 	incrementalContextLines         int
 	incrementalStrictReuse          bool
 	incrementalReport               bool
+	convergenceFrom                 string
+	convergenceMode                 string
+	convergenceStrict               bool
+	convergenceReport               bool
 }
 
 func main() {
@@ -126,6 +131,10 @@ func main() {
 	f.IntVar(&flags.incrementalContextLines, "incremental-context-lines", 20, "Neighboring unchanged lines included around each incremental review range")
 	f.BoolVar(&flags.incrementalStrictReuse, "incremental-strict-reuse", true, "Reuse prior findings only when evidence remaps safely")
 	f.BoolVar(&flags.incrementalReport, "incremental-report", false, "Include optional meta.incremental details in JSON output")
+	f.StringVar(&flags.convergenceFrom, "convergence-from", "", "Path to previous SpecCritic JSON report for convergence tracking")
+	f.StringVar(&flags.convergenceMode, "convergence-mode", "auto", "Convergence mode: auto, on, or off")
+	f.BoolVar(&flags.convergenceStrict, "convergence-strict", false, "Require strict convergence compatibility checks")
+	f.BoolVar(&flags.convergenceReport, "convergence-report", true, "Include optional meta.convergence details when convergence is requested")
 
 	root.AddCommand(checkCmd)
 
@@ -179,6 +188,10 @@ func runCheck(specPath string, flags checkFlags) error {
 		IncrementalContextLines:         flags.incrementalContextLines,
 		IncrementalStrictReuse:          flags.incrementalStrictReuse,
 		IncrementalReport:               flags.incrementalReport,
+		ConvergenceFrom:                 flags.convergenceFrom,
+		ConvergenceMode:                 flags.convergenceMode,
+		ConvergenceStrict:               flags.convergenceStrict,
+		ConvergenceReport:               flags.convergenceReport,
 		Source:                          app.SourceCLI,
 		ErrWriter:                       os.Stderr,
 	})
@@ -323,6 +336,21 @@ func validateFlags(flags checkFlags) error {
 			return err
 		}
 	}
+	if flags.convergenceFrom != "" || flags.convergenceMode != "" {
+		convergenceCfg := convergence.DefaultConfig()
+		if flags.convergenceMode != "" {
+			convergenceCfg.Mode = convergence.Mode(flags.convergenceMode)
+		}
+		convergenceCfg.Report = flags.convergenceReport
+		convergenceCfg.StrictCompatibility = flags.convergenceStrict
+		convergenceCfg.SeverityThreshold = flags.severityThreshold
+		if err := convergence.ValidateConfig(convergenceCfg); err != nil {
+			return err
+		}
+		if convergenceCfg.Mode == convergence.ModeOn && flags.convergenceFrom == "" {
+			return fmt.Errorf("--convergence-from is required when --convergence-mode=on")
+		}
+	}
 	switch flags.preflightMode {
 	case "warn", "gate", "only":
 	default:
@@ -440,6 +468,10 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 	envInt("incremental-context-lines", "SPECCRITIC_INCREMENTAL_CONTEXT_LINES", &flags.incrementalContextLines)
 	envBool("incremental-strict-reuse", "SPECCRITIC_INCREMENTAL_STRICT_REUSE", &flags.incrementalStrictReuse)
 	envBool("incremental-report", "SPECCRITIC_INCREMENTAL_REPORT", &flags.incrementalReport)
+	envStr("convergence-from", "SPECCRITIC_CONVERGENCE_FROM", &flags.convergenceFrom)
+	envStr("convergence-mode", "SPECCRITIC_CONVERGENCE_MODE", &flags.convergenceMode)
+	envBool("convergence-strict", "SPECCRITIC_CONVERGENCE_STRICT", &flags.convergenceStrict)
+	envBool("convergence-report", "SPECCRITIC_CONVERGENCE_REPORT", &flags.convergenceReport)
 }
 
 // logVerbose writes a timestamped message to stderr when verbose mode is enabled.

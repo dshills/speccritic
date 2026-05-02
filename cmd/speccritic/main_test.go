@@ -153,6 +153,24 @@ func TestRunCheck_GoodSpec_VALID(t *testing.T) {
 	}
 }
 
+func TestValidateFlagsConvergenceOnRequiresPreviousReport(t *testing.T) {
+	flags := runCheckFlags()
+	flags.convergenceMode = "on"
+	err := validateFlags(flags)
+	if err == nil || !strings.Contains(err.Error(), "convergence-from") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestValidateFlagsConvergenceBadMode(t *testing.T) {
+	flags := runCheckFlags()
+	flags.convergenceMode = "bad"
+	err := validateFlags(flags)
+	if err == nil || !strings.Contains(err.Error(), "convergence mode") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRunCheck_MarkdownFormat(t *testing.T) {
 	setTestEnv(t)
 	setupMockAnthropicServer(t, readFixture(t, "anthropic_response_bad.json"))
