@@ -45,7 +45,11 @@ const (
 	SourceWeb Source = "web"
 )
 
-const maxPreflightPromptFindings = 20
+const (
+	maxPreflightPromptFindings = 20
+	defaultMaxRepairTokens     = 8192
+	maxRepairTokens            = 32768
+)
 
 type ContextDocument struct {
 	Name string
@@ -706,6 +710,9 @@ func callWithRetry(ctx context.Context, provider llm.Provider, req *llm.Request,
 	logVerbose(errw, verbose, "Validation failed, retrying: %s", parseErr)
 
 	repairReq := *req
+	if incompleteJSON(parseErr) {
+		repairReq.MaxTokens = repairMaxTokens(req.MaxTokens)
+	}
 	repairReq.UserPrompt = req.UserPrompt + fmt.Sprintf(
 		"\n\nYour previous response failed schema validation (error category: %q). Return only valid JSON matching the schema above.",
 		sanitizeErrForPrompt(parseErr),
@@ -722,6 +729,29 @@ func callWithRetry(ctx context.Context, provider llm.Provider, req *llm.Request,
 	}
 
 	return report, resp2.Model, nil
+}
+
+func incompleteJSON(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unexpected end of JSON input") ||
+		strings.Contains(msg, "unexpected EOF")
+}
+
+func repairMaxTokens(current int) int {
+	if current <= 0 {
+		return defaultMaxRepairTokens
+	}
+	next := current + 2048
+	if doubled := current * 2; doubled > next {
+		next = doubled
+	}
+	if next > maxRepairTokens && current < maxRepairTokens {
+		return maxRepairTokens
+	}
+	return next
 }
 
 func sanitizeErrForPrompt(err error) string {

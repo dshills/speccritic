@@ -29,6 +29,15 @@ type ModelInfo struct {
 	DisplayName string `json:"display_name,omitempty"`
 }
 
+type httpStatusError struct {
+	statusCode int
+	body       string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.statusCode, truncate(e.body, 200))
+}
+
 func ListModels(ctx context.Context, provider string) ([]ModelInfo, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	switch provider {
@@ -57,15 +66,16 @@ func listOpenAIModels(ctx context.Context) ([]ModelInfo, error) {
 			Type    string `json:"type"`
 		} `json:"error"`
 	}
-	if err := getJSON(ctx, openaiModelsAPIURL, map[string]string{"Authorization": "Bearer " + apiKey}, &payload); err != nil {
-		return nil, err
-	}
+	err := getJSON(ctx, openaiModelsAPIURL, map[string]string{"Authorization": "Bearer " + apiKey}, &payload)
 	if payload.Error != nil {
 		return nil, fmt.Errorf("openai: %s: %s", payload.Error.Type, payload.Error.Message)
 	}
+	if err != nil {
+		return nil, err
+	}
 	models := make([]ModelInfo, 0, len(payload.Data))
 	for _, item := range payload.Data {
-		if isOpenAIGenerationModel(item.ID) {
+		if isUsableOpenAIReviewModel(item.ID) {
 			models = append(models, ModelInfo{ID: item.ID})
 		}
 	}
@@ -88,15 +98,18 @@ func listAnthropicModels(ctx context.Context) ([]ModelInfo, error) {
 		} `json:"error"`
 	}
 	headers := map[string]string{"x-api-key": apiKey, "anthropic-version": AnthropicVersion}
-	if err := getJSON(ctx, anthropicModelsAPIURL, headers, &payload); err != nil {
-		return nil, err
-	}
+	err := getJSON(ctx, anthropicModelsAPIURL, headers, &payload)
 	if payload.Error != nil {
 		return nil, fmt.Errorf("anthropic: %s: %s", payload.Error.Type, payload.Error.Message)
 	}
+	if err != nil {
+		return nil, err
+	}
 	models := make([]ModelInfo, 0, len(payload.Data))
 	for _, item := range payload.Data {
-		models = append(models, ModelInfo{ID: item.ID, DisplayName: item.DisplayName})
+		if isUsableAnthropicReviewModel(item.ID) {
+			models = append(models, ModelInfo{ID: item.ID, DisplayName: item.DisplayName})
+		}
 	}
 	return sortedModels(models), nil
 }
@@ -125,22 +138,22 @@ func listGeminiModels(ctx context.Context) ([]ModelInfo, error) {
 	q := endpoint.Query()
 	q.Set("pageSize", "1000")
 	endpoint.RawQuery = q.Encode()
-	if err := getJSON(ctx, endpoint.String(), map[string]string{"x-goog-api-key": apiKey}, &payload); err != nil {
-		return nil, err
-	}
+	err = getJSON(ctx, endpoint.String(), map[string]string{"x-goog-api-key": apiKey}, &payload)
 	if payload.Error != nil {
 		return nil, fmt.Errorf("gemini: %s: %s", payload.Error.Status, payload.Error.Message)
 	}
+	if err != nil {
+		return nil, err
+	}
 	models := make([]ModelInfo, 0, len(payload.Models))
 	for _, item := range payload.Models {
-		if !supportsGenerateContent(item.SupportedGenerationMethods) {
-			continue
-		}
 		id := strings.TrimPrefix(item.Name, "models/")
 		if item.BaseModelID != "" {
 			id = item.BaseModelID
 		}
-		models = append(models, ModelInfo{ID: id, DisplayName: item.DisplayName})
+		if isUsableGeminiReviewModel(id, item.SupportedGenerationMethods) {
+			models = append(models, ModelInfo{ID: id, DisplayName: item.DisplayName})
+		}
 	}
 	return sortedModels(dedupeModels(models)), nil
 }
@@ -163,19 +176,67 @@ func getJSON(ctx context.Context, endpoint string, headers map[string]string, ds
 	if err != nil {
 		return fmt.Errorf("reading response body: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
-	}
 	if err := json.Unmarshal(respBytes, dst); err != nil {
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
+		}
 		return fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(string(respBytes), 200), err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return &httpStatusError{statusCode: resp.StatusCode, body: string(respBytes)}
 	}
 	return nil
 }
 
-func isOpenAIGenerationModel(id string) bool {
+func isUsableOpenAIReviewModel(id string) bool {
 	id = strings.ToLower(id)
-	return strings.HasPrefix(id, "gpt-") ||
-		isOpenAIReasoningModel(id)
+	if hasAnyPrefix(id, "text-embedding-", "embedding-", "dall-e-", "tts-", "whisper-", "omni-moderation-", "text-moderation-") {
+		return false
+	}
+	if strings.Contains(id, "audio") ||
+		strings.Contains(id, "realtime") ||
+		strings.Contains(id, "transcribe") ||
+		strings.Contains(id, "transcription") ||
+		strings.Contains(id, "image") ||
+		strings.Contains(id, "vision") ||
+		strings.Contains(id, "speech") ||
+		strings.Contains(id, "moderation") ||
+		strings.Contains(id, "embedding") {
+		return false
+	}
+	return strings.HasPrefix(id, "gpt-") || isOpenAIReasoningModel(id)
+}
+
+func isUsableAnthropicReviewModel(id string) bool {
+	id = strings.ToLower(id)
+	return strings.HasPrefix(id, "claude-") &&
+		!strings.Contains(id, "embedding") &&
+		!strings.Contains(id, "image") &&
+		!strings.Contains(id, "audio")
+}
+
+func isUsableGeminiReviewModel(id string, methods []string) bool {
+	id = strings.ToLower(id)
+	if strings.Contains(id, "embedding") ||
+		strings.Contains(id, "embed") ||
+		strings.Contains(id, "imagen") ||
+		strings.Contains(id, "image") ||
+		strings.Contains(id, "veo") ||
+		strings.Contains(id, "aqa") ||
+		strings.Contains(id, "tts") ||
+		strings.Contains(id, "audio") {
+		return false
+	}
+	return supportsGenerateContent(methods)
+}
+
+func hasAnyPrefix(s string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func supportsGenerateContent(methods []string) bool {
@@ -184,7 +245,7 @@ func supportsGenerateContent(methods []string) bool {
 			return true
 		}
 	}
-	return len(methods) == 0
+	return false
 }
 
 func sortedModels(models []ModelInfo) []ModelInfo {

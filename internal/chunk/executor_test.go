@@ -63,6 +63,21 @@ func TestReviewChunksRepairsInvalidOutputOnce(t *testing.T) {
 	}
 }
 
+func TestReviewChunksIncreasesRepairTokensForIncompleteJSON(t *testing.T) {
+	s, plan := executorFixture(t, 1)
+	provider := &recordingSequentialProvider{responses: []string{`{"issues":[`, responseForChunk(plan.Chunks[0])}}
+	_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, Temperature: 0.2, MaxTokens: 1000})
+	if err != nil {
+		t.Fatalf("ReviewChunks: %v", err)
+	}
+	if len(provider.maxTokens) != 2 {
+		t.Fatalf("calls = %d, want 2", len(provider.maxTokens))
+	}
+	if provider.maxTokens[1] <= provider.maxTokens[0] {
+		t.Fatalf("repair max tokens = %d, want greater than initial %d", provider.maxTokens[1], provider.maxTokens[0])
+	}
+}
+
 func TestReviewChunksFailsWholeReviewOnChunkError(t *testing.T) {
 	s, plan := executorFixture(t, 1)
 	provider := &errorProvider{}
@@ -127,6 +142,18 @@ type sequentialProvider struct {
 }
 
 func (p *sequentialProvider) Complete(_ context.Context, _ *llm.Request) (*llm.Response, error) {
+	p.calls++
+	return &llm.Response{Content: p.responses[p.calls-1], Model: "fake:model"}, nil
+}
+
+type recordingSequentialProvider struct {
+	calls     int
+	responses []string
+	maxTokens []int
+}
+
+func (p *recordingSequentialProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	p.maxTokens = append(p.maxTokens, req.MaxTokens)
 	p.calls++
 	return &llm.Response{Content: p.responses[p.calls-1], Model: "fake:model"}, nil
 }

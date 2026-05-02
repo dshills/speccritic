@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	ctxpkg "github.com/dshills/speccritic/internal/context"
@@ -136,6 +137,9 @@ func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 			temp := *req.Temperature
 			repairReq.Temperature = &temp
 		}
+		if incompleteJSON(parseErr) {
+			repairReq.MaxTokens = repairMaxTokens(req.MaxTokens)
+		}
 		repairReq.UserPrompt = req.UserPrompt + fmt.Sprintf("\n\nYour previous response failed chunk validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, include meta.chunk_summary, add the required chunk tag, and cite only primary-range lines.", parseErr, truncate(resp.Content, 4000))
 		resp, err = provider.Complete(ctx, &repairReq)
 		if err != nil {
@@ -159,6 +163,33 @@ func truncate(value string, max int) string {
 		count++
 	}
 	return value
+}
+
+func incompleteJSON(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unexpected end of JSON input") ||
+		strings.Contains(msg, "unexpected EOF")
+}
+
+func repairMaxTokens(current int) int {
+	const (
+		defaultMaxRepairTokens = 8192
+		maxRepairTokens        = 32768
+	)
+	if current <= 0 {
+		return defaultMaxRepairTokens
+	}
+	next := current + 2048
+	if doubled := current * 2; doubled > next {
+		next = doubled
+	}
+	if next > maxRepairTokens && current < maxRepairTokens {
+		return maxRepairTokens
+	}
+	return next
 }
 
 func logVerbose(mu *sync.Mutex, w io.Writer, verbose bool, format string, args ...any) {

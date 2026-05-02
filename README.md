@@ -113,6 +113,8 @@ Then open:
 http://127.0.0.1:8080
 ```
 
+Large Gemini reviews can take several minutes because chunk calls are run serially in the web UI to avoid provider timeouts. The web server default request timeout is 10 minutes; override it with `--request-timeout` if needed.
+
 From the browser:
 
 1. Choose a Markdown or text spec file. Manual text entry is intentionally not supported.

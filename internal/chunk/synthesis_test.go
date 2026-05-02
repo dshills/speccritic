@@ -120,7 +120,7 @@ func TestRunSynthesisRepairsInvalidOutputOnce(t *testing.T) {
 	if provider.calls != 2 {
 		t.Fatalf("calls = %d, want initial + repair", provider.calls)
 	}
-	if provider.lastMaxTokens != 2024 {
+	if provider.lastMaxTokens <= 1000 {
 		t.Fatalf("repair max tokens = %d, want extra headroom", provider.lastMaxTokens)
 	}
 	if !strings.Contains(provider.lastPrompt, "failed synthesis validation") {

@@ -32,6 +32,11 @@ type openaiRequest struct {
 	MaxTokens           int             `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
 	Temperature         *float64        `json:"temperature,omitempty"`
+	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
+}
+
+type responseFormat struct {
+	Type string `json:"type"`
 }
 
 type openaiMessage struct {
@@ -97,6 +102,7 @@ func (p *openaiProvider) completeOnce(ctx context.Context, model string, message
 			body.MaxTokens = req.MaxTokens
 		}
 	}
+	body.ResponseFormat = &responseFormat{Type: "json_object"}
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

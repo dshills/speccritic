@@ -26,10 +26,11 @@ type geminiProvider struct {
 }
 
 type geminiRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openaiMessage `json:"messages"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
+	Model          string          `json:"model"`
+	Messages       []openaiMessage `json:"messages"`
+	MaxTokens      int             `json:"max_tokens,omitempty"`
+	Temperature    *float64        `json:"temperature,omitempty"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 }
 
 func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
@@ -54,6 +55,7 @@ func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	if req.MaxTokens > 0 {
 		body.MaxTokens = req.MaxTokens
 	}
+	body.ResponseFormat = &responseFormat{Type: "json_object"}
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

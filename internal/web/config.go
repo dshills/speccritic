@@ -16,7 +16,7 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Addr:              "127.0.0.1:8080",
-		RequestTimeout:    120 * time.Second,
+		RequestTimeout:    10 * time.Minute,
 		MaxUploadBytes:    1 << 20,
 		MaxRetainedChecks: 25,
 		RetainedCheckTTL:  30 * time.Minute,

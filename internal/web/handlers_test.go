@@ -328,6 +328,31 @@ func TestCheckStubDefaultsModelForSelectedProvider(t *testing.T) {
 	}
 }
 
+func TestCheckStubUsesSerialChunkingForGemini(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+
+	body, contentType := multipartSpecRequest(t, "The system must work.", map[string]string{
+		"llm_provider": "gemini",
+	})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/checks", body)
+	req.Header.Set("Content-Type", contentType)
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "session"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if checker.req.ChunkConcurrency != 1 {
+		t.Fatalf("chunk concurrency = %d, want 1 for gemini", checker.req.ChunkConcurrency)
+	}
+}
+
 func TestCheckStubInfersProviderFromModel(t *testing.T) {
 	checker := &fakeChecker{}
 	server, err := NewServerWithChecker(DefaultConfig(), checker)

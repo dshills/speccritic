@@ -21,6 +21,19 @@ func (p *fakeProvider) Complete(_ context.Context, req *llm.Request) (*llm.Respo
 	return &llm.Response{Content: p.content, Model: "fake:model"}, nil
 }
 
+type repairRecordingProvider struct {
+	calls     int
+	responses []string
+	maxTokens []int
+}
+
+func (p *repairRecordingProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	p.maxTokens = append(p.maxTokens, req.MaxTokens)
+	resp := p.responses[p.calls]
+	p.calls++
+	return &llm.Response{Content: resp, Model: "fake:model"}, nil
+}
+
 func TestCheckerTextBackedCheck(t *testing.T) {
 	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
 	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
@@ -205,6 +218,39 @@ func TestCheckerInfersProviderFromRequestModel(t *testing.T) {
 	}
 	if providerModel != "openai:gpt-5" {
 		t.Fatalf("provider model = %q, want openai:gpt-5", providerModel)
+	}
+}
+
+func TestCheckerIncreasesRepairTokensForIncompleteJSON(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &repairRecordingProvider{
+		responses: []string{
+			`{"issues":[`,
+			`{"issues":[],"questions":[],"patches":[]}`,
+		},
+	}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "The system must do one thing.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(provider.maxTokens) != 2 {
+		t.Fatalf("calls = %d, want 2", len(provider.maxTokens))
+	}
+	if provider.maxTokens[1] <= provider.maxTokens[0] {
+		t.Fatalf("repair max tokens = %d, want greater than initial %d", provider.maxTokens[1], provider.maxTokens[0])
 	}
 }
 

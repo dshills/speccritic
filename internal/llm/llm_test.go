@@ -313,6 +313,42 @@ func TestOpenAIComplete_UsesMaxTokensForLegacyModels(t *testing.T) {
 	if got := sent["max_tokens"]; got != float64(1234) {
 		t.Fatalf("max_tokens = %#v, want 1234; body: %s", got, captured)
 	}
+	responseFormat, ok := sent["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" {
+		t.Fatalf("response_format = %#v, want json_object; body: %s", sent["response_format"], captured)
+	}
+}
+
+func TestGeminiComplete_RequestsJSONMode(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured = body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"gemini-2.0-flash","choices":[{"message":{"role":"assistant","content":"{}"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	original := GeminiAPIURL()
+	SetGeminiAPIURL(srv.URL)
+	t.Cleanup(func() { SetGeminiAPIURL(original) })
+
+	p := &geminiProvider{model: "gemini-2.0-flash", apiKey: "k"}
+	if _, err := p.Complete(context.Background(), &Request{
+		UserPrompt: "return JSON",
+		MaxTokens:  1234,
+	}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	var sent map[string]any
+	if err := json.Unmarshal(captured, &sent); err != nil {
+		t.Fatalf("unmarshal captured body: %v\nbody: %s", err, captured)
+	}
+	responseFormat, ok := sent["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" {
+		t.Fatalf("response_format = %#v, want json_object; body: %s", sent["response_format"], captured)
+	}
 }
 
 func TestOpenAIComplete_RetriesAlternateTokenParameter(t *testing.T) {

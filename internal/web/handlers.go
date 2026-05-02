@@ -32,7 +32,7 @@ type indexData struct {
 	ModelName     string
 }
 
-const maxWebTokens = 4096
+const maxWebTokens = 16384
 const maxWebModelNameLen = 120
 const multipartMemoryLimit = 1 << 20
 const multipartOverheadLimit = 1 << 20
@@ -571,13 +571,17 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		temperature = v
 	}
 
-	maxTokens := 4096
+	maxTokens := 8192
 	if raw := r.FormValue("max_tokens"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v <= 0 || v > maxWebTokens {
 			return app.CheckRequest{}, fmt.Errorf("invalid max tokens")
 		}
 		maxTokens = v
+	}
+	chunkConcurrency := chunk.DefaultChunkConcurrency
+	if llmProvider == "gemini" {
+		chunkConcurrency = 1
 	}
 	preflightEnabled := formBoolDefault(r, "preflight", true)
 	preflightMode := r.FormValue("preflight_mode")
@@ -608,7 +612,7 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		ChunkOverlap:           chunk.DefaultChunkOverlap,
 		ChunkMinLines:          chunk.DefaultChunkMinLines,
 		ChunkTokenThreshold:    chunk.DefaultChunkTokenThreshold,
-		ChunkConcurrency:       chunk.DefaultChunkConcurrency,
+		ChunkConcurrency:       chunkConcurrency,
 		SynthesisLineThreshold: chunk.DefaultSynthesisLineThreshold,
 		Source:                 app.SourceWeb,
 		ErrWriter:              io.Discard,
