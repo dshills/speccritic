@@ -14,6 +14,7 @@ const (
 	defaultMaxChangeRatio       = 0.35
 	defaultMaxRemapFailureRatio = 0.25
 	defaultContextLines         = 20
+	defaultChunkTokenThreshold  = 4000
 )
 
 // DefaultConfig returns the spec-defined incremental defaults.
@@ -23,6 +24,7 @@ func DefaultConfig() Config {
 		MaxChangeRatio:       defaultMaxChangeRatio,
 		MaxRemapFailureRatio: defaultMaxRemapFailureRatio,
 		ContextLines:         defaultContextLines,
+		ChunkTokenThreshold:  defaultChunkTokenThreshold,
 		StrictReuse:          true,
 	}
 }
@@ -60,6 +62,9 @@ func ValidateConfig(cfg Config) error {
 	}
 	if cfg.ContextLines < 0 {
 		return fmt.Errorf("--incremental-context-lines must be >= 0, got %d", cfg.ContextLines)
+	}
+	if cfg.ChunkTokenThreshold < 1 {
+		return fmt.Errorf("--chunk-token-threshold must be > 0, got %d", cfg.ChunkTokenThreshold)
 	}
 	return nil
 }

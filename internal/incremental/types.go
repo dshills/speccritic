@@ -18,6 +18,7 @@ type Config struct {
 	MaxChangeRatio       float64
 	MaxRemapFailureRatio float64
 	ContextLines         int
+	ChunkTokenThreshold  int
 	StrictReuse          bool
 	ReportMetadata       bool
 	Profile              string
@@ -43,6 +44,7 @@ type SectionChange struct {
 	PreviousRange  LineRange
 	CurrentRange   LineRange
 	Classification string
+	HeadingPath    []string
 }
 
 type ReviewRange struct {
