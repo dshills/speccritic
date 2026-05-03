@@ -105,13 +105,19 @@ func MergeReport(input MergeInput) (*schema.Report, error) {
 
 func duplicateIssueIndex(issue schema.Issue, existing []schema.Issue) int {
 	for i, candidate := range existing {
-		if candidate.Category != issue.Category || candidate.Severity != issue.Severity {
+		titleMatch := strings.EqualFold(candidate.Title, issue.Title)
+		categoryMatch := candidate.Category == issue.Category && candidate.Severity == issue.Severity
+		if !categoryMatch && !titleMatch {
 			continue
 		}
-		if evidenceOverlaps(candidate.Evidence, issue.Evidence) && evidenceQuoteSimilar(candidate.Evidence, issue.Evidence) {
-			return i
-		}
-		if strings.EqualFold(candidate.Title, issue.Title) && evidenceQuoteSimilar(candidate.Evidence, issue.Evidence) {
+		overlap := evidenceOverlaps(candidate.Evidence, issue.Evidence)
+		quoteSimilar := evidenceQuoteSimilar(candidate.Evidence, issue.Evidence)
+		if categoryMatch {
+			if (overlap && quoteSimilar) || (titleMatch && quoteSimilar) {
+				return i
+			}
+		} else if titleMatch && overlap && quoteSimilar {
+			// Cross-category fallback: handles LLM category drift on reused findings.
 			return i
 		}
 	}

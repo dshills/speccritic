@@ -3,6 +3,7 @@ package validate
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -202,6 +203,9 @@ func validateEvidence(ev schema.Evidence, prefix string, lineCount int) error {
 	}
 	if lineCount > 0 && ev.LineEnd > lineCount {
 		return fmt.Errorf("%s: line_end %d exceeds spec line count %d", prefix, ev.LineEnd, lineCount)
+	}
+	if ev.Path != "" && !filepath.IsLocal(ev.Path) {
+		return fmt.Errorf("%s: path %q must be a local relative path", prefix, ev.Path)
 	}
 	return nil
 }

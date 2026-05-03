@@ -30,7 +30,7 @@ type redactPattern struct {
 // numPatterns is enforced as an array length below; adding a pattern without
 // updating this constant is a compile-time error — preventing silent
 // out-of-bounds in the per-pattern hit tracker.
-const numPatterns = 5
+const numPatterns = 8
 
 var patterns = [numPatterns]redactPattern{
 	// AWS access key IDs
@@ -46,6 +46,14 @@ var patterns = [numPatterns]redactPattern{
 	{re: regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*`), triggers: []string{"bearer"}, fold: true},
 	// Inline password assignments (case-insensitive regex; lowercase triggers).
 	{re: regexp.MustCompile(`(?i)password\s*[:=]\s*\S+`), triggers: []string{"password"}, fold: true},
+	// api_key / apiKey / api-key assignments — optional closing quote handles JSON keys.
+	// Value matches quoted ("val", 'val') or unquoted (stops at whitespace/delimiters).
+	{re: regexp.MustCompile(`(?i)api[-_]?key"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
+	// client_secret / clientSecret / secret_key / private_key OAuth secret assignments.
+	// [_-]? handles both snake_case and camelCase variants.
+	{re: regexp.MustCompile(`(?i)(?:client[_-]?secret|secret[_-]?key|private[_-]?key)"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"secret", "private_key"}, fold: true},
+	// auth_token / accessToken / refresh_token (snake_case and camelCase) assignments.
+	{re: regexp.MustCompile(`(?i)(?:auth|access|refresh)[_-]?token"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"token"}, fold: true},
 }
 
 // Redact replaces known secret patterns in input with [REDACTED].
