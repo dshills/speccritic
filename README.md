@@ -113,6 +113,8 @@ SpecCritic also includes a local Go web UI for reviewing specs in the browser. I
 
 The web UI is intended for local review sessions. It does not replace the CLI and it does not change CLI behavior. Large uploaded specs use the same automatic chunked review path as the CLI and still render as one merged result.
 
+![SpecCritic web UI](docs/web-ui.png)
+
 Set the same provider configuration used by the CLI:
 
 ```bash
