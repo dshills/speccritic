@@ -309,6 +309,10 @@ func (s *Server) handleCheckStub(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIssueDetail(w http.ResponseWriter, r *http.Request) {
+	if !s.validSessionCookies(r) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	id := r.PathValue("id")
 	findingID := r.PathValue("finding_id")
 	check, ok := s.store.Get(id)
@@ -360,6 +364,10 @@ func (s *Server) handleExportMarkdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExportPatch(w http.ResponseWriter, r *http.Request) {
+	if !s.validSessionCookies(r) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	check, ok := s.store.Get(r.PathValue("id"))
 	if !ok || check.Result == nil || check.Result.PatchDiff == "" {
 		http.NotFound(w, r)
@@ -372,6 +380,10 @@ func (s *Server) handleExportPatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request, format, contentType, ext string) {
+	if !s.validSessionCookies(r) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	check, ok := s.store.Get(r.PathValue("id"))
 	if !ok || check.Result == nil || check.Result.Report == nil {
 		http.NotFound(w, r)

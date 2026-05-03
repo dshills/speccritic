@@ -97,8 +97,33 @@ func TestCheckerKeepsOriginalSpecOutOfLLMRedaction(t *testing.T) {
 	if !strings.Contains(provider.reqs[0].UserPrompt, "[REDACTED]") {
 		t.Fatalf("LLM prompt missing redaction marker: %s", provider.reqs[0].UserPrompt)
 	}
-	if result.PatchDiff != "" || len(result.Report.Patches) != 1 {
-		t.Fatalf("patch diff should be suppressed and report patches preserved when redaction changes the spec, diff %q patches %#v", result.PatchDiff, result.Report.Patches)
+	if result.PatchDiff != "" || len(result.Report.Patches) != 0 {
+		t.Fatalf("patch diff should be suppressed and unsafe redacted patch filtered, diff %q patches %#v", result.PatchDiff, result.Report.Patches)
+	}
+}
+
+func TestCheckerFiltersUnsafeSingleCallPatches(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &fakeProvider{content: `{"issues":[{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Ambiguous","description":"d","evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"same"}],"impact":"i","recommendation":"r","blocking":false,"tags":[]}],"questions":[],"patches":[{"issue_id":"ISSUE-0001","before":"same","after":"clear"}]}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "same\nsame\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(result.Report.Patches) != 0 || result.PatchDiff != "" {
+		t.Fatalf("patches = %#v diff=%q, want ambiguous single-call patch filtered", result.Report.Patches, result.PatchDiff)
 	}
 }
 
@@ -838,6 +863,39 @@ func TestCheckerIncrementalChangedNeedsBaseSpec(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "incremental-base") {
 		t.Fatalf("error = %v, want missing incremental base", err)
+	}
+}
+
+func TestCheckerIncrementalModelOutputErrorKind(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	previous := "# Spec\n## Behavior\nThe API must return JSON.\n"
+	current := "# Spec\n## Behavior\nThe API must return XML.\n"
+	prevPath := writePreviousReport(t, specForTest("SPEC.md", previous).Hash, "general", false, "info", "The API must return JSON.")
+	provider := &fakeProvider{content: `{"issues":[`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:                         "test",
+		SpecName:                        "SPEC.md",
+		SpecText:                        current,
+		Profile:                         "general",
+		SeverityThreshold:               "info",
+		Temperature:                     0.2,
+		MaxTokens:                       1000,
+		Preflight:                       false,
+		Chunking:                        "off",
+		IncrementalFrom:                 prevPath,
+		IncrementalBaseText:             previous,
+		IncrementalMode:                 "on",
+		IncrementalMaxChangeRatio:       0.35,
+		IncrementalMaxRemapFailureRatio: 0.25,
+		IncrementalContextLines:         20,
+		Source:                          SourceWeb,
+	})
+	var appErr *Error
+	if err == nil || !errors.As(err, &appErr) || appErr.Kind != ErrorModelOutput {
+		t.Fatalf("error = %#v, want ErrorModelOutput", err)
 	}
 }
 

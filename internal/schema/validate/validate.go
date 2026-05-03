@@ -78,6 +78,11 @@ func validateReport(r *schema.Report, lineCount int) error {
 		}
 		seenQuestionIDs[q.ID] = true
 	}
+	for i, patch := range r.Patches {
+		if err := validatePatch(patch, i, seenIssueIDs); err != nil {
+			return err
+		}
+	}
 	if err := validateMeta(r.Meta); err != nil {
 		return err
 	}
@@ -159,6 +164,23 @@ func validateQuestion(q schema.Question, idx int, lineCount int) error {
 		if err := validateEvidence(ev, fmt.Sprintf("%s.evidence[%d]", prefix, j), lineCount); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validatePatch(patch schema.Patch, idx int, seenIssueIDs map[string]bool) error {
+	prefix := fmt.Sprintf("patch[%d]", idx)
+	if !issueIDPattern.MatchString(patch.IssueID) {
+		return fmt.Errorf("%s: issue_id %q does not match ISSUE-XXXX format", prefix, patch.IssueID)
+	}
+	if !seenIssueIDs[patch.IssueID] {
+		return fmt.Errorf("%s: issue_id %q does not reference a current issue", prefix, patch.IssueID)
+	}
+	if strings.TrimSpace(patch.Before) == "" {
+		return fmt.Errorf("%s: before is required", prefix)
+	}
+	if patch.After == "" {
+		return fmt.Errorf("%s: after is required", prefix)
 	}
 	return nil
 }

@@ -177,3 +177,19 @@ func TestParse_InvalidCompletionCounter(t *testing.T) {
 		t.Fatalf("expected completion counter error, got %v", err)
 	}
 }
+
+func TestParse_InvalidPatchIssueID(t *testing.T) {
+	raw := strings.Replace(validJSON, `"patches": []`, `"patches": [{"issue_id":"ISSUE-9999","before":"old","after":"new"}]`, 1)
+	_, err := Parse(raw, 10)
+	if err == nil || !strings.Contains(err.Error(), "does not reference a current issue") {
+		t.Fatalf("expected patch issue reference error, got %v", err)
+	}
+}
+
+func TestParse_InvalidPatchShape(t *testing.T) {
+	raw := strings.Replace(validJSON, `"patches": []`, `"patches": [{"issue_id":"ISSUE-0001","before":"","after":"new"}]`, 1)
+	_, err := Parse(raw, 10)
+	if err == nil || !strings.Contains(err.Error(), "before is required") {
+		t.Fatalf("expected patch before error, got %v", err)
+	}
+}

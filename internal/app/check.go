@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -222,6 +223,10 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	if (req.IncrementalFrom != "" || req.IncrementalFromText != "" || req.IncrementalMode == "on") && req.IncrementalMode != "off" {
 		result, handled, err := c.checkIncremental(ctx, provider, req, s, originalRaw, preflightIssues, sysPrompt, errw)
 		if err != nil {
+			var appErr *Error
+			if errors.As(err, &appErr) {
+				return nil, err
+			}
 			return nil, appError(ErrorInput, err)
 		}
 		if handled {
@@ -267,6 +272,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		return nil, appError(ErrorModelOutput, err)
 	}
 	report.Issues = mergeIssues(preflightIssues, report.Issues, knownPreflightIDs)
+	report.Patches = safeReportPatches(s.Raw, report.Issues, report.Patches)
 
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
 	if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
@@ -433,7 +439,7 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 			Questions:    reuse.Questions,
 		})
 		if err != nil {
-			return nil, false, err
+			return nil, false, appError(ErrorModelOutput, err)
 		}
 		model = firstIncrementalModel(rangeResults)
 	}
@@ -534,6 +540,56 @@ func patchDiffForReport(originalRaw string, report *schema.Report, redactedSpec 
 		return ""
 	}
 	return patch.GenerateDiffWithIssues(originalRaw, report.Patches, report.Issues, errw)
+}
+
+func safeReportPatches(raw string, issues []schema.Issue, patches []schema.Patch) []schema.Patch {
+	if len(patches) == 0 {
+		return nil
+	}
+	issueIDs := make(map[string]bool, len(issues))
+	for _, issue := range issues {
+		issueIDs[issue.ID] = true
+	}
+	out := make([]schema.Patch, 0, len(patches))
+	occupied := make([]patchRange, 0, len(patches))
+	for _, patch := range patches {
+		if !issueIDs[patch.IssueID] || strings.TrimSpace(patch.Before) == "" || patch.After == "" {
+			continue
+		}
+		rng, ok := exactUniquePatchRange(raw, patch.Before)
+		if !ok || overlapsPatchRange(rng, occupied) {
+			continue
+		}
+		occupied = append(occupied, rng)
+		out = append(out, patch)
+	}
+	return out
+}
+
+type patchRange struct {
+	start int
+	end   int
+}
+
+func exactUniquePatchRange(raw string, before string) (patchRange, bool) {
+	start := strings.Index(raw, before)
+	if start < 0 {
+		return patchRange{}, false
+	}
+	next := start + 1
+	if next < len(raw) && strings.Contains(raw[next:], before) {
+		return patchRange{}, false
+	}
+	return patchRange{start: start, end: start + len(before)}, true
+}
+
+func overlapsPatchRange(rng patchRange, existing []patchRange) bool {
+	for _, candidate := range existing {
+		if rng.start < candidate.end && candidate.start < rng.end {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, contextFiles []ctxpkg.ContextFile, preflightIssues []schema.Issue, sysPrompt, preflightContext string, cfg chunk.Config, errw io.Writer) (*schema.Report, string, error) {

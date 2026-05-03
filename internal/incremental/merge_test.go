@@ -140,6 +140,7 @@ func TestMergeReportOmitsMetadataByDefaultAndFiltersInvalidPatches(t *testing.T)
 		Spec:              s,
 		Profile:           "general",
 		SeverityThreshold: "info",
+		ReusedIssues:      []schema.Issue{issueAt("ISSUE-0001", 2, "old text")},
 		Patches: []schema.Patch{
 			{IssueID: "ISSUE-0001", Before: "old text", After: "new text"},
 			{IssueID: "ISSUE-0002", Before: "missing", After: "new text"},
@@ -154,5 +155,53 @@ func TestMergeReportOmitsMetadataByDefaultAndFiltersInvalidPatches(t *testing.T)
 	}
 	if len(report.Patches) != 1 || report.Patches[0].IssueID != "ISSUE-0001" {
 		t.Fatalf("patches = %#v", report.Patches)
+	}
+}
+
+func TestMergeReportRemapsRangePatchIssueIDs(t *testing.T) {
+	s := spec.New("SPEC.md", "# Spec\n## Behavior\nold text\n")
+	newIssue := issueAt("ISSUE-0001", 3, "old text")
+	newIssue.Tags = []string{TagIncrementalReview, "range:RANGE-1"}
+	report, err := MergeReport(MergeInput{
+		Spec:            s,
+		PreflightIssues: []schema.Issue{issueAt("ISSUE-0007", 1, "Spec")},
+		RangeResults: []RangeResult{{Range: ReviewRange{ID: "RANGE-1"}, Report: &schema.Report{
+			Issues: []schema.Issue{newIssue},
+			Patches: []schema.Patch{
+				{IssueID: "ISSUE-0001", Before: "old text", After: "new text"},
+				{IssueID: "ISSUE-4040", Before: "old text", After: "bad text"},
+			},
+		}}},
+		Profile:           "general",
+		SeverityThreshold: "info",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Patches) != 1 || report.Patches[0].IssueID != "ISSUE-0008" {
+		t.Fatalf("patches = %#v, want patch remapped to emitted issue", report.Patches)
+	}
+}
+
+func TestMergeReportDropsAmbiguousRangePatches(t *testing.T) {
+	s := spec.New("SPEC.md", "# Spec\nsame\nsame\n")
+	newIssue := issueAt("ISSUE-0001", 2, "same")
+	newIssue.Tags = []string{TagIncrementalReview, "range:RANGE-1"}
+	report, err := MergeReport(MergeInput{
+		Spec: s,
+		RangeResults: []RangeResult{{Range: ReviewRange{ID: "RANGE-1"}, Report: &schema.Report{
+			Issues: []schema.Issue{newIssue},
+			Patches: []schema.Patch{
+				{IssueID: "ISSUE-0001", Before: "same", After: "new"},
+			},
+		}}},
+		Profile:           "general",
+		SeverityThreshold: "info",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Patches) != 0 {
+		t.Fatalf("patches = %#v, want ambiguous patch dropped", report.Patches)
 	}
 }

@@ -127,6 +127,7 @@ func TestExportEndpoints(t *testing.T) {
 	} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		addSessionCookies(req)
 		server.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s status = %d", tc.path, rec.Code)
@@ -136,6 +137,29 @@ func TestExportEndpoints(t *testing.T) {
 		}
 		if !strings.Contains(rec.Body.String(), tc.want) {
 			t.Fatalf("%s body missing %q: %s", tc.path, tc.want, rec.Body.String())
+		}
+	}
+}
+
+func TestExportEndpointsRequireSession(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	id := createStoredCheck(t, server)
+
+	for _, path := range []string{
+		"/checks/" + id + "/export.json",
+		"/checks/" + id + "/export.md",
+		"/checks/" + id + "/patch.diff",
+		"/checks/" + id + "/issues/ISSUE-0001",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d, want 403", path, rec.Code)
 		}
 	}
 }
@@ -710,6 +734,7 @@ func TestIssueDetail(t *testing.T) {
 
 	detail := httptest.NewRecorder()
 	detailReq := httptest.NewRequest(http.MethodGet, "/checks/"+id+"/issues/ISSUE-0001", nil)
+	addSessionCookies(detailReq)
 	server.Handler().ServeHTTP(detail, detailReq)
 	if detail.Code != http.StatusOK {
 		t.Fatalf("detail status = %d", detail.Code)
@@ -723,6 +748,11 @@ func TestIssueDetail(t *testing.T) {
 	if !strings.Contains(detail.Body.String(), "Completion Suggestions") || !strings.Contains(detail.Body.String(), "draft/advisory") {
 		t.Fatalf("detail missing completion suggestions: %s", detail.Body.String())
 	}
+}
+
+func addSessionCookies(req *http.Request) {
+	req.AddCookie(&http.Cookie{Name: "speccritic_session", Value: "same"})
+	req.AddCookie(&http.Cookie{Name: "speccritic_form", Value: "same"})
 }
 
 func multipartSpecRequest(t *testing.T, specText string, fields ...map[string]string) (*bytes.Buffer, string) {

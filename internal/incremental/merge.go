@@ -50,13 +50,17 @@ func MergeReport(input MergeInput) (*schema.Report, error) {
 		if result.Report == nil {
 			continue
 		}
+		issueIDMap := make(map[string]string, len(result.Report.Issues))
 		for _, issue := range result.Report.Issues {
+			originalID := issue.ID
 			if idx := duplicateIssueIndex(issue, issues); idx >= 0 {
 				issues[idx] = mergeDuplicateIssue(issues[idx], issue)
+				issueIDMap[originalID] = issues[idx].ID
 				continue
 			}
 			issue.ID = fmt.Sprintf("ISSUE-%04d", nextIssue)
 			nextIssue++
+			issueIDMap[originalID] = issue.ID
 			issues = append(issues, issue)
 		}
 		for _, question := range result.Report.Questions {
@@ -64,11 +68,11 @@ func MergeReport(input MergeInput) (*schema.Report, error) {
 			nextQuestion++
 			questions = append(questions, question)
 		}
-		patches = append(patches, result.Report.Patches...)
+		patches = append(patches, remapPatches(result.Report.Patches, issueIDMap)...)
 	}
 	issues = sortIssues(issues)
 	questions = sortQuestions(questions)
-	patches = validPatches(input.Spec.Raw, patches)
+	patches = validPatches(input.Spec.Raw, patches, issues)
 	critical, warn, info := review.Counts(issues)
 	meta := schema.Meta{Model: input.Model, Temperature: input.Temperature}
 	if input.IncludeMetadata && input.IncrementalMetadata != nil {
@@ -221,17 +225,64 @@ func firstMergeEvidenceLine(evidence []schema.Evidence) int {
 	return evidence[0].LineStart
 }
 
-func validPatches(raw string, patches []schema.Patch) []schema.Patch {
+func remapPatches(patches []schema.Patch, issueIDMap map[string]string) []schema.Patch {
 	out := make([]schema.Patch, 0, len(patches))
 	for _, patch := range patches {
-		if strings.TrimSpace(patch.Before) == "" {
+		mappedID, ok := issueIDMap[patch.IssueID]
+		if !ok {
 			continue
 		}
-		if strings.Contains(raw, patch.Before) {
-			out = append(out, patch)
-		}
+		patch.IssueID = mappedID
+		out = append(out, patch)
 	}
 	return out
+}
+
+func validPatches(raw string, patches []schema.Patch, issues []schema.Issue) []schema.Patch {
+	out := make([]schema.Patch, 0, len(patches))
+	issueIDs := make(map[string]bool, len(issues))
+	for _, issue := range issues {
+		issueIDs[issue.ID] = true
+	}
+	occupied := make([]editRange, 0, len(patches))
+	for _, patch := range patches {
+		if !issueIDs[patch.IssueID] || strings.TrimSpace(patch.Before) == "" || patch.After == "" {
+			continue
+		}
+		rng, ok := exactUniqueRange(raw, patch.Before)
+		if !ok || overlapsAny(rng, occupied) {
+			continue
+		}
+		occupied = append(occupied, rng)
+		out = append(out, patch)
+	}
+	return out
+}
+
+type editRange struct {
+	start int
+	end   int
+}
+
+func exactUniqueRange(raw string, before string) (editRange, bool) {
+	start := strings.Index(raw, before)
+	if start < 0 {
+		return editRange{}, false
+	}
+	next := start + 1
+	if next < len(raw) && strings.Contains(raw[next:], before) {
+		return editRange{}, false
+	}
+	return editRange{start: start, end: start + len(before)}, true
+}
+
+func overlapsAny(rng editRange, existing []editRange) bool {
+	for _, candidate := range existing {
+		if rng.start < candidate.end && candidate.start < rng.end {
+			return true
+		}
+	}
+	return false
 }
 
 var (
