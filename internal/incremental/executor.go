@@ -3,7 +3,6 @@ package incremental
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/dshills/speccritic/internal/llm"
@@ -151,24 +150,4 @@ func ParseRangeResponse(raw string, lineCount int, rr ReviewRange) (*schema.Repo
 		}
 	}
 	return report, nil
-}
-
-func truncate(value string, max int) string {
-	count := 0
-	for idx := range value {
-		if count == max {
-			return value[:idx] + "...[truncated]"
-		}
-		count++
-	}
-	return value
-}
-
-func incompleteJSON(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "unexpected end of JSON input") ||
-		strings.Contains(msg, "unexpected EOF")
 }

@@ -219,6 +219,7 @@ func runCheck(specPath string, flags checkFlags) error {
 	// --- Step 14: Apply severity threshold filter (output only, does not affect score/counts) ---
 	severityFilter := parseSeverityThreshold(flags.severityThreshold)
 	report.Issues = review.FilterBySeverity(report.Issues, severityFilter)
+	report.Questions = review.FilterQuestionsBySeverity(report.Questions, severityFilter)
 
 	// --- Step 15: Write patches ---
 	if flags.patchOut != "" {

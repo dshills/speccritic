@@ -183,7 +183,10 @@ func renumberQuestions(questions []schema.Question) []schema.Question {
 
 func appendValidPatches(dst []schema.Patch, original string, issueIDMap map[string]string, patches ...schema.Patch) []schema.Patch {
 	for _, patch := range patches {
-		if patch.Before == "" || strings.Count(original, patch.Before) != 1 {
+		if patch.Before == "" {
+			continue
+		}
+		if !uniquePatchSite(original, patch.Before) {
 			continue
 		}
 		newIssueID, ok := issueIDMap[patch.IssueID]
@@ -194,6 +197,17 @@ func appendValidPatches(dst []schema.Patch, original string, issueIDMap map[stri
 		dst = append(dst, patch)
 	}
 	return dst
+}
+
+// uniquePatchSite returns true only when before appears exactly once in raw,
+// including overlapping occurrences (e.g. "abab" in "ababab" counts as two).
+func uniquePatchSite(raw, before string) bool {
+	start := strings.Index(raw, before)
+	if start < 0 {
+		return false
+	}
+	next := start + 1
+	return next >= len(raw) || !strings.Contains(raw[next:], before)
 }
 
 func normalizedTitle(title string) string {

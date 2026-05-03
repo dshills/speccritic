@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dshills/speccritic/internal/redact"
 	"github.com/dshills/speccritic/internal/schema"
 	"github.com/dshills/speccritic/internal/spec"
 )
@@ -98,7 +99,7 @@ func formatPriorFindings(issues []schema.Issue, questions []schema.Question, rr 
 		items = append(items, item{
 			severity: issue.Severity,
 			line:     line,
-			text:     fmt.Sprintf("- %s %s %s L%d: %s\n", issue.Severity, issue.ID, issue.Title, line, compact(issue.Description, 180)),
+			text:     fmt.Sprintf("- %s %s %s L%d: %s\n", issue.Severity, issue.ID, redact.Redact(issue.Title), line, compact(redact.Redact(issue.Description), 180)),
 		})
 	}
 	for _, q := range questions {
@@ -109,7 +110,7 @@ func formatPriorFindings(issues []schema.Issue, questions []schema.Question, rr 
 		items = append(items, item{
 			severity: q.Severity,
 			line:     line,
-			text:     fmt.Sprintf("- %s %s L%d: %s\n", q.Severity, q.ID, line, compact(q.Question, 180)),
+			text:     fmt.Sprintf("- %s %s L%d: %s\n", q.Severity, q.ID, line, compact(redact.Redact(q.Question), 180)),
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {

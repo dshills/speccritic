@@ -128,7 +128,9 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 			temp := *req.Temperature
 			repairReq.Temperature = &temp
 		}
-		repairReq.MaxTokens = repairMaxTokens(req.MaxTokens)
+		if llm.IncompleteJSON(parseErr) {
+			repairReq.MaxTokens = llm.RepairMaxTokens(req.MaxTokens)
+		}
 		repairReq.UserPrompt = req.UserPrompt + fmt.Sprintf("\n\nYour previous response failed synthesis validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, cite valid original line numbers, and add tag %q to every issue.", parseErr, truncate(resp.Content, 4000), TagSynthesis)
 		resp, err = provider.Complete(ctx, &repairReq)
 		if err != nil {

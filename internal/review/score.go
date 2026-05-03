@@ -80,6 +80,20 @@ func Counts(issues []schema.Issue) (critical, warn, info int) {
 	return
 }
 
+// FilterQuestionsBySeverity returns only questions at or above the given threshold severity.
+func FilterQuestionsBySeverity(questions []schema.Question, threshold schema.Severity) []schema.Question {
+	if threshold == schema.SeverityInfo {
+		return questions
+	}
+	out := make([]schema.Question, 0, len(questions))
+	for _, q := range questions {
+		if meetsSeverity(q.Severity, threshold) {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
 // FilterBySeverity returns only issues at or above the given threshold severity.
 func FilterBySeverity(issues []schema.Issue, threshold schema.Severity) []schema.Issue {
 	if threshold == schema.SeverityInfo {
