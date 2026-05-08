@@ -7,6 +7,9 @@ import (
 	"github.com/dshills/speccritic/internal/app"
 	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/incremental"
+	"github.com/dshills/speccritic/internal/llm"
+	"github.com/dshills/speccritic/internal/render"
+	"github.com/dshills/speccritic/internal/review"
 	"github.com/dshills/speccritic/internal/schema"
 )
 
@@ -18,6 +21,7 @@ type Evidence = schema.Evidence
 type Summary = schema.Summary
 type Severity = schema.Severity
 type Verdict = schema.Verdict
+type ModelInfo = llm.ModelInfo
 type ContextDocument = app.ContextDocument
 
 type Error = app.Error
@@ -86,6 +90,12 @@ type CheckResult struct {
 	OriginalSpec string
 	LineCount    int
 	Model        string
+}
+
+type ModelsResponse struct {
+	Provider     string      `json:"provider"`
+	DefaultModel string      `json:"default_model"`
+	Models       []ModelInfo `json:"models"`
 }
 
 func DefaultCheckOptions() CheckOptions {
@@ -183,6 +193,86 @@ func Check(ctx context.Context, opts CheckOptions) (*CheckResult, error) {
 		LineCount:    result.LineCount,
 		Model:        result.Model,
 	}, nil
+}
+
+func RenderReport(report *Report, format string) ([]byte, error) {
+	renderer, err := render.NewRenderer(format)
+	if err != nil {
+		return nil, err
+	}
+	return renderer.Render(report)
+}
+
+func FilterReportBySeverity(report *Report, threshold string) *Report {
+	if report == nil {
+		return nil
+	}
+	filtered := cloneReport(report)
+	severity := parseSeverityThreshold(threshold)
+	filtered.Issues = review.FilterBySeverity(filtered.Issues, severity)
+	filtered.Questions = review.FilterQuestionsBySeverity(filtered.Questions, severity)
+	return filtered
+}
+
+func VerdictMeetsThreshold(verdict Verdict, threshold string) bool {
+	if threshold == "" {
+		return false
+	}
+	return schema.VerdictOrdinal(verdict) >= schema.VerdictOrdinal(schema.Verdict(threshold))
+}
+
+func ListModels(ctx context.Context, provider string) (ModelsResponse, error) {
+	if provider == "" {
+		provider = llm.DefaultProvider
+	}
+	models, err := llm.ListModels(ctx, provider)
+	if err != nil {
+		return ModelsResponse{}, err
+	}
+	return ModelsResponse{
+		Provider:     provider,
+		DefaultModel: llm.DefaultModelForProvider(provider),
+		Models:       models,
+	}, nil
+}
+
+func IsSupportedProvider(provider string) bool {
+	return llm.IsSupportedProvider(provider)
+}
+
+func ProviderForModel(model string) string {
+	return llm.ProviderForModel(model)
+}
+
+func DefaultModelForProvider(provider string) string {
+	return llm.DefaultModelForProvider(provider)
+}
+
+func CompletionInputTemplateNames() []string {
+	return schema.CompletionInputTemplateNames()
+}
+
+func CompletionTemplateNames() []string {
+	return schema.CompletionTemplateNames()
+}
+
+func cloneReport(report *Report) *Report {
+	clone := *report
+	clone.Issues = append([]Issue(nil), report.Issues...)
+	clone.Questions = append([]Question(nil), report.Questions...)
+	clone.Patches = append([]Patch(nil), report.Patches...)
+	return &clone
+}
+
+func parseSeverityThreshold(s string) Severity {
+	switch s {
+	case "warn":
+		return schema.SeverityWarn
+	case "critical":
+		return schema.SeverityCritical
+	default:
+		return schema.SeverityInfo
+	}
 }
 
 func toAppContextDocuments(docs []ContextDocument) []app.ContextDocument {
