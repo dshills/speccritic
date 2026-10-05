@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/dshills/speccritic/internal/evidence"
 	"github.com/dshills/speccritic/internal/schema"
 )
 
@@ -44,9 +45,16 @@ type Options struct {
 	// that is absolute or climbs out of the working directory is reduced to
 	// its base name, so evidence paths always pass the check Parse applies.
 	SpecPath string
+	// SpecText, when set, is the spec as the model was shown it. Every quote
+	// is then looked up in it: evidence is moved to where its quote really is,
+	// quotes are replaced by the spec's exact text, an issue whose quotes are
+	// nowhere in the spec is tagged and cannot stay CRITICAL, and an issue with
+	// no evidence at all is dropped. See package evidence.
+	SpecText string
 	// CheckIssue and CheckQuestion apply caller-specific rules to a finding
-	// that passed the general checks, and may adjust it. A non-nil error drops
-	// the finding.
+	// that passed the general checks, and may adjust it. They run after
+	// evidence has been checked, so they see corrected line ranges. A non-nil
+	// error drops the finding.
 	CheckIssue    func(*schema.Issue) error
 	CheckQuestion func(*schema.Question) error
 }
@@ -77,6 +85,9 @@ func ParseResponse(raw string, opts Options) (Result, error) {
 		opts.SpecPath = filepath.Base(opts.SpecPath)
 	}
 	c := &collector{opts: opts, report: &schema.Report{}}
+	if opts.SpecText != "" {
+		c.index = evidence.NewIndex(opts.SpecText)
+	}
 	incomplete, err := decodeFindings(stripFences(raw), c)
 	if err != nil {
 		return Result{}, err
@@ -90,7 +101,9 @@ func ParseResponse(raw string, opts Options) (Result, error) {
 
 // collector gathers the findings of one response that pass validation.
 type collector struct {
-	opts    Options
+	opts Options
+	// index is set when evidence is to be checked against the spec.
+	index   *evidence.Index
 	report  *schema.Report
 	dropped []string
 }
@@ -99,6 +112,13 @@ func (c *collector) issue(idx int, issue schema.Issue) {
 	prefix := fmt.Sprintf("issue[%d]", idx)
 	c.stampPath(issue.Evidence)
 	err := validateIssueContent(issue, prefix, c.opts.LineCount)
+	if err == nil && c.index != nil {
+		if len(issue.Evidence) == 0 {
+			err = fmt.Errorf("%s: no evidence", prefix)
+		} else {
+			c.index.CheckIssue(&issue)
+		}
+	}
 	if err == nil && c.opts.CheckIssue != nil {
 		if checkErr := c.opts.CheckIssue(&issue); checkErr != nil {
 			err = fmt.Errorf("%s: %w", prefix, checkErr)
@@ -115,6 +135,9 @@ func (c *collector) question(idx int, question schema.Question) {
 	prefix := fmt.Sprintf("question[%d]", idx)
 	c.stampPath(question.Evidence)
 	err := validateQuestionContent(question, prefix, c.opts.LineCount)
+	if err == nil && c.index != nil {
+		c.index.CheckQuestion(&question)
+	}
 	if err == nil && c.opts.CheckQuestion != nil {
 		if checkErr := c.opts.CheckQuestion(&question); checkErr != nil {
 			err = fmt.Errorf("%s: %w", prefix, checkErr)

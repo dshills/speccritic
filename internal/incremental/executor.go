@@ -115,7 +115,7 @@ func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		Request: req,
 		Label:   fmt.Sprintf("range %s ", rr.ID),
 		Parse: func(raw string) (llm.Parsed, error) {
-			return parseRangeResponse(raw, s.Path, s.LineCount, rr)
+			return parseRangeResponse(raw, s.Path, s.Raw, s.LineCount, rr)
 		},
 		RepairPrompt: func(reason error, _ string) string {
 			return fmt.Sprintf("\n\nYour previous response failed incremental range validation.\n\nValidation error: %s\n\nReturn only valid JSON matching the schema and cite current spec line numbers included in the prompt.", reason)
@@ -132,7 +132,7 @@ const TagIncrementalReview = "incremental-review"
 // ParseRangeResponse reads a complete incremental range response. See
 // parseRangeResponse for what is kept and what is dropped.
 func ParseRangeResponse(raw string, lineCount int, rr ReviewRange) (*schema.Report, error) {
-	parsed, err := parseRangeResponse(raw, "", lineCount, rr)
+	parsed, err := parseRangeResponse(raw, "", "", lineCount, rr)
 	if err != nil {
 		return nil, err
 	}
@@ -146,10 +146,11 @@ func ParseRangeResponse(raw string, lineCount int, rr ReviewRange) (*schema.Repo
 // cut off. Issues that cite lines outside the range's context are dropped. The
 // incremental and range tags and the evidence path are set here rather than
 // asked of the model.
-func parseRangeResponse(raw, specPath string, lineCount int, rr ReviewRange) (llm.Parsed, error) {
+func parseRangeResponse(raw, specPath, specText string, lineCount int, rr ReviewRange) (llm.Parsed, error) {
 	res, err := validate.ParseResponse(raw, validate.Options{
 		LineCount: lineCount,
 		SpecPath:  specPath,
+		SpecText:  specText,
 		CheckIssue: func(issue *schema.Issue) error {
 			for i, ev := range issue.Evidence {
 				if ev.LineStart < rr.Context.Start || ev.LineEnd > rr.Context.End {

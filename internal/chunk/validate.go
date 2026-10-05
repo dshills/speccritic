@@ -17,7 +17,7 @@ const chunkTagPrefix = "chunk:"
 // ParseChunkResponse reads a complete chunk review response. See
 // parseChunkResponse for what is kept and what is dropped.
 func ParseChunkResponse(raw string, lineCount int, ch Chunk) (*schema.Report, error) {
-	parsed, err := parseChunkResponse(raw, lineCount, ch)
+	parsed, err := parseChunkResponse(raw, "", lineCount, ch)
 	if err != nil {
 		return nil, err
 	}
@@ -32,10 +32,14 @@ func ParseChunkResponse(raw string, lineCount int, ch Chunk) (*schema.Report, er
 // the neighbouring chunk reviews those lines. The chunk tag and evidence path
 // are set here rather than trusted from the model, and an over-long summary is
 // shortened. A missing summary is allowed: it only feeds synthesis.
-func parseChunkResponse(raw string, lineCount int, ch Chunk) (llm.Parsed, error) {
+//
+// With specText set, quotes are checked against the spec first, so the range
+// rule applies to where a quote really is, not to the lines the model cited.
+func parseChunkResponse(raw, specText string, lineCount int, ch Chunk) (llm.Parsed, error) {
 	res, err := validate.ParseResponse(raw, validate.Options{
 		LineCount: lineCount,
 		SpecPath:  ch.Path,
+		SpecText:  specText,
 		CheckIssue: func(issue *schema.Issue) error {
 			if err := evidenceInPrimaryRange(issue.Evidence, ch); err != nil {
 				return err

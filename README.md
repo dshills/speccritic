@@ -634,6 +634,17 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
 
 > **Note:** `summary` counts always reflect all issues regardless of `--severity-threshold`. The `issues` array is filtered. The `input.severity_threshold` field records which filter was applied.
 
+### Evidence
+
+Every quote a model gives is looked up in the spec it was shown, ignoring differences in case, spacing, typographic punctuation and Markdown emphasis.
+
+- A quote found at the cited lines is kept, and replaced by the spec's exact text.
+- A quote found only on other lines moves the evidence there. The issue is tagged `evidence-reanchored`.
+- When no quote of an issue is anywhere in the spec, the issue is tagged `evidence-unverified`. If it was CRITICAL it is lowered to WARN and also tagged `severity-downgraded`: a finding that cannot point at real text does not fail a spec on its own. The finding stays in the report.
+- An issue with no evidence at all is dropped and counted in `meta.dropped_findings`.
+
+A quote of only a word or two is too common to place, so it is confirmed where it is cited or else left alone, never flagged. Questions get the same corrections but are never flagged or lowered.
+
 > **Note:** Model output is validated one finding at a time. A finding that fails validation (an unknown category, evidence outside the spec, and so on) is left out and the rest are kept; `meta.dropped_findings` then reports how many were left out. The field is omitted when nothing was dropped. Issue and question IDs, bookkeeping tags and the evidence `path` are assigned by SpecCritic, not taken from the model.
 
 ### Usage

@@ -126,7 +126,7 @@ func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		Request: req,
 		Label:   fmt.Sprintf("chunk %s ", ch.ID),
 		Parse: func(raw string) (llm.Parsed, error) {
-			return parseChunkResponse(raw, s.LineCount, ch)
+			return parseChunkResponse(raw, s.Raw, s.LineCount, ch)
 		},
 		RepairPrompt: func(reason error, failedOutput string) string {
 			return fmt.Sprintf("\n\nYour previous response failed chunk validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema and cite only primary-range lines.", reason, truncate(failedOutput, 4000))

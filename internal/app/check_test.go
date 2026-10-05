@@ -1480,3 +1480,74 @@ func TestCheckerRejectsUnknownStructuredOutputSetting(t *testing.T) {
 		t.Fatalf("error = %v, want an input error naming the setting", err)
 	}
 }
+
+func TestCheckerChecksEvidenceAgainstTheSpec(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	finding := func(id, title string, line int, quote string) string {
+		return fmt.Sprintf(`{"id":%q,"severity":"CRITICAL","category":"NON_TESTABLE_REQUIREMENT","title":%q,"description":"d","evidence":[{"line_start":%d,"line_end":%d,"quote":%q}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}`, id, title, line, line, quote)
+	}
+	const specText = "# Service\n\nThe service must be dependable.\nRequests are answered in order.\nLogs are kept for thirty days.\n"
+
+	cases := map[string]struct {
+		issues       string
+		wantVerdict  schema.Verdict
+		wantLine     int
+		wantQuote    string
+		wantSeverity schema.Severity
+		wantTags     []string
+		wantDropped  int
+	}{
+		"line number off by two": {
+			issues:      finding("ISSUE-0001", "Not testable", 5, "the service must be dependable"),
+			wantVerdict: schema.VerdictInvalid, wantLine: 3, wantQuote: "The service must be dependable",
+			wantSeverity: schema.SeverityCritical, wantTags: []string{"evidence-reanchored"},
+		},
+		"quote that the spec does not contain": {
+			issues:      finding("ISSUE-0001", "Invented", 3, "The service must answer in under one second."),
+			wantVerdict: schema.VerdictValidWithGaps, wantLine: 3, wantQuote: "The service must answer in under one second.",
+			wantSeverity: schema.SeverityWarn, wantTags: []string{"evidence-unverified", "severity-downgraded"},
+		},
+		"finding with no evidence": {
+			issues: `{"id":"ISSUE-0001","severity":"CRITICAL","category":"NON_TESTABLE_REQUIREMENT","title":"Nowhere","evidence":[]},` +
+				finding("ISSUE-0002", "Real", 4, "Requests are answered in order."),
+			wantVerdict: schema.VerdictInvalid, wantLine: 4, wantQuote: "Requests are answered in order.",
+			wantSeverity: schema.SeverityCritical, wantDropped: 1,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			provider := &fakeProvider{content: `{"issues":[` + tc.issues + `],"questions":[],"patches":[]}`}
+			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+			result, err := checker.Check(context.Background(), CheckRequest{
+				Version: "test", SpecName: "SPEC.md", SpecText: specText, Profile: "general",
+				SeverityThreshold: "info", MaxTokens: 1000, Source: SourceWeb,
+			})
+			if err != nil {
+				t.Fatalf("Check returned error: %v", err)
+			}
+			if len(result.Report.Issues) != 1 {
+				t.Fatalf("issues = %#v, want 1", result.Report.Issues)
+			}
+			issue := result.Report.Issues[0]
+			if got := issue.Evidence[0]; got.LineStart != tc.wantLine || got.Quote != tc.wantQuote {
+				t.Errorf("evidence = L%d %q, want L%d %q", got.LineStart, got.Quote, tc.wantLine, tc.wantQuote)
+			}
+			if issue.Severity != tc.wantSeverity {
+				t.Errorf("severity = %s, want %s", issue.Severity, tc.wantSeverity)
+			}
+			for _, tag := range tc.wantTags {
+				if !hasIssueTag(issue.Tags, tag) {
+					t.Errorf("tags = %v, want %q", issue.Tags, tag)
+				}
+			}
+			if result.Report.Summary.Verdict != tc.wantVerdict {
+				t.Errorf("verdict = %s, want %s", result.Report.Summary.Verdict, tc.wantVerdict)
+			}
+			if result.Report.Meta.DroppedFindings != tc.wantDropped {
+				t.Errorf("meta.dropped_findings = %d, want %d", result.Report.Meta.DroppedFindings, tc.wantDropped)
+			}
+		})
+	}
+}

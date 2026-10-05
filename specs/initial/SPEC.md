@@ -328,6 +328,7 @@ Validation
 	•	Strict JSON parse
 	•	Schema validation, applied one finding at a time: a finding that fails is dropped, the rest are kept, and the number dropped is reported in meta.dropped_findings
 	•	Evidence line bounds validation
+	•	Evidence quote verification: each quote is looked up in the spec; evidence is moved to where its quote is (tag evidence-reanchored); an issue none of whose quotes is in the spec is tagged evidence-unverified and, if CRITICAL, lowered to WARN (tag severity-downgraded); an issue with no evidence is dropped; quotes are replaced by the exact spec text
 	•	Issue and question IDs, bookkeeping tags and the evidence path are assigned locally, not taken from the model
 	•	One retry allowed with repair prompt, used only when a response holds nothing usable
 	•	A response cut off at the output cap after at least one complete finding is continued, not retried: the complete findings are kept and only the remainder is requested, up to three continuation calls

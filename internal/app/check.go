@@ -1218,7 +1218,7 @@ func callWithRetry(ctx context.Context, provider llm.Provider, req *llm.Request,
 	return llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,
 		Parse: func(raw string) (llm.Parsed, error) {
-			res, err := validate.ParseResponse(raw, validate.Options{LineCount: s.LineCount, SpecPath: s.Path})
+			res, err := validate.ParseResponse(raw, validate.Options{LineCount: s.LineCount, SpecPath: s.Path, SpecText: s.Raw})
 			if err != nil {
 				return llm.Parsed{}, err
 			}

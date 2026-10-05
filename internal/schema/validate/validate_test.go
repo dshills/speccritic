@@ -2,6 +2,8 @@ package validate
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -460,5 +462,71 @@ func TestParseResponse_IgnoresTextAfterTheReport(t *testing.T) {
 	}
 	if res.Incomplete != nil || len(res.Report.Issues) != 2 {
 		t.Fatalf("incomplete=%v issues=%d, want a complete report with 2 issues", res.Incomplete, len(res.Report.Issues))
+	}
+}
+
+// evidenceSpec is the spec the responses below claim to review.
+const evidenceSpec = "# Spec\nThe service must answer within 200 milliseconds.\nRetries are unlimited.\nThe cache is refreshed hourly.\n"
+
+func evidenceIssue(id, severity string, line int, quote string) string {
+	return fmt.Sprintf(`{"id":%q,"severity":%q,"category":"AMBIGUOUS_BEHAVIOR","title":"t","description":"d","evidence":[{"line_start":%d,"line_end":%d,"quote":%q}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}`,
+		id, severity, line, line, quote)
+}
+
+func TestParseResponse_ChecksEvidenceAgainstTheSpec(t *testing.T) {
+	raw := `{"issues":[` + strings.Join([]string{
+		evidenceIssue("ISSUE-0001", "CRITICAL", 2, "the service must answer within 200 milliseconds"),
+		evidenceIssue("ISSUE-0002", "CRITICAL", 2, "The cache is refreshed hourly."),
+		evidenceIssue("ISSUE-0003", "CRITICAL", 3, "Retries stop after five attempts and then fail."),
+		`{"id":"ISSUE-0004","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"no evidence","evidence":[]}`,
+	}, ",") + `],"questions":[{"id":"Q-0001","severity":"WARN","question":"How often?","evidence":[{"line_start":1,"line_end":1,"quote":"the cache is refreshed hourly"}]}],"patches":[]}`
+
+	var seenLines []int
+	res, err := ParseResponse(raw, Options{
+		LineCount: 4,
+		SpecText:  evidenceSpec,
+		CheckIssue: func(issue *schema.Issue) error {
+			seenLines = append(seenLines, issue.Evidence[0].LineStart)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if len(res.Report.Issues) != 3 {
+		t.Fatalf("issues = %d, want the one without evidence dropped", len(res.Report.Issues))
+	}
+	if len(res.Dropped) != 1 || !strings.Contains(res.Dropped[0], "issue[3]: no evidence") {
+		t.Errorf("dropped = %q, want the issue with no evidence", res.Dropped)
+	}
+
+	verified, moved, unverified := res.Report.Issues[0], res.Report.Issues[1], res.Report.Issues[2]
+	if got := verified.Evidence[0]; got.LineStart != 2 || got.Quote != "The service must answer within 200 milliseconds" || len(verified.Tags) != 0 || verified.Severity != schema.SeverityCritical {
+		t.Errorf("verified issue = %+v, want the spec's own text and no tags", verified)
+	}
+	if got := moved.Evidence[0]; got.LineStart != 4 || got.LineEnd != 4 || !slices.Contains(moved.Tags, "evidence-reanchored") {
+		t.Errorf("moved issue evidence = %+v tags = %v, want line 4 and the reanchored tag", got, moved.Tags)
+	}
+	if unverified.Severity != schema.SeverityWarn || unverified.Blocking || !slices.Contains(unverified.Tags, "evidence-unverified") || !slices.Contains(unverified.Tags, "severity-downgraded") {
+		t.Errorf("unverified issue = %+v, want it lowered to WARN and tagged", unverified)
+	}
+	// Caller checks run on the corrected lines.
+	if !slices.Equal(seenLines, []int{2, 4, 3}) {
+		t.Errorf("caller checks saw lines %v, want [2 4 3]", seenLines)
+	}
+	if got := res.Report.Questions[0].Evidence[0]; got.LineStart != 4 || got.Quote != "The cache is refreshed hourly" {
+		t.Errorf("question evidence = %+v, want it moved to line 4", got)
+	}
+}
+
+func TestParseResponse_WithoutSpecTextEvidenceIsNotChecked(t *testing.T) {
+	raw := `{"issues":[` + evidenceIssue("ISSUE-0001", "CRITICAL", 3, "Retries stop after five attempts and then fail.") +
+		`,{"id":"ISSUE-0002","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"no evidence","evidence":[]}],"questions":[],"patches":[]}`
+	res, err := ParseResponse(raw, Options{LineCount: 4})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if len(res.Report.Issues) != 2 || res.Report.Issues[0].Severity != schema.SeverityCritical || len(res.Report.Issues[0].Tags) != 0 {
+		t.Fatalf("issues = %+v, want both kept untouched", res.Report.Issues)
 	}
 }

@@ -122,7 +122,7 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 		Request: req,
 		Label:   "synthesis ",
 		Parse: func(raw string) (llm.Parsed, error) {
-			return parseSynthesisResponse(raw, s.Path, s.LineCount)
+			return parseSynthesisResponse(raw, s.Path, s.Raw, s.LineCount)
 		},
 		RepairPrompt: func(reason error, failedOutput string) string {
 			return fmt.Sprintf("\n\nYour previous response failed synthesis validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema and cite valid original line numbers.", reason, truncate(failedOutput, 4000))
@@ -133,10 +133,11 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 // parseSynthesisResponse reads a synthesis response that may have been cut
 // off. Synthesis may cite any line of the spec. The synthesis tag and the
 // evidence path are set here rather than asked of the model.
-func parseSynthesisResponse(raw, specPath string, lineCount int) (llm.Parsed, error) {
+func parseSynthesisResponse(raw, specPath, specText string, lineCount int) (llm.Parsed, error) {
 	res, err := validate.ParseResponse(raw, validate.Options{
 		LineCount: lineCount,
 		SpecPath:  specPath,
+		SpecText:  specText,
 		CheckIssue: func(issue *schema.Issue) error {
 			if !hasTag(issue.Tags, TagSynthesis) {
 				issue.Tags = appendUniqueStrings(copyStrings(issue.Tags), TagSynthesis)
@@ -152,7 +153,7 @@ func parseSynthesisResponse(raw, specPath string, lineCount int) (llm.Parsed, er
 
 // ParseSynthesisResponse reads a complete synthesis response.
 func ParseSynthesisResponse(raw string, lineCount int) (*schema.Report, error) {
-	parsed, err := parseSynthesisResponse(raw, "", lineCount)
+	parsed, err := parseSynthesisResponse(raw, "", "", lineCount)
 	if err != nil {
 		return nil, err
 	}

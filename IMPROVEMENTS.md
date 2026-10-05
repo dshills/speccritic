@@ -30,7 +30,7 @@ calls, or the quality of what comes back.
 | 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium | Done |
 | 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium | Done |
 | 7 | Enforce the output schema at the provider | Speed, Tokens | Medium | Done |
-| 8 | Verify and re-anchor evidence locally | Accuracy | Medium |  |
+| 8 | Verify and re-anchor evidence locally | Accuracy | Medium | Done |
 | 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small |  |
 | 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large |  |
 | 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium |  |
@@ -211,7 +211,15 @@ for item 5.
 
 ## 8. Verify and re-anchor evidence locally
 
-**Helps:** Accuracy. **Effort:** Medium.
+**Helps:** Accuracy. **Effort:** Medium. **Status:** Done.
+
+**As built, and measured on 2026-10-05.** Run over eight live reports from `gpt-6.1-sol`,
+`claude-opus-5-5` and `gemini-3.8-flash`, all 126 evidence quotes were found at the lines cited:
+none needed moving and none was unverified. With these models the check is a safety net, not a
+frequent correction. Two refinements to the plan below: a quote of fewer than 12 characters is
+never flagged, because a word or two cannot be placed reliably and a placeholder such as "N/A"
+says nothing about the spec; and a repeated quote moves to its nearest occurrence only when that
+is within five lines of the cited range.
 
 **Today.** Evidence is checked only for line bounds
 (`internal/schema/validate/validate.go:197-211`). `quote` is never compared with the cited

@@ -151,3 +151,30 @@ func chunkIssueJSON(title string, lineStart, lineEnd int, tags []string) string 
 func chunkReportJSON(summary string, issues ...string) string {
 	return fmt.Sprintf(`{"issues":[%s],"questions":[],"patches":[],"meta":{"chunk_summary":%q}}`, strings.Join(issues, ","), summary)
 }
+
+// The model cites a line inside the chunk, but the text it quotes is in
+// another chunk. Evidence is checked first, so the finding is judged by where
+// its quote really is and left to the chunk that owns those lines.
+func TestParseChunkResponseAppliesTheRangeRuleAfterCheckingEvidence(t *testing.T) {
+	const specText = "# Spec\nAlpha requirement stands here.\nBravo requirement stands here.\nCharlie requirement stands here.\n"
+	issueWithQuote := func(title, quote string) string {
+		return strings.Replace(chunkIssueJSON(title, 2, 2, nil), `"quote":"q"`, fmt.Sprintf(`"quote":%q`, quote), 1)
+	}
+	raw := chunkReportJSON("summary",
+		issueWithQuote("Quotes its own range", "Bravo requirement stands here."),
+		issueWithQuote("Quotes another chunk", "Charlie requirement stands here."),
+	)
+	parsed, err := parseChunkResponse(raw, specText, 4, testChunk())
+	if err != nil {
+		t.Fatalf("parseChunkResponse: %v", err)
+	}
+	if len(parsed.Report.Issues) != 1 || parsed.Report.Issues[0].Title != "Quotes its own range" {
+		t.Fatalf("issues = %#v, want only the finding whose quote is in the primary range", parsed.Report.Issues)
+	}
+	if got := parsed.Report.Issues[0].Evidence[0]; got.LineStart != 3 || !hasTag(parsed.Report.Issues[0].Tags, "evidence-reanchored") {
+		t.Errorf("evidence = %+v tags = %v, want it moved from line 2 to line 3", got, parsed.Report.Issues[0].Tags)
+	}
+	if len(parsed.Dropped) != 1 || !strings.Contains(parsed.Dropped[0], "outside chunk primary range") {
+		t.Errorf("dropped = %q, want the finding whose quote is outside the chunk", parsed.Dropped)
+	}
+}
