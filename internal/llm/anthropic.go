@@ -70,10 +70,15 @@ type anthropicContentBlock struct {
 	CacheControl *anthropicCacheControl `json:"cache_control,omitempty"`
 }
 
+// anthropicStopMaxTokens is the stop_reason Anthropic reports when a response
+// hits max_tokens.
+const anthropicStopMaxTokens = "max_tokens"
+
 type anthropicResponse struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Content []struct {
+	ID         string `json:"id"`
+	Model      string `json:"model"`
+	StopReason string `json:"stop_reason"`
+	Content    []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
@@ -91,7 +96,7 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 
 	maxTokens := req.MaxTokens
 	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = DefaultMaxTokens
 	}
 
 	body := anthropicRequest{
@@ -156,13 +161,19 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		}
 	}
 	content := sb.String()
-	if content == "" {
+	truncated := ar.StopReason == anthropicStopMaxTokens
+	// A response can spend its whole budget before emitting any text. Report
+	// that as a truncation so the caller retries with more room instead of
+	// treating it as a provider failure.
+	if content == "" && !truncated {
 		return nil, fmt.Errorf("anthropic: no text content in response (got %d content blocks)", len(ar.Content))
 	}
 
 	return &Response{
-		Content: content,
-		Model:   fmt.Sprintf("anthropic:%s", ar.Model),
+		Content:    content,
+		Model:      fmt.Sprintf("anthropic:%s", ar.Model),
+		StopReason: ar.StopReason,
+		Truncated:  truncated,
 	}, nil
 }
 

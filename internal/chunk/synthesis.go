@@ -116,57 +116,46 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 		Temperature:            &cfg.Temperature,
 		MaxTokens:              cfg.MaxTokens,
 	}
-	resp, err := provider.Complete(ctx, req)
-	if err != nil {
-		return nil, "", fmt.Errorf("synthesis LLM call failed: %w", err)
-	}
-	report, parseErr := parseSynthesisResponse(resp.Content, s.LineCount)
-	model := resp.Model
-	if parseErr != nil {
-		repairReq := *req
-		if req.Temperature != nil {
-			temp := *req.Temperature
-			repairReq.Temperature = &temp
-		}
-		if llm.IncompleteJSON(parseErr) {
-			repairReq.MaxTokens = llm.RepairMaxTokens(req.MaxTokens)
-		}
-		repairReq.UserPrompt = req.UserPrompt + fmt.Sprintf("\n\nYour previous response failed synthesis validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, cite valid original line numbers, and add tag %q to every issue.", parseErr, truncate(resp.Content, 4000), TagSynthesis)
-		resp, err = provider.Complete(ctx, &repairReq)
-		if err != nil {
-			return nil, "", fmt.Errorf("synthesis LLM repair call failed: %w", err)
-		}
-		model = resp.Model
-		report, parseErr = parseSynthesisResponse(resp.Content, s.LineCount)
-		if parseErr != nil {
-			return nil, "", fmt.Errorf("synthesis invalid model output after retry: %w", parseErr)
-		}
-	}
-	return report, model, nil
+	return llm.CompleteReport(ctx, provider, llm.ReportCall{
+		Request: req,
+		Label:   "synthesis ",
+		Parse: func(raw string) (llm.Parsed, error) {
+			return parseSynthesisResponse(raw, s.LineCount)
+		},
+		RepairPrompt: func(reason error, failedOutput string) string {
+			return fmt.Sprintf("\n\nYour previous response failed synthesis validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, cite valid original line numbers, and add tag %q to every issue.", reason, truncate(failedOutput, 4000), TagSynthesis)
+		},
+	})
 }
 
-func parseSynthesisResponse(raw string, lineCount int) (*schema.Report, error) {
-	report, err := ParseSynthesisResponse(raw, lineCount)
+// parseSynthesisResponse reads a synthesis response that may have been cut
+// off, adding the synthesis tag to every issue it keeps.
+func parseSynthesisResponse(raw string, lineCount int) (llm.Parsed, error) {
+	res, err := validate.ParseResponse(raw, validate.Options{LineCount: lineCount})
 	if err != nil {
-		return nil, err
+		return llm.Parsed{}, err
 	}
-	for i := range report.Issues {
-		if !hasTag(report.Issues[i].Tags, TagSynthesis) {
-			report.Issues[i].Tags = appendUniqueStrings(copyStrings(report.Issues[i].Tags), TagSynthesis)
+	if err := ValidateSynthesisReport(res.Report, lineCount); err != nil {
+		return llm.Parsed{}, err
+	}
+	for i := range res.Report.Issues {
+		if !hasTag(res.Report.Issues[i].Tags, TagSynthesis) {
+			res.Report.Issues[i].Tags = appendUniqueStrings(copyStrings(res.Report.Issues[i].Tags), TagSynthesis)
 		}
 	}
-	return report, nil
+	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
 }
 
+// ParseSynthesisResponse validates a complete synthesis response.
 func ParseSynthesisResponse(raw string, lineCount int) (*schema.Report, error) {
-	report, err := validate.Parse(raw, lineCount)
+	parsed, err := parseSynthesisResponse(raw, lineCount)
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateSynthesisReport(report, lineCount); err != nil {
-		return nil, err
+	if parsed.Incomplete != nil {
+		return nil, parsed.Incomplete
 	}
-	return report, nil
+	return parsed.Report, nil
 }
 
 type chunkSummary struct {

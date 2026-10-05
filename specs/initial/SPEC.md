@@ -326,6 +326,7 @@ Validation
 	•	Schema validation
 	•	Evidence line bounds validation
 	•	One retry allowed with repair prompt
+	•	A response cut off at the output cap after at least one complete finding is continued, not retried: the complete findings are kept and only the remainder is requested, up to three continuation calls
 
 ⸻
 

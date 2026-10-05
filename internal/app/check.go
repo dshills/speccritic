@@ -1134,38 +1134,23 @@ func specLabel(req CheckRequest) string {
 }
 
 func callWithRetry(ctx context.Context, provider llm.Provider, req *llm.Request, lineCount int, verbose bool, errw io.Writer) (*schema.Report, string, error) {
-	resp, err := provider.Complete(ctx, req)
-	if err != nil {
-		return nil, "", fmt.Errorf("LLM call failed: %w", err)
-	}
-
-	report, parseErr := validate.Parse(resp.Content, lineCount)
-	if parseErr == nil {
-		return report, resp.Model, nil
-	}
-
-	logVerbose(errw, verbose, "Validation failed, retrying: %s", parseErr)
-
-	repairReq := *req
-	if llm.IncompleteJSON(parseErr) {
-		repairReq.MaxTokens = llm.RepairMaxTokens(req.MaxTokens)
-	}
-	repairReq.UserPrompt = req.UserPrompt + fmt.Sprintf(
-		"\n\nYour previous response failed schema validation (error category: %q). Return only valid JSON matching the schema above.",
-		sanitizeErrForPrompt(parseErr),
-	)
-
-	resp2, err := provider.Complete(ctx, &repairReq)
-	if err != nil {
-		return nil, "", fmt.Errorf("LLM retry call failed: %w", err)
-	}
-
-	report, parseErr = validate.Parse(resp2.Content, lineCount)
-	if parseErr != nil {
-		return nil, "", fmt.Errorf("invalid model output after retry: %w", parseErr)
-	}
-
-	return report, resp2.Model, nil
+	return llm.CompleteReport(ctx, provider, llm.ReportCall{
+		Request: req,
+		Parse: func(raw string) (llm.Parsed, error) {
+			res, err := validate.ParseResponse(raw, validate.Options{LineCount: lineCount})
+			if err != nil {
+				return llm.Parsed{}, err
+			}
+			return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
+		},
+		RepairPrompt: func(reason error, _ string) string {
+			return fmt.Sprintf(
+				"\n\nYour previous response failed schema validation (error category: %q). Return only valid JSON matching the schema above.",
+				sanitizeErrForPrompt(reason),
+			)
+		},
+		Logf: func(format string, args ...any) { logVerbose(errw, verbose, format, args...) },
+	})
 }
 
 func sanitizeErrForPrompt(err error) string {

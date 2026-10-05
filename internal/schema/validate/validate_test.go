@@ -193,3 +193,128 @@ func TestParse_InvalidPatchShape(t *testing.T) {
 		t.Fatalf("expected patch before error, got %v", err)
 	}
 }
+
+const twoIssueJSON = `{"issues":[
+  {"id":"ISSUE-0001","severity":"CRITICAL","category":"NON_TESTABLE_REQUIREMENT","title":"First","description":"d","evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"q"}],"impact":"i","recommendation":"r","blocking":true,"tags":[]},
+  {"id":"ISSUE-0002","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Second","description":"d","evidence":[{"path":"SPEC.md","line_start":2,"line_end":2,"quote":"q"}],"impact":"i","recommendation":"r","blocking":false,"tags":[]}
+],"questions":[{"id":"Q-0001","severity":"WARN","question":"Why?","why_needed":"w","blocks":[],"evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"q"}]}],"patches":[]}`
+
+func TestParseResponse_CompleteDocument(t *testing.T) {
+	res, err := ParseResponse("```json\n"+twoIssueJSON+"\n```", Options{LineCount: 10})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if res.Incomplete != nil {
+		t.Fatalf("Incomplete = %v, want nil", res.Incomplete)
+	}
+	if len(res.Report.Issues) != 2 || len(res.Report.Questions) != 1 {
+		t.Fatalf("issues=%d questions=%d, want 2/1", len(res.Report.Issues), len(res.Report.Questions))
+	}
+}
+
+func TestParseResponse_KeepsFindingsBeforeTruncation(t *testing.T) {
+	cases := map[string]struct {
+		cutAt         string
+		wantIssues    int
+		wantQuestions int
+	}{
+		"inside second issue":   {cutAt: `"title":"Second"`, wantIssues: 1},
+		"between issues":        {cutAt: `{"id":"ISSUE-0002"`, wantIssues: 1},
+		"inside first issue":    {cutAt: `"title":"First"`, wantIssues: 0},
+		"inside first question": {cutAt: `"why_needed"`, wantIssues: 2},
+		"after questions array": {cutAt: `,"patches"`, wantIssues: 2, wantQuestions: 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			idx := strings.Index(twoIssueJSON, tc.cutAt)
+			if idx < 0 {
+				t.Fatalf("cut marker %q not found", tc.cutAt)
+			}
+			res, err := ParseResponse(twoIssueJSON[:idx], Options{LineCount: 10})
+			if err != nil {
+				t.Fatalf("ParseResponse: %v", err)
+			}
+			if res.Incomplete == nil {
+				t.Fatal("Incomplete = nil, want truncation reported")
+			}
+			if !strings.HasPrefix(res.Incomplete.Error(), "JSON parse failed") {
+				t.Errorf("Incomplete = %q, want JSON parse failed prefix", res.Incomplete)
+			}
+			if len(res.Report.Issues) != tc.wantIssues || len(res.Report.Questions) != tc.wantQuestions {
+				t.Errorf("issues=%d questions=%d, want %d/%d", len(res.Report.Issues), len(res.Report.Questions), tc.wantIssues, tc.wantQuestions)
+			}
+		})
+	}
+}
+
+func TestParseResponse_NotJSONIsIncompleteWithNothingRead(t *testing.T) {
+	for _, raw := range []string{"", "I cannot review this document.", `{"issues":[`} {
+		res, err := ParseResponse(raw, Options{LineCount: 10})
+		if err != nil {
+			t.Fatalf("ParseResponse(%q): %v", raw, err)
+		}
+		if res.Incomplete == nil {
+			t.Errorf("ParseResponse(%q): Incomplete = nil", raw)
+		}
+		if len(res.Report.Issues)+len(res.Report.Questions) != 0 {
+			t.Errorf("ParseResponse(%q): findings recovered from nothing", raw)
+		}
+	}
+}
+
+func TestParseResponse_InvalidFindingIsAnError(t *testing.T) {
+	bad := strings.Replace(twoIssueJSON, `"severity":"WARN","category":"AMBIGUOUS_BEHAVIOR"`, `"severity":"HIGH","category":"AMBIGUOUS_BEHAVIOR"`, 1)
+	if _, err := ParseResponse(bad, Options{LineCount: 10}); err == nil || !strings.Contains(err.Error(), "invalid severity") {
+		t.Fatalf("error = %v, want invalid severity", err)
+	}
+	wrongType := strings.Replace(twoIssueJSON, `"line_start":2`, `"line_start":"two"`, 1)
+	if _, err := ParseResponse(wrongType, Options{LineCount: 10}); err == nil || !strings.HasPrefix(err.Error(), "JSON parse failed") {
+		t.Fatalf("error = %v, want JSON parse failed", err)
+	}
+}
+
+func TestParseResponse_EvidenceBoundsApplyToRecoveredFindings(t *testing.T) {
+	idx := strings.Index(twoIssueJSON, `"title":"Second"`)
+	if _, err := ParseResponse(twoIssueJSON[:idx], Options{LineCount: 0}); err != nil {
+		t.Fatalf("ParseResponse without bounds: %v", err)
+	}
+	beyond := strings.Replace(twoIssueJSON[:idx], `"line_start":1,"line_end":1`, `"line_start":1,"line_end":99`, 1)
+	if _, err := ParseResponse(beyond, Options{LineCount: 10}); err == nil || !strings.Contains(err.Error(), "exceeds spec line count") {
+		t.Fatalf("error = %v, want line bound error", err)
+	}
+}
+
+func TestParseResponse_WrongShapeIsAnErrorNotATruncation(t *testing.T) {
+	firstIssueEnd := strings.Index(twoIssueJSON, `{"id":"ISSUE-0002"`)
+	afterFirstIssue := strings.TrimRight(strings.TrimSpace(twoIssueJSON[:firstIssueEnd]), ",")
+	cases := map[string]string{
+		"top-level array":           `[]`,
+		"issues is an object":       `{"issues":{}}`,
+		"issues is a scalar":        `{"issues":3}`,
+		"questions is a string":     afterFirstIssue + `],"questions":"none"}`,
+		"patches is an object":      afterFirstIssue + `],"questions":[],"patches":{"issue_id":"ISSUE-0001"}}`,
+		"second report after first": twoIssueJSON + "\n" + twoIssueJSON,
+		"array after the report":    twoIssueJSON + ` []`,
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			res, err := ParseResponse(raw, Options{LineCount: 10})
+			if err == nil {
+				t.Fatalf("error = nil (incomplete=%v), want a shape error", res.Incomplete)
+			}
+			if !strings.HasPrefix(err.Error(), "JSON parse failed") {
+				t.Errorf("error = %q, want JSON parse failed prefix", err)
+			}
+		})
+	}
+}
+
+func TestParseResponse_IgnoresTextAfterTheReport(t *testing.T) {
+	res, err := ParseResponse(twoIssueJSON+"\n```\nLet me know if you need more detail.", Options{LineCount: 10})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if res.Incomplete != nil || len(res.Report.Issues) != 2 {
+		t.Fatalf("incomplete=%v issues=%d, want a complete report with 2 issues", res.Incomplete, len(res.Report.Issues))
+	}
+}

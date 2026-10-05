@@ -408,7 +408,7 @@ speccritic check <spec-file> [flags]
 | `--llm-provider` | env/default | LLM provider override: `anthropic`, `openai`, or `gemini` |
 | `--llm-model` | env/provider default | LLM model override |
 | `--temperature` | `0.2` | LLM temperature (0.0–2.0) |
-| `--max-tokens` | `4096` | Maximum response tokens |
+| `--max-tokens` | `16384` | Maximum response tokens per call. A response that still hits the cap is continued, not regenerated: the findings already received are kept and only the rest is requested |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
 | `--verbose` | `false` | Print processing steps to stderr |
 | `--debug` | `false` | Dump full prompt to stderr (use only in trusted environments) |
@@ -641,7 +641,7 @@ Patches are advisory—they are minimal textual corrections, never wholesale rew
 | `2` | Verdict meets or exceeds `--fail-on` threshold |
 | `3` | Input error: invalid flags, file not found, or LLM provider/model env vars unset with `--offline` |
 | `4` | Provider error: failed to create LLM provider (bad format, missing API key) |
-| `5` | Model output invalid: LLM response failed schema validation after one retry |
+| `5` | Model output invalid: LLM response failed schema validation after one retry, or stayed incomplete after three continuation calls |
 
 ## Context Files
 

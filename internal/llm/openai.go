@@ -44,10 +44,15 @@ type openaiMessage struct {
 	Content string `json:"content"`
 }
 
+// openaiFinishLength is the finish_reason OpenAI-compatible APIs report when a
+// response hits the output token cap.
+const openaiFinishLength = "length"
+
 type openaiResponse struct {
 	Model   string `json:"model"`
 	Choices []struct {
-		Message openaiMessage `json:"message"`
+		Message      openaiMessage `json:"message"`
+		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
@@ -82,8 +87,10 @@ func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}
 
 	return &Response{
-		Content: oaiResp.Choices[0].Message.Content,
-		Model:   fmt.Sprintf("openai:%s", oaiResp.Model),
+		Content:    oaiResp.Choices[0].Message.Content,
+		Model:      fmt.Sprintf("openai:%s", oaiResp.Model),
+		StopReason: oaiResp.Choices[0].FinishReason,
+		Truncated:  oaiResp.Choices[0].FinishReason == openaiFinishLength,
 	}, nil
 }
 

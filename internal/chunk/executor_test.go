@@ -78,6 +78,36 @@ func TestReviewChunksIncreasesRepairTokensForIncompleteJSON(t *testing.T) {
 	}
 }
 
+func TestReviewChunksContinuesChunkCutOffAtOutputCap(t *testing.T) {
+	s, plan := executorFixture(t, 1)
+	ch := plan.Chunks[0]
+	issue := func(title string, line int) string {
+		return fmt.Sprintf(`{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":%q,"description":"desc","evidence":[{"path":"SPEC.md","line_start":%d,"line_end":%d,"quote":"q"}],"impact":"impact","recommendation":"rec","blocking":false,"tags":["chunk:%s"]}`, title, line, line, ch.ID)
+	}
+	provider := &recordingSequentialProvider{responses: []string{
+		// Cut off inside a second issue, before the summary arrived.
+		`{"issues":[` + issue("First", 1) + `,{"id":"ISSUE-0002","sev`,
+		`{"issues":[` + issue("Second", 2) + `],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`,
+	}}
+	results, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, Temperature: 0.2, MaxTokens: 1000})
+	if err != nil {
+		t.Fatalf("ReviewChunks: %v", err)
+	}
+	if provider.calls != 2 {
+		t.Fatalf("calls = %d, want initial + continuation", provider.calls)
+	}
+	if provider.maxTokens[1] != provider.maxTokens[0] {
+		t.Fatalf("continuation max tokens = %d, want unchanged %d", provider.maxTokens[1], provider.maxTokens[0])
+	}
+	report := results[0].Report
+	if len(report.Issues) != 2 || report.Issues[0].Title != "First" || report.Issues[1].Title != "Second" {
+		t.Fatalf("issues = %#v, want the kept finding followed by the continued one", report.Issues)
+	}
+	if report.Meta.ChunkSummary != "summary" {
+		t.Fatalf("chunk summary = %q, want the one from the continuation", report.Meta.ChunkSummary)
+	}
+}
+
 func TestReviewChunksFailsWholeReviewOnChunkError(t *testing.T) {
 	s, plan := executorFixture(t, 1)
 	provider := &errorProvider{}

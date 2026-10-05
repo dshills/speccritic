@@ -580,3 +580,104 @@ func TestTruncate(t *testing.T) {
 		t.Errorf("truncate multibyte: got %q, want %q", got, "hél...")
 	}
 }
+
+// serveJSON starts a test server that answers every request with body.
+func serveJSON(t *testing.T, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestAnthropicComplete_ReportsStopReason(t *testing.T) {
+	cases := map[string]struct {
+		body          string
+		wantContent   string
+		wantTruncated bool
+		wantErr       bool
+	}{
+		"finished": {
+			body:        `{"model":"claude","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}]}`,
+			wantContent: "ok",
+		},
+		"hit output cap": {
+			body:          `{"model":"claude","stop_reason":"max_tokens","content":[{"type":"text","text":"{\"issues\":["}]}`,
+			wantContent:   `{"issues":[`,
+			wantTruncated: true,
+		},
+		"hit output cap before any text": {
+			body:          `{"model":"claude","stop_reason":"max_tokens","content":[{"type":"thinking","thinking":""}]}`,
+			wantTruncated: true,
+		},
+		"no text and not truncated": {
+			body:    `{"model":"claude","stop_reason":"end_turn","content":[]}`,
+			wantErr: true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			original := AnthropicAPIURL()
+			SetAnthropicAPIURL(serveJSON(t, tc.body))
+			t.Cleanup(func() { SetAnthropicAPIURL(original) })
+
+			p := &anthropicProvider{model: "claude-test", apiKey: "k"}
+			resp, err := p.Complete(context.Background(), &Request{UserPrompt: "spec"})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if resp.Content != tc.wantContent || resp.Truncated != tc.wantTruncated {
+				t.Errorf("content=%q truncated=%v, want %q/%v", resp.Content, resp.Truncated, tc.wantContent, tc.wantTruncated)
+			}
+			if tc.wantTruncated && resp.StopReason != "max_tokens" {
+				t.Errorf("stop reason = %q, want max_tokens", resp.StopReason)
+			}
+		})
+	}
+}
+
+func TestOpenAICompatibleComplete_ReportsFinishReason(t *testing.T) {
+	const finished = `{"model":"m","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`
+	const cutOff = `{"model":"m","choices":[{"message":{"role":"assistant","content":"{\"issues\":["},"finish_reason":"length"}]}`
+
+	providers := map[string]struct {
+		provider Provider
+		setURL   func(string)
+		url      func() string
+	}{
+		"openai": {provider: &openaiProvider{model: "gpt-test", apiKey: "k"}, setURL: SetOpenAIAPIURL, url: OpenAIAPIURL},
+		"gemini": {provider: &geminiProvider{model: "gemini-test", apiKey: "k"}, setURL: SetGeminiAPIURL, url: GeminiAPIURL},
+	}
+	for name, tc := range providers {
+		t.Run(name, func(t *testing.T) {
+			original := tc.url()
+			t.Cleanup(func() { tc.setURL(original) })
+
+			tc.setURL(serveJSON(t, finished))
+			resp, err := tc.provider.Complete(context.Background(), &Request{UserPrompt: "spec"})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if resp.Truncated || resp.StopReason != "stop" {
+				t.Errorf("finished response: truncated=%v stop=%q", resp.Truncated, resp.StopReason)
+			}
+
+			tc.setURL(serveJSON(t, cutOff))
+			resp, err = tc.provider.Complete(context.Background(), &Request{UserPrompt: "spec"})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if !resp.Truncated || resp.StopReason != "length" {
+				t.Errorf("cut-off response: truncated=%v stop=%q", resp.Truncated, resp.StopReason)
+			}
+		})
+	}
+}

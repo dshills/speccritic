@@ -20,32 +20,32 @@ calls, or the quality of what comes back.
 - Statements about current Claude models come from Anthropic's API reference (cached
   2026-09-25), not from live calls.
 
-| # | Item | Helps | Effort |
-|---|------|-------|--------|
-| 1 | Stop discarding responses that hit the output cap | Speed, Tokens | Small |
-| 2 | Salvage valid findings; stamp bookkeeping fields locally | Speed, Tokens | Small |
-| 3 | Fix redaction collapsing lines | Accuracy | Small |
-| 4 | Record token usage and latency per call | All (measurement) | Small |
-| 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium |
-| 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium |
-| 7 | Enforce the output schema at the provider | Speed, Tokens | Medium |
-| 8 | Verify and re-anchor evidence locally | Accuracy | Medium |
-| 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small |
-| 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large |
-| 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium |
-| 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium |
-| 13 | Retry transient provider errors; keep completed chunks | Throughput | Small |
-| 14 | Cache results by content hash | Speed, Tokens | Medium |
-| 15 | Put the model output on a diet | Tokens, Speed | Medium |
-| 16 | Add a severity rubric and worked examples to the prompt | Accuracy | Small |
-| 17 | Bring the incremental path to parity with full review | Accuracy | Small |
-| 18–22 | Lower priority (tiering, streaming, batch, context ranking, phrase lists) | Mixed | Varies |
+| # | Item | Helps | Effort | Status |
+|---|------|-------|--------|--------|
+| 1 | Stop discarding responses that hit the output cap | Speed, Tokens | Small | Done |
+| 2 | Salvage valid findings; stamp bookkeeping fields locally | Speed, Tokens | Small |  |
+| 3 | Fix redaction collapsing lines | Accuracy | Small |  |
+| 4 | Record token usage and latency per call | All (measurement) | Small |  |
+| 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium |  |
+| 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium |  |
+| 7 | Enforce the output schema at the provider | Speed, Tokens | Medium |  |
+| 8 | Verify and re-anchor evidence locally | Accuracy | Medium |  |
+| 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small |  |
+| 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large |  |
+| 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium |  |
+| 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium |  |
+| 13 | Retry transient provider errors; keep completed chunks | Throughput | Small |  |
+| 14 | Cache results by content hash | Speed, Tokens | Medium |  |
+| 15 | Put the model output on a diet | Tokens, Speed | Medium |  |
+| 16 | Add a severity rubric and worked examples to the prompt | Accuracy | Small |  |
+| 17 | Bring the incremental path to parity with full review | Accuracy | Small |  |
+| 18–22 | Lower priority (tiering, streaming, batch, context ranking, phrase lists) | Mixed | Varies |  |
 
 ---
 
 ## 1. Stop discarding responses that hit the output cap
 
-**Helps:** Speed, Tokens. **Effort:** Small.
+**Helps:** Speed, Tokens. **Effort:** Small. **Status:** Done.
 
 **Today.** `--max-tokens` defaults to 4096 (`cmd/speccritic/main.go:117`; the web UI and the
 package facade default to 8192). When a review needs more, the JSON is cut off, parsing fails,

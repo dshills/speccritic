@@ -617,7 +617,7 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		temperature = v
 	}
 
-	maxTokens := 8192
+	maxTokens := llm.DefaultMaxTokens
 	if raw := r.FormValue("max_tokens"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v <= 0 || v > maxWebTokens {

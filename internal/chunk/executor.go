@@ -64,7 +64,7 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 			for idx := range jobs {
 				ch := plan.Chunks[idx]
 				logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Starting chunk %s", ch.ID)
-				result, err := reviewOneChunk(ctx, provider, s, plan, ch, cfg)
+				result, err := reviewOneChunk(ctx, provider, s, plan, ch, cfg, &logMu)
 				if err != nil {
 					select {
 					case errs <- err:
@@ -100,7 +100,7 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 	return results, nil
 }
 
-func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, plan Plan, ch Chunk, cfg ExecutorConfig) (ChunkResult, error) {
+func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, plan Plan, ch Chunk, cfg ExecutorConfig, logMu *sync.Mutex) (ChunkResult, error) {
 	prefix, tail, err := BuildUserPrompt(PromptInput{
 		Spec:             s,
 		Plan:             plan,
@@ -118,37 +118,21 @@ func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		Temperature:            &cfg.Temperature,
 		MaxTokens:              cfg.MaxTokens,
 	}
-	resp, err := provider.Complete(ctx, req)
+	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
+		Request: req,
+		Label:   fmt.Sprintf("chunk %s ", ch.ID),
+		Parse: func(raw string) (llm.Parsed, error) {
+			return parseChunkResponse(raw, s.LineCount, ch)
+		},
+		RepairPrompt: func(reason error, failedOutput string) string {
+			return fmt.Sprintf("\n\nYour previous response failed chunk validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, include meta.chunk_summary, add the required chunk tag, and cite only primary-range lines.", reason, truncate(failedOutput, 4000))
+		},
+		Logf: func(format string, args ...any) {
+			logVerbose(logMu, cfg.ErrWriter, cfg.Verbose, "Chunk %s: "+format, append([]any{ch.ID}, args...)...)
+		},
+	})
 	if err != nil {
-		return ChunkResult{}, fmt.Errorf("chunk %s LLM call failed: %w", ch.ID, err)
-	}
-	report, parseErr := ParseChunkResponse(resp.Content, s.LineCount, ch)
-	model := resp.Model
-	if parseErr != nil {
-		repairReq := llm.Request{
-			SystemPrompt:           req.SystemPrompt,
-			UserPromptCachedPrefix: req.UserPromptCachedPrefix,
-			Temperature:            req.Temperature,
-			MaxTokens:              req.MaxTokens,
-			Model:                  req.Model,
-		}
-		if req.Temperature != nil {
-			temp := *req.Temperature
-			repairReq.Temperature = &temp
-		}
-		if llm.IncompleteJSON(parseErr) {
-			repairReq.MaxTokens = llm.RepairMaxTokens(req.MaxTokens)
-		}
-		repairReq.UserPrompt = req.UserPrompt + fmt.Sprintf("\n\nYour previous response failed chunk validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, include meta.chunk_summary, add the required chunk tag, and cite only primary-range lines.", parseErr, truncate(resp.Content, 4000))
-		resp, err = provider.Complete(ctx, &repairReq)
-		if err != nil {
-			return ChunkResult{}, fmt.Errorf("chunk %s LLM repair call failed: %w", ch.ID, err)
-		}
-		model = resp.Model
-		report, parseErr = ParseChunkResponse(resp.Content, s.LineCount, ch)
-		if parseErr != nil {
-			return ChunkResult{}, fmt.Errorf("chunk %s invalid model output after retry: %w", ch.ID, parseErr)
-		}
+		return ChunkResult{}, err
 	}
 	return ChunkResult{Chunk: ch, Report: report, Model: model}, nil
 }

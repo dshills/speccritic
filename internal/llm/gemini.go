@@ -99,7 +99,9 @@ func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response,
 	}
 
 	return &Response{
-		Content: oaiResp.Choices[0].Message.Content,
-		Model:   fmt.Sprintf("gemini:%s", oaiResp.Model),
+		Content:    oaiResp.Choices[0].Message.Content,
+		Model:      fmt.Sprintf("gemini:%s", oaiResp.Model),
+		StopReason: oaiResp.Choices[0].FinishReason,
+		Truncated:  oaiResp.Choices[0].FinishReason == openaiFinishLength,
 	}, nil
 }

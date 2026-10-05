@@ -9,13 +9,16 @@ import (
 	"time"
 )
 
-// sharedHTTPClient is used by all providers; a 5-minute timeout covers slow LLM responses.
+// sharedHTTPClient is used by all providers. The 10-minute timeout leaves room
+// for a non-streaming response that uses the whole DefaultMaxTokens budget.
 var sharedHTTPClient = &http.Client{
-	Timeout: 5 * time.Minute,
+	Timeout: 10 * time.Minute,
 }
 
-// defaultMaxTokens is the fallback when Request.MaxTokens is not set.
-const defaultMaxTokens = 16384
+// DefaultMaxTokens is the response cap used when a caller does not set one.
+// The cap costs nothing unless a response needs it, and a cap that is too low
+// truncates the review mid-document.
+const DefaultMaxTokens = 16384
 
 const (
 	// DefaultProvider and DefaultModel are used when model configuration is omitted.
@@ -46,6 +49,11 @@ type Request struct {
 type Response struct {
 	Content string
 	Model   string // actual model used, echoed back for meta
+	// StopReason is the provider's own stop or finish reason, unmodified.
+	StopReason string
+	// Truncated reports that generation stopped at the output token cap, so
+	// Content may end mid-document.
+	Truncated bool
 }
 
 // Provider is the interface for LLM completion backends.

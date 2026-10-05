@@ -5,21 +5,42 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/schema"
 	"github.com/dshills/speccritic/internal/schema/validate"
 )
 
 const maxChunkSummaryRunes = 600
 
+// ParseChunkResponse validates a complete chunk review response.
 func ParseChunkResponse(raw string, lineCount int, ch Chunk) (*schema.Report, error) {
-	report, err := validate.Parse(raw, lineCount)
+	parsed, err := parseChunkResponse(raw, lineCount, ch)
 	if err != nil {
 		return nil, err
 	}
-	if err := ValidateChunkReport(report, ch, lineCount); err != nil {
-		return nil, err
+	if parsed.Incomplete != nil {
+		return nil, parsed.Incomplete
 	}
-	return report, nil
+	return parsed.Report, nil
+}
+
+// parseChunkResponse is ParseChunkResponse for a response that may have been
+// cut off. A cut-off response is not held to the summary requirement, because
+// the summary may simply not have arrived yet.
+func parseChunkResponse(raw string, lineCount int, ch Chunk) (llm.Parsed, error) {
+	res, err := validate.ParseResponse(raw, validate.Options{LineCount: lineCount})
+	if err != nil {
+		return llm.Parsed{}, err
+	}
+	if res.Incomplete == nil {
+		err = ValidateChunkReport(res.Report, ch, lineCount)
+	} else {
+		err = validateReportEvidence(res.Report, ch, lineCount, false)
+	}
+	if err != nil {
+		return llm.Parsed{}, err
+	}
+	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
 }
 
 func ValidateChunkReport(report *schema.Report, ch Chunk, lineCount int) error {

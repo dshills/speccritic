@@ -14,6 +14,7 @@ import (
 	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/convergence"
 	"github.com/dshills/speccritic/internal/incremental"
+	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/render"
 	"github.com/dshills/speccritic/internal/review"
 	"github.com/dshills/speccritic/internal/schema"
@@ -114,7 +115,7 @@ func main() {
 	f.StringVar(&flags.llmProvider, "llm-provider", "", "LLM provider override: anthropic, openai, or gemini")
 	f.StringVar(&flags.llmModel, "llm-model", "", "LLM model override")
 	f.Float64Var(&flags.temperature, "temperature", 0.2, "LLM temperature")
-	f.IntVar(&flags.maxTokens, "max-tokens", 4096, "Maximum response tokens")
+	f.IntVar(&flags.maxTokens, "max-tokens", llm.DefaultMaxTokens, "Maximum response tokens")
 	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if LLM provider/model config is not set; use to enforce explicit model config in CI")
 	f.BoolVar(&flags.verbose, "verbose", false, "Print processing steps to stderr")
 	f.BoolVar(&flags.debug, "debug", false, "Dump full prompt (including spec and context file contents) to stderr; use only in trusted environments")

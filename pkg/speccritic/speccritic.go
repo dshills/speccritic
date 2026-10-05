@@ -105,7 +105,7 @@ func DefaultCheckOptions() CheckOptions {
 		Profile:                         "general",
 		SeverityThreshold:               "info",
 		Temperature:                     0.2,
-		MaxTokens:                       8192,
+		MaxTokens:                       llm.DefaultMaxTokens,
 		Preflight:                       true,
 		PreflightMode:                   "warn",
 		Chunking:                        string(chunk.ModeAuto),

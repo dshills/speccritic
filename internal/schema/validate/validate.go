@@ -2,7 +2,9 @@ package validate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -33,6 +35,165 @@ func Parse(raw string, lineCount int) (*schema.Report, error) {
 	return &report, nil
 }
 
+// Options controls how a model response is checked.
+type Options struct {
+	// LineCount is the number of lines in the spec; evidence must stay inside it.
+	LineCount int
+}
+
+// Result is the usable part of a model response.
+type Result struct {
+	Report *schema.Report
+	// Incomplete is non-nil when the JSON ended early or broke mid-document.
+	// Report then holds only the findings that were read before that point.
+	Incomplete error
+}
+
+// ParseResponse reads a model response one finding at a time, so a response
+// cut off at the output cap still yields the findings that arrived whole.
+// Parse, by contrast, needs the whole document to be well formed.
+func ParseResponse(raw string, opts Options) (Result, error) {
+	report, incomplete, err := decodeFindings(stripFences(raw))
+	if err != nil {
+		return Result{}, err
+	}
+	if _, err := validateFindings(report, opts.LineCount); err != nil {
+		return Result{}, err
+	}
+	// A patch may point at an issue from an earlier part of a continued
+	// response, so only its shape is checked here. Callers drop patches whose
+	// issue they cannot resolve.
+	for i, patch := range report.Patches {
+		if err := validatePatchShape(patch, i); err != nil {
+			return Result{}, err
+		}
+	}
+	return Result{Report: report, Incomplete: incomplete}, nil
+}
+
+// shapeError marks JSON that is well formed but is not shaped like a report.
+type shapeError struct{ msg string }
+
+func (e *shapeError) Error() string { return e.msg }
+
+// decodeFindings reads as many complete issues, questions and patches as the
+// document holds. incomplete reports why reading stopped early; err reports
+// JSON that was read whole but has the wrong shape.
+func decodeFindings(cleaned string) (report *schema.Report, incomplete, err error) {
+	report = &schema.Report{}
+	dec := json.NewDecoder(strings.NewReader(cleaned))
+	if err := expectDelim(dec, '{'); err != nil {
+		return classifyDecodeError(report, err)
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return classifyDecodeError(report, err)
+		}
+		key, _ := tok.(string)
+		switch key {
+		case "issues":
+			err = decodeArray(dec, func() error {
+				var issue schema.Issue
+				if err := dec.Decode(&issue); err != nil {
+					return err
+				}
+				report.Issues = append(report.Issues, issue)
+				return nil
+			})
+		case "questions":
+			err = decodeArray(dec, func() error {
+				var question schema.Question
+				if err := dec.Decode(&question); err != nil {
+					return err
+				}
+				report.Questions = append(report.Questions, question)
+				return nil
+			})
+		case "patches":
+			err = decodeArray(dec, func() error {
+				var patch schema.Patch
+				if err := dec.Decode(&patch); err != nil {
+					return err
+				}
+				report.Patches = append(report.Patches, patch)
+				return nil
+			})
+		case "meta":
+			// The chunk summary is the only meta field a model supplies.
+			var meta struct {
+				ChunkSummary string `json:"chunk_summary"`
+			}
+			err = dec.Decode(&meta)
+			report.Meta.ChunkSummary = meta.ChunkSummary
+		default:
+			var skipped json.RawMessage
+			err = dec.Decode(&skipped)
+		}
+		if err != nil {
+			return classifyDecodeError(report, err)
+		}
+	}
+	if err := expectDelim(dec, '}'); err != nil {
+		return classifyDecodeError(report, err)
+	}
+	// Text after the report is ignored, but a second JSON value is not: its
+	// findings would be lost without anyone noticing.
+	rest := strings.TrimSpace(cleaned[dec.InputOffset():])
+	if strings.HasPrefix(rest, "{") || strings.HasPrefix(rest, "[") {
+		return report, nil, fmt.Errorf("JSON parse failed: unexpected second JSON value after the report")
+	}
+	return report, nil, nil
+}
+
+// classifyDecodeError separates JSON with the wrong shape, which is an error,
+// from a document that stopped or broke partway, which is merely incomplete.
+func classifyDecodeError(report *schema.Report, err error) (*schema.Report, error, error) {
+	var typeErr *json.UnmarshalTypeError
+	var shapeErr *shapeError
+	if errors.As(err, &typeErr) || errors.As(err, &shapeErr) {
+		return report, nil, fmt.Errorf("JSON parse failed: %w", err)
+	}
+	if errors.Is(err, io.EOF) {
+		// A document that simply stops is an unexpected EOF whichever token it
+		// stopped on.
+		err = io.ErrUnexpectedEOF
+	}
+	return report, fmt.Errorf("JSON parse failed: %w", err), nil
+}
+
+// decodeArray calls elem once per element of the JSON array at the decoder's
+// position. A JSON null is treated as an empty array.
+func decodeArray(dec *json.Decoder, elem func() error) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if tok == nil {
+		return nil
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
+		return &shapeError{msg: fmt.Sprintf("expected an array, got %v", tok)}
+	}
+	for dec.More() {
+		if err := elem(); err != nil {
+			return err
+		}
+	}
+	return expectDelim(dec, ']')
+}
+
+func expectDelim(dec *json.Decoder, want json.Delim) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != want {
+		return &shapeError{msg: fmt.Sprintf("expected %q, got %v", want, tok)}
+	}
+	return nil
+}
+
 // stripFences removes leading/trailing markdown code fences (```json ... ``` or ``` ... ```).
 func stripFences(s string) string {
 	s = strings.TrimSpace(s)
@@ -59,25 +220,9 @@ func stripFences(s string) string {
 }
 
 func validateReport(r *schema.Report, lineCount int) error {
-	seenIssueIDs := make(map[string]bool, len(r.Issues))
-	for i, issue := range r.Issues {
-		if err := validateIssue(issue, i, lineCount); err != nil {
-			return err
-		}
-		if seenIssueIDs[issue.ID] {
-			return fmt.Errorf("duplicate issue ID %q", issue.ID)
-		}
-		seenIssueIDs[issue.ID] = true
-	}
-	seenQuestionIDs := make(map[string]bool, len(r.Questions))
-	for i, q := range r.Questions {
-		if err := validateQuestion(q, i, lineCount); err != nil {
-			return err
-		}
-		if seenQuestionIDs[q.ID] {
-			return fmt.Errorf("duplicate question ID %q", q.ID)
-		}
-		seenQuestionIDs[q.ID] = true
+	seenIssueIDs, err := validateFindings(r, lineCount)
+	if err != nil {
+		return err
 	}
 	for i, patch := range r.Patches {
 		if err := validatePatch(patch, i, seenIssueIDs); err != nil {
@@ -88,6 +233,32 @@ func validateReport(r *schema.Report, lineCount int) error {
 		return err
 	}
 	return nil
+}
+
+// validateFindings checks every issue and question and returns the issue IDs
+// it saw.
+func validateFindings(r *schema.Report, lineCount int) (map[string]bool, error) {
+	seenIssueIDs := make(map[string]bool, len(r.Issues))
+	for i, issue := range r.Issues {
+		if err := validateIssue(issue, i, lineCount); err != nil {
+			return nil, err
+		}
+		if seenIssueIDs[issue.ID] {
+			return nil, fmt.Errorf("duplicate issue ID %q", issue.ID)
+		}
+		seenIssueIDs[issue.ID] = true
+	}
+	seenQuestionIDs := make(map[string]bool, len(r.Questions))
+	for i, q := range r.Questions {
+		if err := validateQuestion(q, i, lineCount); err != nil {
+			return nil, err
+		}
+		if seenQuestionIDs[q.ID] {
+			return nil, fmt.Errorf("duplicate question ID %q", q.ID)
+		}
+		seenQuestionIDs[q.ID] = true
+	}
+	return seenIssueIDs, nil
 }
 
 func validateMeta(meta schema.Meta) error {
@@ -170,12 +341,19 @@ func validateQuestion(q schema.Question, idx int, lineCount int) error {
 }
 
 func validatePatch(patch schema.Patch, idx int, seenIssueIDs map[string]bool) error {
+	if err := validatePatchShape(patch, idx); err != nil {
+		return err
+	}
+	if !seenIssueIDs[patch.IssueID] {
+		return fmt.Errorf("patch[%d]: issue_id %q does not reference a current issue", idx, patch.IssueID)
+	}
+	return nil
+}
+
+func validatePatchShape(patch schema.Patch, idx int) error {
 	prefix := fmt.Sprintf("patch[%d]", idx)
 	if !issueIDPattern.MatchString(patch.IssueID) {
 		return fmt.Errorf("%s: issue_id %q does not match ISSUE-XXXX format", prefix, patch.IssueID)
-	}
-	if !seenIssueIDs[patch.IssueID] {
-		return fmt.Errorf("%s: issue_id %q does not reference a current issue", prefix, patch.IssueID)
 	}
 	if strings.TrimSpace(patch.Before) == "" {
 		return fmt.Errorf("%s: before is required", prefix)

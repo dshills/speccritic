@@ -27,10 +27,12 @@ type repairRecordingProvider struct {
 	calls     int
 	responses []string
 	maxTokens []int
+	prompts   []string
 }
 
 func (p *repairRecordingProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
 	p.maxTokens = append(p.maxTokens, req.MaxTokens)
+	p.prompts = append(p.prompts, req.UserPrompt)
 	resp := p.responses[p.calls]
 	p.calls++
 	return &llm.Response{Content: resp, Model: "fake:model"}, nil
@@ -278,6 +280,50 @@ func TestCheckerIncreasesRepairTokensForIncompleteJSON(t *testing.T) {
 	}
 	if provider.maxTokens[1] <= provider.maxTokens[0] {
 		t.Fatalf("repair max tokens = %d, want greater than initial %d", provider.maxTokens[1], provider.maxTokens[0])
+	}
+}
+
+func TestCheckerContinuesResponseCutOffAtOutputCap(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	first := `{"id":"ISSUE-0001","severity":"CRITICAL","category":"NON_TESTABLE_REQUIREMENT","title":"First","description":"d","evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"q"}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}`
+	second := `{"id":"ISSUE-0002","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Second","description":"d","evidence":[{"path":"SPEC.md","line_start":2,"line_end":2,"quote":"q"}],"impact":"i","recommendation":"r","blocking":false,"tags":[]}`
+	provider := &repairRecordingProvider{
+		responses: []string{
+			`{"issues":[` + first + `,{"id":"ISSUE-0002","severity":"WARN","categ`,
+			`{"issues":[` + second + `],"questions":[],"patches":[]}`,
+		},
+	}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "Requirement one.\nRequirement two.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if provider.calls != 2 {
+		t.Fatalf("calls = %d, want initial + continuation", provider.calls)
+	}
+	if provider.maxTokens[1] != provider.maxTokens[0] {
+		t.Fatalf("continuation max tokens = %d, want unchanged %d", provider.maxTokens[1], provider.maxTokens[0])
+	}
+	if !strings.Contains(provider.prompts[1], "<received_findings>") || !strings.Contains(provider.prompts[1], "ISSUE-0001 CRITICAL") {
+		t.Fatalf("continuation prompt does not list the received finding:\n%s", provider.prompts[1])
+	}
+	if !hasIssue(result.Report.Issues, "ISSUE-0001") || !hasIssue(result.Report.Issues, "ISSUE-0002") || len(result.Report.Issues) != 2 {
+		t.Fatalf("issues = %#v, want both the kept and the continued finding", result.Report.Issues)
+	}
+	if result.Report.Summary.Verdict != schema.VerdictInvalid {
+		t.Fatalf("verdict = %s, want INVALID from the finding received before the cut", result.Report.Summary.Verdict)
 	}
 }
 
