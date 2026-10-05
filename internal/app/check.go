@@ -54,6 +54,18 @@ const (
 	maxPreflightPromptFindings = 20
 )
 
+// Values of CheckRequest.StructuredOutput.
+const (
+	StructuredOutputAuto = "auto"
+	StructuredOutputOff  = "off"
+)
+
+// enforceSchema reports whether providers are asked to constrain responses to
+// the review schema.
+func enforceSchema(req CheckRequest) bool {
+	return req.StructuredOutput != StructuredOutputOff
+}
+
 type ContextDocument struct {
 	Name string
 	Text string
@@ -74,7 +86,11 @@ type CheckRequest struct {
 	MaxTokens         int
 	// Effort asks the model for more or less reasoning. Empty leaves the
 	// provider's default in place.
-	Effort                          string
+	Effort string
+	// StructuredOutput is "auto" (the default when empty) to have the
+	// provider constrain responses to the review schema where the model
+	// allows it, or "off" to describe the schema in the prompt only.
+	StructuredOutput                string
 	Offline                         bool
 	Debug                           bool
 	Verbose                         bool
@@ -204,6 +220,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		UserPrompt:             userSpec,
 		MaxTokens:              req.MaxTokens,
 		Effort:                 req.Effort,
+		Schema:                 llm.ReviewSchema(false, enforceSchema(req)),
 	}
 
 	if req.Debug {
@@ -317,16 +334,17 @@ func usageMeta(t llm.Totals) *schema.UsageMeta {
 		return nil
 	}
 	return &schema.UsageMeta{
-		Calls:              t.Calls,
-		RepairCalls:        t.RepairCalls,
-		ContinuationCalls:  t.ContinuationCalls,
-		TruncatedResponses: t.TruncatedResponses,
-		InputTokens:        t.InputTokens,
-		OutputTokens:       t.OutputTokens,
-		CacheReadTokens:    t.CacheReadTokens,
-		CacheWriteTokens:   t.CacheWriteTokens,
-		CallDurationMS:     t.CallDuration.Milliseconds(),
-		WallDurationMS:     t.WallDuration.Milliseconds(),
+		Calls:               t.Calls,
+		RepairCalls:         t.RepairCalls,
+		ContinuationCalls:   t.ContinuationCalls,
+		TruncatedResponses:  t.TruncatedResponses,
+		SchemaEnforcedCalls: t.SchemaEnforcedCalls,
+		InputTokens:         t.InputTokens,
+		OutputTokens:        t.OutputTokens,
+		CacheReadTokens:     t.CacheReadTokens,
+		CacheWriteTokens:    t.CacheWriteTokens,
+		CallDurationMS:      t.CallDuration.Milliseconds(),
+		WallDurationMS:      t.WallDuration.Milliseconds(),
 	}
 }
 
@@ -336,8 +354,8 @@ func logUsage(w io.Writer, verbose bool, t llm.Totals) {
 		return
 	}
 	logVerbose(w, verbose,
-		"LLM usage: %d call(s) (%d repair, %d continuation, %d truncated); tokens: %d input, %d cache read, %d cache write, %d output; %s in calls, %s elapsed",
-		t.Calls, t.RepairCalls, t.ContinuationCalls, t.TruncatedResponses,
+		"LLM usage: %d call(s) (%d repair, %d continuation, %d truncated, %d schema-enforced); tokens: %d input, %d cache read, %d cache write, %d output; %s in calls, %s elapsed",
+		t.Calls, t.RepairCalls, t.ContinuationCalls, t.TruncatedResponses, t.SchemaEnforcedCalls,
 		t.InputTokens, t.CacheReadTokens, t.CacheWriteTokens, t.OutputTokens,
 		t.CallDuration.Round(time.Millisecond), t.WallDuration.Round(time.Millisecond),
 	)
@@ -482,12 +500,13 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 	if len(plan.ReviewRanges) > 0 {
 		logVerbose(errw, req.Verbose, "Incremental review: %d range(s), %d reused issue(s)", len(plan.ReviewRanges), len(reuse.Issues))
 		rangeResults, err = incremental.ReviewRanges(ctx, provider, s, plan, incremental.ExecutorConfig{
-			SystemPrompt: sysPrompt,
-			MaxTokens:    req.MaxTokens,
-			Effort:       req.Effort,
-			Concurrency:  req.ChunkConcurrency,
-			Issues:       reuse.Issues,
-			Questions:    reuse.Questions,
+			SystemPrompt:  sysPrompt,
+			MaxTokens:     req.MaxTokens,
+			Effort:        req.Effort,
+			EnforceSchema: enforceSchema(req),
+			Concurrency:   req.ChunkConcurrency,
+			Issues:        reuse.Issues,
+			Questions:     reuse.Questions,
 		})
 		if err != nil {
 			return nil, false, appError(ErrorModelOutput, err)
@@ -674,6 +693,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		PreflightContext: preflightContext,
 		MaxTokens:        req.MaxTokens,
 		Effort:           req.Effort,
+		EnforceSchema:    enforceSchema(req),
 		Concurrency:      cfg.ChunkConcurrency,
 		Verbose:          req.Verbose,
 		ErrWriter:        errw,
@@ -691,6 +711,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		SystemPrompt:  sysPrompt,
 		MaxTokens:     req.MaxTokens,
 		Effort:        req.Effort,
+		EnforceSchema: enforceSchema(req),
 		LineThreshold: cfg.SynthesisLineThreshold,
 		Enabled:       true,
 	})
@@ -1030,6 +1051,11 @@ func validateRequest(req CheckRequest) error {
 	}
 	if err := validateCompletionRequest(req); err != nil {
 		return err
+	}
+	switch req.StructuredOutput {
+	case "", StructuredOutputAuto, StructuredOutputOff:
+	default:
+		return fmt.Errorf("structured output %q must be %s or %s", req.StructuredOutput, StructuredOutputAuto, StructuredOutputOff)
 	}
 	if !llm.IsValidEffort(req.Effort) {
 		return fmt.Errorf("effort %q must be one of %s", req.Effort, strings.Join(llm.EffortLevels(), ", "))

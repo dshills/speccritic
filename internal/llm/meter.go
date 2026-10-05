@@ -16,6 +16,9 @@ type Totals struct {
 	ContinuationCalls int
 	// TruncatedResponses counts responses that stopped at the output cap.
 	TruncatedResponses int
+	// SchemaEnforcedCalls counts responses the provider constrained to the
+	// output schema.
+	SchemaEnforcedCalls int
 	Usage
 	// CallDuration is the time spent inside calls, added up. With concurrent
 	// calls it exceeds WallDuration.
@@ -67,6 +70,9 @@ func (m *Meter) Complete(ctx context.Context, req *Request) (*Response, error) {
 	if resp != nil {
 		if resp.Truncated {
 			m.totals.TruncatedResponses++
+		}
+		if resp.SchemaEnforced {
+			m.totals.SchemaEnforcedCalls++
 		}
 		m.totals.InputTokens += resp.Usage.InputTokens
 		m.totals.OutputTokens += resp.Usage.OutputTokens

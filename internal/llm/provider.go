@@ -43,6 +43,9 @@ type Request struct {
 	MaxTokens              int
 	// Model overrides the provider's configured model when non-empty.
 	Model string
+	// Schema describes the JSON the response must conform to. Nil leaves the
+	// output unconstrained and undescribed.
+	Schema *OutputSchema
 	// Effort asks the model for more or less reasoning. Empty leaves the
 	// provider's default in place. The value is passed through unchanged:
 	// which levels exist depends on the provider and the model.
@@ -107,6 +110,10 @@ type Response struct {
 	// Usage is what the provider reported for this call. It is zero when the
 	// provider reported nothing.
 	Usage Usage
+	// SchemaEnforced reports that the provider constrained this response to
+	// the request's Schema, rather than only describing the shape in the
+	// prompt.
+	SchemaEnforced bool
 }
 
 // Provider is the interface for LLM completion backends.

@@ -31,13 +31,14 @@ type options struct {
 	cases       string
 	run         bool
 
-	provider      string
-	model         string
-	effort        string
-	maxTokens     int
-	chunking      string
-	chunkLines    int
-	chunkMinLines int
+	provider         string
+	model            string
+	effort           string
+	structuredOutput string
+	maxTokens        int
+	chunking         string
+	chunkLines       int
+	chunkMinLines    int
 }
 
 func main() {
@@ -55,6 +56,7 @@ func main() {
 	flag.StringVar(&o.provider, "llm-provider", "", "LLM provider (default: SPECCRITIC_LLM_PROVIDER, then the built-in default)")
 	flag.StringVar(&o.model, "llm-model", "", "LLM model (default: SPECCRITIC_LLM_MODEL, then the provider's default)")
 	flag.StringVar(&o.effort, "effort", "", "Reasoning effort passed to the model (default: the provider's)")
+	flag.StringVar(&o.structuredOutput, "structured-output", "", "Provider-enforced JSON schema: auto or off (default: the CLI's default)")
 	flag.IntVar(&o.maxTokens, "max-tokens", 0, "Response cap per call (default: the CLI's default)")
 	flag.StringVar(&o.chunking, "chunking", "", "Chunking mode: auto, on or off (default: the CLI's default)")
 	flag.IntVar(&o.chunkLines, "chunk-lines", 0, "Target lines per chunk (default: the CLI's default)")
@@ -128,6 +130,7 @@ func (o options) checkOptions() speccritic.CheckOptions {
 	opts.LLMProvider = o.provider
 	opts.LLMModel = o.model
 	opts.Effort = o.effort
+	opts.StructuredOutput = o.structuredOutput
 	if o.maxTokens > 0 {
 		opts.MaxTokens = o.maxTokens
 	}

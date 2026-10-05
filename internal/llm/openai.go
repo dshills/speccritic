@@ -19,6 +19,7 @@ func SetOpenAIAPIURL(u string) { openaiAPIURL = u }
 type openaiProvider struct {
 	model  string
 	apiKey string // unexported; never serialized by encoding/json
+	state  chatState
 }
 
 func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
@@ -28,7 +29,7 @@ func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		apiKey:           p.apiKey,
 		completionTokens: openaiUsesMaxCompletionTokens,
 	}
-	return completeChat(ctx, endpoint, p.model, req)
+	return completeChat(ctx, endpoint, &p.state, p.model, req)
 }
 
 // openaiUsesMaxCompletionTokens reports whether model takes

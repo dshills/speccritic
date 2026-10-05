@@ -1235,7 +1235,7 @@ func TestCheckerReportsUsageForSingleCall(t *testing.T) {
 	if usage.InputTokens != 100 || usage.OutputTokens != 10 || usage.CacheReadTokens != 5 || usage.CacheWriteTokens != 1 {
 		t.Errorf("tokens = %+v, want 100 input, 10 output, 5 cache read, 1 cache write", *usage)
 	}
-	if !strings.Contains(errw.String(), "INFO: LLM usage: 1 call(s) (0 repair, 0 continuation, 0 truncated); tokens: 100 input, 5 cache read, 1 cache write, 10 output;") {
+	if !strings.Contains(errw.String(), "INFO: LLM usage: 1 call(s) (0 repair, 0 continuation, 0 truncated, 0 schema-enforced); tokens: 100 input, 5 cache read, 1 cache write, 10 output;") {
 		t.Errorf("verbose log missing the usage line:\n%s", errw.String())
 	}
 }
@@ -1322,19 +1322,26 @@ func TestCheckerOmitsUsageWithoutLLMCalls(t *testing.T) {
 	}
 }
 
-// settingsProvider records the effort of every request.
+// settingsProvider records the effort and schema of every request, and
+// answers as a provider that enforces whatever schema it is asked to.
 type settingsProvider struct {
 	inner llm.Provider
 
 	mu      sync.Mutex
 	efforts []string
+	schemas []*llm.OutputSchema
 }
 
 func (p *settingsProvider) Complete(ctx context.Context, req *llm.Request) (*llm.Response, error) {
 	p.mu.Lock()
 	p.efforts = append(p.efforts, req.Effort)
+	p.schemas = append(p.schemas, req.Schema)
 	p.mu.Unlock()
-	return p.inner.Complete(ctx, req)
+	resp, err := p.inner.Complete(ctx, req)
+	if resp != nil {
+		resp.SchemaEnforced = req.Schema != nil && req.Schema.Enforce
+	}
+	return resp, err
 }
 
 func TestCheckerPassesEffortToEveryCall(t *testing.T) {
@@ -1390,5 +1397,86 @@ func TestCheckerRejectsUnknownEffort(t *testing.T) {
 	var appErr *Error
 	if !errors.As(err, &appErr) || appErr.Kind != ErrorInput || !strings.Contains(err.Error(), `effort "turbo"`) {
 		t.Fatalf("error = %v, want an input error naming the effort", err)
+	}
+}
+
+func TestCheckerSendsTheReviewSchemaWithEveryCall(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	cases := map[string]struct {
+		configure   func(*CheckRequest)
+		wantEnforce bool
+	}{
+		"single call":   {func(*CheckRequest) {}, true},
+		"explicit auto": {func(req *CheckRequest) { req.StructuredOutput = StructuredOutputAuto }, true},
+		"switched off":  {func(req *CheckRequest) { req.StructuredOutput = StructuredOutputOff }, false},
+		"chunked":       {func(req *CheckRequest) { req.SpecText = longSpec(200); req.Chunking = "on"; req.ChunkLines = 40 }, true},
+		"chunked with it switched off": {func(req *CheckRequest) {
+			req.SpecText = longSpec(200)
+			req.Chunking = "on"
+			req.ChunkLines = 40
+			req.StructuredOutput = StructuredOutputOff
+		}, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			inner := &chunkAwareProvider{}
+			provider := &settingsProvider{inner: inner}
+			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+			var errw strings.Builder
+			req := usageCheckRequest(&errw)
+			tc.configure(&req)
+
+			result, err := checker.Check(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Check returned error: %v", err)
+			}
+			if len(provider.schemas) == 0 {
+				t.Fatal("no LLM calls were made")
+			}
+			withSummary := 0
+			for i, schema := range provider.schemas {
+				if schema == nil {
+					t.Fatalf("call %d carried no schema", i)
+				}
+				if schema.Enforce != tc.wantEnforce {
+					t.Errorf("call %d enforce = %v, want %v", i, schema.Enforce, tc.wantEnforce)
+				}
+				if strings.Contains(string(schema.JSON), "chunk_summary") {
+					withSummary++
+				}
+			}
+			// Only chunk reviews return a summary, so only they use that variant.
+			if withSummary != inner.chunkCalls {
+				t.Errorf("%d call(s) used the chunk schema, want %d", withSummary, inner.chunkCalls)
+			}
+			wantEnforced := 0
+			if tc.wantEnforce {
+				wantEnforced = len(provider.schemas)
+			}
+			if got := result.Report.Meta.Usage.SchemaEnforcedCalls; got != wantEnforced {
+				t.Errorf("meta.usage.schema_enforced_calls = %d, want %d", got, wantEnforced)
+			}
+			if !strings.Contains(errw.String(), fmt.Sprintf("%d schema-enforced", wantEnforced)) {
+				t.Errorf("verbose log does not report %d schema-enforced call(s):\n%s", wantEnforced, errw.String())
+			}
+		})
+	}
+}
+
+func TestCheckerRejectsUnknownStructuredOutputSetting(t *testing.T) {
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) {
+		t.Fatal("an invalid request must not create a provider")
+		return nil, nil
+	}}
+	var errw strings.Builder
+	req := usageCheckRequest(&errw)
+	req.StructuredOutput = "strict"
+
+	_, err := checker.Check(context.Background(), req)
+	var appErr *Error
+	if !errors.As(err, &appErr) || appErr.Kind != ErrorInput || !strings.Contains(err.Error(), `structured output "strict"`) {
+		t.Fatalf("error = %v, want an input error naming the setting", err)
 	}
 }

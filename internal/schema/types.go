@@ -1,5 +1,7 @@
 package schema
 
+import "slices"
+
 // Report is the top-level output structure matching the JSON schema v1.
 type Report struct {
 	Tool      string     `json:"tool"`
@@ -64,10 +66,14 @@ type UsageMeta struct {
 	RepairCalls        int `json:"repair_calls"`
 	ContinuationCalls  int `json:"continuation_calls"`
 	TruncatedResponses int `json:"truncated_responses"`
-	InputTokens        int `json:"input_tokens"`
-	OutputTokens       int `json:"output_tokens"`
-	CacheReadTokens    int `json:"cache_read_tokens"`
-	CacheWriteTokens   int `json:"cache_write_tokens"`
+	// SchemaEnforcedCalls counts calls whose response the provider constrained
+	// to the output schema. Fewer than Calls means the model or the
+	// --structured-output setting left some responses unconstrained.
+	SchemaEnforcedCalls int `json:"schema_enforced_calls"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	CacheReadTokens     int `json:"cache_read_tokens"`
+	CacheWriteTokens    int `json:"cache_write_tokens"`
 	// CallDurationMS adds up the time spent inside calls; with concurrent
 	// chunk calls it exceeds WallDurationMS, which runs from the start of the
 	// first call to the end of the last.
@@ -241,24 +247,26 @@ const (
 	CategoryAssumptionRequired      Category = "ASSUMPTION_REQUIRED"
 )
 
-// IsValidCategory reports whether c is one of the 11 defined defect categories.
-func IsValidCategory(c Category) bool {
-	switch c {
-	case CategoryNonTestableRequirement,
-		CategoryAmbiguousBehavior,
-		CategoryContradiction,
-		CategoryMissingFailureMode,
-		CategoryUndefinedInterface,
-		CategoryMissingInvariant,
-		CategoryScopeLeak,
-		CategoryOrderingUndefined,
-		CategoryTerminologyInconsistent,
-		CategoryUnspecifiedConstraint,
-		CategoryAssumptionRequired:
-		return true
-	}
-	return false
+// categories lists the defined defect categories in their documented order.
+var categories = []Category{
+	CategoryNonTestableRequirement,
+	CategoryAmbiguousBehavior,
+	CategoryContradiction,
+	CategoryMissingFailureMode,
+	CategoryUndefinedInterface,
+	CategoryMissingInvariant,
+	CategoryScopeLeak,
+	CategoryOrderingUndefined,
+	CategoryTerminologyInconsistent,
+	CategoryUnspecifiedConstraint,
+	CategoryAssumptionRequired,
 }
+
+// Categories returns the 11 defined defect categories.
+func Categories() []Category { return slices.Clone(categories) }
+
+// IsValidCategory reports whether c is one of the 11 defined defect categories.
+func IsValidCategory(c Category) bool { return slices.Contains(categories, c) }
 
 // Issue represents a single defect found in the specification.
 type Issue struct {

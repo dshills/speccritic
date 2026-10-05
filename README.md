@@ -201,6 +201,8 @@ The table shows each provider's default model. They are pinned to a model genera
 
 **Effort.** `--effort` (or `SPECCRITIC_LLM_EFFORT`) is sent as `output_config.effort` to Anthropic and as `reasoning_effort` to OpenAI and Gemini, unchanged. A level the model does not support comes back as a provider error. When set, it is recorded in `meta.effort`.
 
+**Structured output.** By default SpecCritic sends the review's JSON Schema to the provider, which then constrains the response: severities and categories can only be valid values and no field can be missing. If a model rejects the schema, SpecCritic sends the request again with the shape described in the prompt instead, and does not ask that model again during the run. `--structured-output off` (or `SPECCRITIC_STRUCTURED_OUTPUT=off`) skips enforcement altogether. `meta.usage.schema_enforced_calls` shows how many calls were constrained. The schema counts as input on OpenAI and Anthropic, a few hundred to about 1,500 tokens per call, most of it cached on Anthropic; what it saves is the repair call a malformed response would otherwise need.
+
 **Refusals.** If a model declines to review a spec, SpecCritic reports that as an error naming the provider's reason rather than treating the reply as a review.
 
 ### Preflight
@@ -417,6 +419,7 @@ speccritic check <spec-file> [flags]
 | `--llm-provider` | env/default | LLM provider override: `anthropic`, `openai`, or `gemini` |
 | `--llm-model` | env/provider default | LLM model override |
 | `--effort` | provider default | Reasoning effort passed to the model: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Which levels exist depends on the provider and model |
+| `--structured-output` | `auto` | `auto` has the provider enforce the review JSON schema where the model allows it; `off` only describes the schema in the prompt |
 | `--max-tokens` | `16384` | Maximum response tokens per call. A response that still hits the cap is continued, not regenerated: the findings already received are kept and only the rest is requested |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
 | `--verbose` | `false` | Print processing steps to stderr |
@@ -643,6 +646,7 @@ Every review that calls the LLM reports what it used in `meta.usage`, so a calle
   "repair_calls": 0,
   "continuation_calls": 1,
   "truncated_responses": 1,
+  "schema_enforced_calls": 5,
   "input_tokens": 18240,
   "output_tokens": 6312,
   "cache_read_tokens": 9100,
@@ -652,6 +656,7 @@ Every review that calls the LLM reports what it used in `meta.usage`, so a calle
 }
 ```
 
+- `schema_enforced_calls` counts the calls whose response the provider constrained to the review schema. It equals `calls` unless the model rejected the schema or `--structured-output off` was set.
 - `calls` counts every request, including `repair_calls` (a response with nothing usable was regenerated) and `continuation_calls` (the rest of a cut-off response was requested).
 - The three input counts do not overlap: `input_tokens` excludes tokens read from or written to the provider's prompt cache. A `cache_read_tokens` of zero across repeated runs means the cache is not being hit.
 - `call_duration_ms` adds up the time spent inside calls; `wall_duration_ms` is the elapsed time from the first call to the last. Concurrent chunk calls make the first larger than the second.

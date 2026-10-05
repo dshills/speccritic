@@ -83,6 +83,7 @@ Flag	Description
 --patch-out <file>	Emit suggested minimal spec edits as diff
 --effort <level>	Reasoning effort passed to the model; default is the provider's
 --temperature	Accepted and ignored; current models do not take a sampling temperature
+--structured-output <mode>	auto (default): the provider enforces the review JSON schema where the model allows it; off: the schema is only described in the prompt
 --max-tokens	Hard cap for response
 --offline	Fail if no LLM configured
 --verbose	Execution tracing
@@ -161,7 +162,7 @@ Top-Level Structure
   }
 }
 
-meta.effort records the --effort level when one was set. meta may also carry two optional fields. dropped_findings counts model findings left out by local validation. usage totals the LLM calls behind the report: calls, repair_calls, continuation_calls, truncated_responses, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, call_duration_ms and wall_duration_ms. usage is omitted when the review made no LLM call.
+meta.effort records the --effort level when one was set. meta may also carry two optional fields. dropped_findings counts model findings left out by local validation. usage totals the LLM calls behind the report: calls, repair_calls, continuation_calls, truncated_responses, schema_enforced_calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, call_duration_ms and wall_duration_ms. usage is omitted when the review made no LLM call.
 
 
 ⸻

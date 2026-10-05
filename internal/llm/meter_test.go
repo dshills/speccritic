@@ -60,6 +60,18 @@ func TestMeter_CountsFailedCallsWithoutTokens(t *testing.T) {
 	}
 }
 
+func TestMeter_CountsSchemaEnforcedCalls(t *testing.T) {
+	meter := NewMeter(&scriptedProvider{responses: []*Response{{Content: "{}", SchemaEnforced: true}, {Content: "{}"}, {Content: "{}", SchemaEnforced: true}}})
+	for range 3 {
+		if _, err := meter.Complete(context.Background(), &Request{}); err != nil {
+			t.Fatalf("Complete: %v", err)
+		}
+	}
+	if got := meter.Totals(); got.Calls != 3 || got.SchemaEnforcedCalls != 2 {
+		t.Fatalf("calls=%d schema-enforced=%d, want 3 and 2", got.Calls, got.SchemaEnforcedCalls)
+	}
+}
+
 func TestMeter_NoCalls(t *testing.T) {
 	if got := NewMeter(&usageProvider{}).Totals(); got != (Totals{}) {
 		t.Fatalf("totals = %+v, want zero", got)

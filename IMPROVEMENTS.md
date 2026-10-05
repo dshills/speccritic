@@ -29,7 +29,7 @@ calls, or the quality of what comes back.
 | 4 | Record token usage and latency per call | All (measurement) | Small | Done |
 | 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium | Done |
 | 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium | Done |
-| 7 | Enforce the output schema at the provider | Speed, Tokens | Medium |  |
+| 7 | Enforce the output schema at the provider | Speed, Tokens | Medium | Done |
 | 8 | Verify and re-anchor evidence locally | Accuracy | Medium |  |
 | 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small |  |
 | 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large |  |
@@ -184,7 +184,15 @@ Gate items 9–12 and 16 on it.
 
 ## 7. Enforce the output schema at the provider
 
-**Helps:** Speed, Tokens. **Effort:** Medium.
+**Helps:** Speed, Tokens. **Effort:** Medium. **Status:** Done.
+
+**As built, and measured on 2026-10-05.** OpenAI (`gpt-6.1-sol`), Anthropic
+(`claude-opus-5-5`) and Gemini (`gemini-3.8-flash`) all accepted the strict schema on live calls,
+single-call and chunked, with no repair calls. The token claim below was wrong in one respect:
+the schema is itself billed as input. On a 16-line spec, input per call rose from 1,057 to 1,456
+tokens on OpenAI, and Anthropic's cached prefix rose from 1,235 to 2,785 tokens; only Gemini's
+input fell. Enforcement pays for itself only by avoiding repair calls, so `--structured-output
+off` exists to compare the two with the eval.
 
 **Today.** Anthropic gets "return JSON only" as an instruction. OpenAI and Gemini use
 `json_object` (`internal/llm/openai.go:105`, `internal/llm/gemini.go:58`), which guarantees

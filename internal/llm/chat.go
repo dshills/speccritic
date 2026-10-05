@@ -31,8 +31,49 @@ type chatRequest struct {
 	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
 }
 
+// responseFormat asks for JSON: any JSON object, or one constrained to a
+// schema.
 type responseFormat struct {
-	Type string `json:"type"`
+	Type       string          `json:"type"`
+	JSONSchema *chatJSONSchema `json:"json_schema,omitempty"`
+}
+
+type chatJSONSchema struct {
+	Name   string          `json:"name"`
+	Strict bool            `json:"strict"`
+	Schema json.RawMessage `json:"schema"`
+}
+
+const (
+	chatFormatJSONObject = "json_object"
+	chatFormatJSONSchema = "json_schema"
+)
+
+// chatState remembers, for the life of one provider, request settings the API
+// has rejected, so later calls do not repeat a request that is known to fail.
+type chatState struct {
+	// noSchema holds the models that turned a JSON schema down.
+	noSchema modelSet
+}
+
+// chatRejection names a request setting the API refused, when the refusal is
+// one the caller can work around by sending the request differently.
+type chatRejection int
+
+const (
+	rejectedNothing chatRejection = iota
+	rejectedTokenParameter
+	rejectedSchema
+)
+
+// chatSettings are the parts of a request that are adjusted when the API
+// rejects them.
+type chatSettings struct {
+	// completionTokens sends max_completion_tokens instead of max_tokens.
+	completionTokens bool
+	// schema constrains the response to the request's schema instead of
+	// asking for any JSON object.
+	schema bool
 }
 
 type chatMessage struct {
@@ -85,29 +126,39 @@ func (r chatResponse) usage() Usage {
 
 // completeChat sends req to an OpenAI-compatible endpoint.
 //
-// Which token-limit parameter a model takes is not discoverable in advance:
-// newer models want max_completion_tokens and reject max_tokens, older ones the
-// reverse. When the API rejects the one that was sent, the request is sent
-// once more with the other.
-func completeChat(ctx context.Context, ep chatEndpoint, model string, req *Request) (*Response, error) {
+// Models differ in what they accept, and the differences are not discoverable
+// in advance: newer models want max_completion_tokens and reject max_tokens,
+// older ones the reverse, and not every model takes a JSON schema. When the API
+// rejects one of those settings the request is sent again with the
+// alternative. Each setting is adjusted at most once, which bounds the retries.
+func completeChat(ctx context.Context, ep chatEndpoint, state *chatState, model string, req *Request) (*Response, error) {
 	if req.Model != "" {
 		model = req.Model
 	}
 
-	// Only include a system message when non-empty to avoid unnecessary tokens.
-	var messages []chatMessage
-	if req.SystemPrompt != "" {
-		messages = append(messages, chatMessage{Role: "system", Content: req.SystemPrompt})
+	settings := chatSettings{
+		completionTokens: ep.completionTokens != nil && ep.completionTokens(model),
+		schema:           req.Schema != nil && req.Schema.Enforce && !state.noSchema.has(model),
 	}
-	messages = append(messages, chatMessage{Role: "user", Content: req.UserPromptCachedPrefix + req.UserPrompt})
+	swappedTokenParameter := false
 
-	completionTokens := ep.completionTokens != nil && ep.completionTokens(model)
-	resp, rejectedTokenParameter, err := sendChat(ctx, ep, model, messages, req, completionTokens)
-	if err != nil && rejectedTokenParameter && ep.completionTokens != nil {
-		resp, _, err = sendChat(ctx, ep, model, messages, req, !completionTokens)
-	}
-	if err != nil {
-		return nil, err
+	var resp chatResponse
+	for {
+		got, rejection, err := sendChat(ctx, ep, model, req, settings)
+		if err == nil {
+			resp = got
+			break
+		}
+		switch {
+		case rejection == rejectedTokenParameter && ep.completionTokens != nil && !swappedTokenParameter:
+			settings.completionTokens = !settings.completionTokens
+			swappedTokenParameter = true
+		case rejection == rejectedSchema && settings.schema:
+			settings.schema = false
+			state.noSchema.add(model)
+		default:
+			return nil, err
+		}
 	}
 
 	if len(resp.Choices) == 0 {
@@ -128,25 +179,43 @@ func completeChat(ctx context.Context, ep chatEndpoint, model string, req *Reque
 	}
 
 	return &Response{
-		Content:    choice.Message.Content,
-		Model:      fmt.Sprintf("%s:%s", ep.name, resp.Model),
-		StopReason: choice.FinishReason,
-		Truncated:  truncated,
-		Usage:      resp.usage(),
+		Content:        choice.Message.Content,
+		Model:          fmt.Sprintf("%s:%s", ep.name, resp.Model),
+		StopReason:     choice.FinishReason,
+		Truncated:      truncated,
+		Usage:          resp.usage(),
+		SchemaEnforced: settings.schema,
 	}, nil
 }
 
-// sendChat makes one request. On an HTTP 400 it also reports whether the API
-// objected to the token-limit parameter that was sent.
-func sendChat(ctx context.Context, ep chatEndpoint, model string, messages []chatMessage, req *Request, completionTokens bool) (resp chatResponse, rejectedTokenParameter bool, err error) {
+// sendChat makes one request. On an HTTP 400 it also reports which setting,
+// if any, the API objected to.
+func sendChat(ctx context.Context, ep chatEndpoint, model string, req *Request, settings chatSettings) (resp chatResponse, rejection chatRejection, err error) {
+	// Only include a system message when non-empty to avoid unnecessary tokens.
+	system := req.SystemPrompt
+	if req.Schema != nil && !settings.schema {
+		system += req.Schema.PromptFallback
+	}
+	var messages []chatMessage
+	if system != "" {
+		messages = append(messages, chatMessage{Role: "system", Content: system})
+	}
+	messages = append(messages, chatMessage{Role: "user", Content: req.UserPromptCachedPrefix + req.UserPrompt})
+
 	body := chatRequest{
 		Model:           model,
 		Messages:        messages,
 		ReasoningEffort: req.Effort,
-		ResponseFormat:  &responseFormat{Type: "json_object"},
+		ResponseFormat:  &responseFormat{Type: chatFormatJSONObject},
+	}
+	if settings.schema {
+		body.ResponseFormat = &responseFormat{
+			Type:       chatFormatJSONSchema,
+			JSONSchema: &chatJSONSchema{Name: req.Schema.Name, Strict: true, Schema: req.Schema.JSON},
+		}
 	}
 	if req.MaxTokens > 0 {
-		if completionTokens {
+		if settings.completionTokens {
 			body.MaxCompletionTokens = req.MaxTokens
 		} else {
 			body.MaxTokens = req.MaxTokens
@@ -155,49 +224,57 @@ func sendChat(ctx context.Context, ep chatEndpoint, model string, messages []cha
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		return resp, false, fmt.Errorf("marshaling request: %w", err)
+		return resp, rejectedNothing, fmt.Errorf("marshaling request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.url, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return resp, false, fmt.Errorf("creating HTTP request: %w", err)
+		return resp, rejectedNothing, fmt.Errorf("creating HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+ep.apiKey)
 
 	httpResp, err := sharedHTTPClient.Do(httpReq)
 	if err != nil {
-		return resp, false, fmt.Errorf("HTTP request failed: %w", err)
+		return resp, rejectedNothing, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 
 	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
 	respBytes, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodyBytes))
 	if err != nil {
-		return resp, false, fmt.Errorf("reading response body: %w", err)
+		return resp, rejectedNothing, fmt.Errorf("reading response body: %w", err)
 	}
 	respStr := string(respBytes)
 
-	// The rejection is recognized from the raw body, because error bodies are
-	// not shaped the same way by every OpenAI-compatible API.
-	rejectedTokenParameter = httpResp.StatusCode == http.StatusBadRequest && unsupportedTokenParameter(respStr)
+	// A rejected setting is recognized from the raw body, because error bodies
+	// are not shaped the same way by every OpenAI-compatible API.
+	if httpResp.StatusCode == http.StatusBadRequest {
+		rejection = classifyChatRejection(respStr)
+	}
 
 	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return resp, rejectedTokenParameter, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", httpResp.StatusCode, truncate(respStr, 200), err)
+		return resp, rejection, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", httpResp.StatusCode, truncate(respStr, 200), err)
 	}
 	if httpResp.StatusCode != http.StatusOK {
 		if resp.Error != nil {
-			return resp, rejectedTokenParameter, fmt.Errorf("%s: %s: %s", ep.name, resp.Error.Type, resp.Error.Message)
+			return resp, rejection, fmt.Errorf("%s: %s: %s", ep.name, resp.Error.Type, resp.Error.Message)
 		}
-		return resp, rejectedTokenParameter, fmt.Errorf("%s: HTTP %d: %s", ep.name, httpResp.StatusCode, truncate(respStr, 200))
+		return resp, rejection, fmt.Errorf("%s: HTTP %d: %s", ep.name, httpResp.StatusCode, truncate(respStr, 200))
 	}
-	return resp, false, nil
+	return resp, rejectedNothing, nil
 }
 
-// unsupportedTokenParameter reports whether an error body says the API does
-// not take the token-limit parameter it was sent.
-func unsupportedTokenParameter(body string) bool {
+// classifyChatRejection reads a 400 response body for a setting the API will
+// not take.
+func classifyChatRejection(body string) chatRejection {
 	lower := strings.ToLower(body)
-	return strings.Contains(lower, "unsupported parameter") &&
-		(strings.Contains(lower, "max_tokens") || strings.Contains(lower, "max_completion_tokens"))
+	switch {
+	case strings.Contains(lower, "unsupported parameter") &&
+		(strings.Contains(lower, "max_tokens") || strings.Contains(lower, "max_completion_tokens")):
+		return rejectedTokenParameter
+	case schemaRejected(body):
+		return rejectedSchema
+	}
+	return rejectedNothing
 }

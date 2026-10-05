@@ -20,9 +20,12 @@ const maxSynthesisPreflight = 40
 const TagSynthesis = "synthesis"
 
 type SynthesisConfig struct {
-	SystemPrompt  string
-	MaxTokens     int
-	Effort        string
+	SystemPrompt string
+	MaxTokens    int
+	Effort       string
+	// EnforceSchema asks the provider to constrain the response to the review
+	// schema.
+	EnforceSchema bool
 	LineThreshold int
 	Enabled       bool
 }
@@ -113,6 +116,7 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 		UserPrompt:             tail,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
+		Schema:                 llm.ReviewSchema(false, cfg.EnforceSchema),
 	}
 	return llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,

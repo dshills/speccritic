@@ -45,42 +45,10 @@ STRICT MODE ENABLED: Treat all silence as ambiguity. Any behavior not explicitly
 stated must be flagged. Any assumption required to implement must be filed as CRITICAL.
 Label all uncertain findings with tag "assumption".`
 
-const schemaExample = `{
-  "issues": [
-    {
-      "id": "ISSUE-0001",
-      "severity": "CRITICAL",
-      "category": "NON_TESTABLE_REQUIREMENT",
-      "title": "Short title describing the defect",
-      "description": "Detailed explanation of the defect",
-      "evidence": [{"line_start": 10, "line_end": 12, "quote": "exact text from spec"}],
-      "impact": "What goes wrong if this is not fixed",
-      "recommendation": "Minimal corrective action",
-      "blocking": true,
-      "tags": []
-    }
-  ],
-  "questions": [
-    {
-      "id": "Q-0001",
-      "severity": "CRITICAL",
-      "question": "Specific question that must be answered before implementation",
-      "why_needed": "Why this question blocks implementation",
-      "blocks": ["REQ-001"],
-      "evidence": [{"line_start": 10, "line_end": 12, "quote": "exact text"}]
-    }
-  ],
-  "patches": [
-    {
-      "issue_id": "ISSUE-0001",
-      "before": "exact text from spec to be replaced",
-      "after": "corrected minimal replacement text"
-    }
-  ]
-}`
-
-// BuildSystemPrompt constructs the system prompt with optional profile rules,
-// strict mode injection, and the JSON output schema.
+// BuildSystemPrompt constructs the system prompt with optional profile rules
+// and strict mode injection. The shape of the output is not described here:
+// it travels with the request as an OutputSchema, which the provider either
+// enforces or, failing that, appends to this prompt as an example.
 //
 // Content is ordered stable-first so downstream providers (OpenAI, Gemini,
 // Anthropic) can cache the prefix across iterative re-runs on the same spec.
@@ -99,9 +67,6 @@ func BuildSystemPrompt(p *profile.Profile, strict bool) string {
 			sb.WriteString(rules)
 		}
 	}
-
-	sb.WriteString("\n\nReturn your findings as JSON with this structure:\n")
-	sb.WriteString(schemaExample)
 
 	return sb.String()
 }

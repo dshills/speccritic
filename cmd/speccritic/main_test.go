@@ -713,3 +713,16 @@ func TestCheckCmdStillAcceptsDeprecatedTemperatureFlag(t *testing.T) {
 		t.Fatalf("effort = %q, %v; want high", effort, err)
 	}
 }
+
+func TestCheckCmdStructuredOutputDefaultsToAuto(t *testing.T) {
+	cmd := newCheckCmd()
+	if got, err := cmd.Flags().GetString("structured-output"); err != nil || got != "auto" {
+		t.Fatalf("structured-output default = %q, %v; want auto", got, err)
+	}
+	if err := cmd.Flags().Parse([]string{"--structured-output", "off"}); err != nil {
+		t.Fatalf("parsing --structured-output: %v", err)
+	}
+	if got, _ := cmd.Flags().GetString("structured-output"); got != "off" {
+		t.Fatalf("structured-output = %q, want off", got)
+	}
+}

@@ -54,7 +54,11 @@ type CheckOptions struct {
 	MaxTokens   int
 	// Effort asks the model for more or less reasoning; empty uses the
 	// provider's default.
-	Effort                          string
+	Effort string
+	// StructuredOutput is "auto" (the default when empty) to have the
+	// provider enforce the review JSON schema where the model allows it, or
+	// "off" to describe the schema in the prompt only.
+	StructuredOutput                string
 	Offline                         bool
 	Debug                           bool
 	Verbose                         bool
@@ -152,6 +156,7 @@ func Check(ctx context.Context, opts CheckOptions) (*CheckResult, error) {
 		LLMModel:                        opts.LLMModel,
 		MaxTokens:                       opts.MaxTokens,
 		Effort:                          opts.Effort,
+		StructuredOutput:                opts.StructuredOutput,
 		Offline:                         opts.Offline,
 		Debug:                           opts.Debug,
 		Verbose:                         opts.Verbose,

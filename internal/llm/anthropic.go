@@ -27,6 +27,9 @@ const AnthropicVersion = "2023-06-01"
 type anthropicProvider struct {
 	model  string
 	apiKey string // unexported; never serialized by encoding/json
+	// noSchema holds the models that turned structured output down, so later
+	// calls do not repeat a request that is known to fail.
+	noSchema modelSet
 }
 
 type anthropicRequest struct {
@@ -39,7 +42,14 @@ type anthropicRequest struct {
 
 // anthropicOutputConfig carries the settings that shape a response.
 type anthropicOutputConfig struct {
-	Effort string `json:"effort,omitempty"`
+	Effort string                 `json:"effort,omitempty"`
+	Format *anthropicOutputFormat `json:"format,omitempty"`
+}
+
+// anthropicOutputFormat constrains the response to a JSON Schema.
+type anthropicOutputFormat struct {
+	Type   string          `json:"type"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 // anthropicSystemBlock is a single block of the structured system field.
@@ -123,23 +133,15 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		maxTokens = DefaultMaxTokens
 	}
 
-	body := anthropicRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
-		Messages:  []anthropicMessage{{Role: "user", Content: buildAnthropicUserContent(req)}},
+	enforce := req.Schema != nil && req.Schema.Enforce && !p.noSchema.has(model)
+	ar, rejectedSchema, err := p.send(ctx, p.buildRequest(model, maxTokens, req, enforce))
+	if err != nil && rejectedSchema && enforce {
+		// The model does not take structured output. Describe the shape in
+		// the prompt instead, and stop asking this model.
+		p.noSchema.add(model)
+		enforce = false
+		ar, _, err = p.send(ctx, p.buildRequest(model, maxTokens, req, enforce))
 	}
-	if req.SystemPrompt != "" {
-		body.System = []anthropicSystemBlock{{
-			Type:         "text",
-			Text:         req.SystemPrompt,
-			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
-		}}
-	}
-	if req.Effort != "" {
-		body.OutputConfig = &anthropicOutputConfig{Effort: req.Effort}
-	}
-
-	ar, err := p.send(ctx, body)
 	if err != nil {
 		return nil, err
 	}
@@ -174,19 +176,50 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			CacheReadTokens:  ar.Usage.CacheReadInputTokens,
 			CacheWriteTokens: ar.Usage.CacheCreationInputTokens,
 		},
+		SchemaEnforced: enforce,
 	}, nil
 }
 
-// send makes one request and decodes the reply.
-func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar anthropicResponse, err error) {
+// buildRequest assembles the request body. With enforce set the response is
+// constrained to the request's schema; otherwise the schema's example is
+// appended to the system prompt.
+func (p *anthropicProvider) buildRequest(model string, maxTokens int, req *Request, enforce bool) anthropicRequest {
+	body := anthropicRequest{
+		Model:     model,
+		MaxTokens: maxTokens,
+		Messages:  []anthropicMessage{{Role: "user", Content: buildAnthropicUserContent(req)}},
+	}
+	system := req.SystemPrompt
+	if req.Schema != nil && !enforce {
+		system += req.Schema.PromptFallback
+	}
+	if system != "" {
+		body.System = []anthropicSystemBlock{{
+			Type:         "text",
+			Text:         system,
+			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+		}}
+	}
+	if req.Effort != "" || enforce {
+		body.OutputConfig = &anthropicOutputConfig{Effort: req.Effort}
+		if enforce {
+			body.OutputConfig.Format = &anthropicOutputFormat{Type: "json_schema", Schema: req.Schema.JSON}
+		}
+	}
+	return body
+}
+
+// send makes one request and decodes the reply. On an HTTP 400 it also
+// reports whether the API objected to the structured-output setting.
+func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar anthropicResponse, rejectedSchema bool, err error) {
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		return ar, fmt.Errorf("marshaling request: %w", err)
+		return ar, false, fmt.Errorf("marshaling request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicAPIURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return ar, fmt.Errorf("creating HTTP request: %w", err)
+		return ar, false, fmt.Errorf("creating HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", p.apiKey)
@@ -194,29 +227,30 @@ func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar
 
 	resp, err := sharedHTTPClient.Do(httpReq)
 	if err != nil {
-		return ar, fmt.Errorf("HTTP request failed: %w", err)
+		return ar, false, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
-		return ar, fmt.Errorf("reading response body: %w", err)
+		return ar, false, fmt.Errorf("reading response body: %w", err)
 	}
 	respStr := string(respBytes)
+	rejectedSchema = resp.StatusCode == http.StatusBadRequest && schemaRejected(respStr)
 
 	if err := json.Unmarshal(respBytes, &ar); err != nil {
-		return ar, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
+		return ar, rejectedSchema, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
 	}
 
 	// Check status code first, then structured error field.
 	if resp.StatusCode != http.StatusOK {
 		if ar.Error != nil {
-			return ar, fmt.Errorf("anthropic: %s: %s", ar.Error.Type, ar.Error.Message)
+			return ar, rejectedSchema, fmt.Errorf("anthropic: %s: %s", ar.Error.Type, ar.Error.Message)
 		}
-		return ar, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
+		return ar, rejectedSchema, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
 	}
-	return ar, nil
+	return ar, false, nil
 }
 
 // anthropicRefusalError explains a request the model's safety classifiers
