@@ -32,6 +32,12 @@ type redactPattern struct {
 // out-of-bounds in the per-pattern hit tracker.
 const numPatterns = 8
 
+// Every pattern is single-line: a match must never contain a newline, or
+// replacing it with one [REDACTED] would drop lines and shift the line numbers
+// of everything after it. Whitespace around a separator is therefore `[ \t]`
+// rather than `\s` (which matches `\n`), and quoted values exclude `\n`. A key
+// whose value is not on the same line ("password:" introducing a YAML block)
+// carries no secret on that line and is left alone.
 var patterns = [numPatterns]redactPattern{
 	// AWS access key IDs
 	{re: regexp.MustCompile(`AKIA[0-9A-Z]{16}`), triggers: []string{"AKIA"}},
@@ -43,17 +49,17 @@ var patterns = [numPatterns]redactPattern{
 	// Bearer tokens — require minimum 20-char token to avoid false positives.
 	// Regex is case-insensitive, so triggers are lowercase and matched against
 	// a lowercased copy of the input.
-	{re: regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*`), triggers: []string{"bearer"}, fold: true},
+	{re: regexp.MustCompile(`(?i)Bearer[ \t]+[A-Za-z0-9\-._~+/]{20,}=*`), triggers: []string{"bearer"}, fold: true},
 	// Inline password assignments (case-insensitive regex; lowercase triggers).
-	{re: regexp.MustCompile(`(?i)password\s*[:=]\s*\S+`), triggers: []string{"password"}, fold: true},
+	{re: regexp.MustCompile(`(?i)password[ \t]*[:=][ \t]*\S+`), triggers: []string{"password"}, fold: true},
 	// api_key / apiKey / api-key assignments — optional closing quote handles JSON keys.
 	// Value matches quoted ("val", 'val') or unquoted (stops at whitespace/delimiters).
-	{re: regexp.MustCompile(`(?i)api[-_]?key"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
+	{re: regexp.MustCompile(`(?i)api[-_]?key"?[ \t]*[:=][ \t]*(?:"[^"\n]+"|` + "`[^`\\n]+`" + `|'[^'\n]+'|[^\s"',;{}[\]()]+)`), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
 	// client_secret / clientSecret / secret_key / private_key OAuth secret assignments.
 	// [_-]? handles both snake_case and camelCase variants.
-	{re: regexp.MustCompile(`(?i)(?:client[_-]?secret|secret[_-]?key|private[_-]?key)"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"secret", "private_key"}, fold: true},
+	{re: regexp.MustCompile(`(?i)(?:client[_-]?secret|secret[_-]?key|private[_-]?key)"?[ \t]*[:=][ \t]*(?:"[^"\n]+"|` + "`[^`\\n]+`" + `|'[^'\n]+'|[^\s"',;{}[\]()]+)`), triggers: []string{"secret", "private_key"}, fold: true},
 	// auth_token / accessToken / refresh_token (snake_case and camelCase) assignments.
-	{re: regexp.MustCompile(`(?i)(?:auth|access|refresh)[_-]?token"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"token"}, fold: true},
+	{re: regexp.MustCompile(`(?i)(?:auth|access|refresh)[_-]?token"?[ \t]*[:=][ \t]*(?:"[^"\n]+"|` + "`[^`\\n]+`" + `|'[^'\n]+'|[^\s"',;{}[\]()]+)`), triggers: []string{"token"}, fold: true},
 }
 
 // Redact replaces known secret patterns in input with [REDACTED].
