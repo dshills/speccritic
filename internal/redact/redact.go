@@ -37,7 +37,7 @@ const tailGroup = "tail"
 // with nothing after it (as in a YAML schema) does not pull in the line below.
 //
 // The value is, in order of preference:
-//   - a quoted value closed on the same line;
+//   - a quoted value closed on the same line (see quotedOnLine);
 //   - a quoted value closed on a later line, unless the closing quote runs
 //     straight into a letter or digit. That is what an apostrophe ("user's")
 //     or the opening quote of a later phrase looks like, and treating one as
@@ -47,11 +47,25 @@ const tailGroup = "tail"
 //   - an opening quote that is never closed that way, redacted to the end of
 //     its own line;
 //   - an unquoted value, which stops at whitespace and delimiters.
-const assignedValue = `[ \t]*[:=][ \t]*(?:` +
-	`"[^"\n]+"|` + "`[^`\n]+`" + `|'[^'\n]+'|` +
+var assignedValue = `[ \t]*[:=][ \t]*(?:` +
+	quotedOnLine(`"`, true) + `|` + quotedOnLine("`", false) + `|` + quotedOnLine(`'`, true) + `|` +
 	`(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+')(?P<` + tailGroup + `>[^\pL\pN_]|\z)|` +
 	`"[^"\n]+|` + "`[^`\n]+" + `|'[^'\n]+|` +
 	`[^\s"',;{}[\]()]+)`
+
+// quotedOnLine matches a non-empty value opened and closed with the quote
+// character q on one line. A backslash-escaped q inside the value does not
+// close it, and neither does a doubled q when doubled is set: YAML, SQL and
+// CSV escape a quote inside a quoted value by doubling it, while a run of
+// backticks is not an escape. A backslash can also stand alone, so a value
+// that ends in one ("C:\dir\") still closes at the last quote on its line.
+func quotedOnLine(q string, doubled bool) string {
+	escaped := `\\[^\n]|`
+	if doubled {
+		escaped += q + q + `|`
+	}
+	return q + `(?:` + escaped + `[^` + q + `\n])+` + q
+}
 
 // quotedPhrase matches a value opened with the quote character q that holds a
 // space or tab, without leaving its line. A backslash-escaped or doubled q

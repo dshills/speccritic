@@ -562,6 +562,17 @@ func TestRedact_QuotedValueOnOneLine(t *testing.T) {
 		"text after the closing quote is kept": {"api_key: \"abc\" is the key\n", "[REDACTED] is the key\n"},
 		"empty value is not a secret":          {"api_key: \"\" # set from the environment\n", "api_key: \"\" # set from the environment\n"},
 		"delimiter after the value is kept":    {"{\"api_key\": \"abc\", \"n\": 1}\n", "{\"[REDACTED], \"n\": 1}\n"},
+		// An escaped quote inside the value is not its closing quote; stopping
+		// there would send the rest of the value to the provider.
+		"escaped quote inside the value":              {"api_key: \"ab\\\"cd ef\"\n", "[REDACTED]\n"},
+		"escaped apostrophe inside the value":         {"client_secret = 'it\\'s a secret'\n", "[REDACTED]\n"},
+		"escaped backtick inside the value":           {"auth_token: `ab\\`cd ef`\n", "[REDACTED]\n"},
+		"doubled apostrophe inside the value":         {"client_secret: 'it''s a secret'\n", "[REDACTED]\n"},
+		"escaped quote inside a json value":           {"{\"api_key\": \"ab\\\"cd ef\", \"n\": 1}\n", "{\"[REDACTED], \"n\": 1}\n"},
+		"escaped backslash before the closing quote":  {"{\"api_key\": \"ab\\\\\", \"n\": 1}\n", "{\"[REDACTED], \"n\": 1}\n"},
+		"lone backslash before the closing quote":     {"private_key: \"C:\\keys\\\"\nnext line\n", "[REDACTED]\nnext line\n"},
+		"empty json value is not a doubled quote":     {"{\"api_key\": \"\", \"n\": \"x\"}\n", "{\"api_key\": \"\", \"n\": \"x\"}\n"},
+		"run of backticks is not an escaped backtick": {"api_key=````abc\n", "[REDACTED]\n"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
