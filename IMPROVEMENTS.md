@@ -24,7 +24,7 @@ calls, or the quality of what comes back.
 |---|------|-------|--------|--------|
 | 1 | Stop discarding responses that hit the output cap | Speed, Tokens | Small | Done |
 | 2 | Salvage valid findings; stamp bookkeeping fields locally | Speed, Tokens | Small | Done |
-| 3 | Fix redaction collapsing lines | Accuracy | Small |  |
+| 3 | Fix redaction collapsing lines | Accuracy | Small | Done |
 | 4 | Record token usage and latency per call | All (measurement) | Small |  |
 | 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium |  |
 | 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium |  |
@@ -89,7 +89,7 @@ output) and fewer exit-5 failures.
 
 ## 3. Fix redaction collapsing lines
 
-**Helps:** Accuracy. **Effort:** Small. **Confirmed by running.**
+**Helps:** Accuracy. **Effort:** Small. **Confirmed by running.** **Status:** Done.
 
 **Today.** `redact.Redact` documents that line structure is preserved, but the assignment
 patterns allow `\s*` around the separator, and `\s` matches newlines

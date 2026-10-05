@@ -27,11 +27,21 @@ type redactPattern struct {
 	fold     bool
 }
 
+// assignedValue matches a separator and the value assigned after it. The
+// separator and the start of the value must be on the key's own line, so a key
+// with nothing after it (as in a YAML schema) does not pull in the line below.
+// A quoted value may then run over several lines. An opening quote that is
+// never closed is redacted to the end of its line.
+const assignedValue = `[ \t]*[:=][ \t]*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|"[^"\n]+|` + "`[^`\n]+" + `|'[^'\n]+|[^\s"',;{}[\]()]+)`
+
 // numPatterns is enforced as an array length below; adding a pattern without
 // updating this constant is a compile-time error — preventing silent
 // out-of-bounds in the per-pattern hit tracker.
 const numPatterns = 8
 
+// A match may span several lines (a quoted value, or a token wrapped onto the
+// line after "Bearer"). Redact replaces such a match line by line, so the
+// number of lines never changes.
 var patterns = [numPatterns]redactPattern{
 	// AWS access key IDs
 	{re: regexp.MustCompile(`AKIA[0-9A-Z]{16}`), triggers: []string{"AKIA"}},
@@ -45,15 +55,14 @@ var patterns = [numPatterns]redactPattern{
 	// a lowercased copy of the input.
 	{re: regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*`), triggers: []string{"bearer"}, fold: true},
 	// Inline password assignments (case-insensitive regex; lowercase triggers).
-	{re: regexp.MustCompile(`(?i)password\s*[:=]\s*\S+`), triggers: []string{"password"}, fold: true},
+	{re: regexp.MustCompile(`(?i)password[ \t]*[:=][ \t]*\S+`), triggers: []string{"password"}, fold: true},
 	// api_key / apiKey / api-key assignments — optional closing quote handles JSON keys.
-	// Value matches quoted ("val", 'val') or unquoted (stops at whitespace/delimiters).
-	{re: regexp.MustCompile(`(?i)api[-_]?key"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
+	{re: regexp.MustCompile(`(?i)api[-_]?key"?` + assignedValue), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
 	// client_secret / clientSecret / secret_key / private_key OAuth secret assignments.
 	// [_-]? handles both snake_case and camelCase variants.
-	{re: regexp.MustCompile(`(?i)(?:client[_-]?secret|secret[_-]?key|private[_-]?key)"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"secret", "private_key"}, fold: true},
+	{re: regexp.MustCompile(`(?i)(?:client[_-]?secret|secret[_-]?key|private[_-]?key)"?` + assignedValue), triggers: []string{"secret", "private_key"}, fold: true},
 	// auth_token / accessToken / refresh_token (snake_case and camelCase) assignments.
-	{re: regexp.MustCompile(`(?i)(?:auth|access|refresh)[_-]?token"?\s*[:=]\s*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|[^\s"',;{}[\]()]+)`), triggers: []string{"token"}, fold: true},
+	{re: regexp.MustCompile(`(?i)(?:auth|access|refresh)[_-]?token"?` + assignedValue), triggers: []string{"token"}, fold: true},
 }
 
 // Redact replaces known secret patterns in input with [REDACTED].
@@ -66,24 +75,26 @@ func Redact(input string) string {
 	}
 
 	if pemHit {
-		// Handle PEM blocks first: replace each line within the block individually
-		// so that line count is preserved.
-		input = pemPattern.ReplaceAllStringFunc(input, func(match string) string {
-			lines := strings.Split(match, "\n")
-			for i := range lines {
-				lines[i] = redacted
-			}
-			return strings.Join(lines, "\n")
-		})
+		input = pemPattern.ReplaceAllStringFunc(input, redactLines)
 	}
 
-	// Apply only the single-line patterns whose triggers were observed.
+	// Apply only the patterns whose triggers were observed.
 	for i, p := range patterns {
 		if hits[i] {
-			input = p.re.ReplaceAllString(input, redacted)
+			input = p.re.ReplaceAllStringFunc(input, redactLines)
 		}
 	}
 	return input
+}
+
+// redactLines replaces a match with the redaction marker, once per line the
+// match covers, so the line count of the input is unchanged.
+func redactLines(match string) string {
+	n := strings.Count(match, "\n")
+	if n == 0 {
+		return redacted
+	}
+	return redacted + strings.Repeat("\n"+redacted, n)
 }
 
 // ContainsSecret reports whether input matches any configured redaction pattern.
