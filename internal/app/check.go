@@ -205,9 +205,9 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	}
 
 	if req.Debug {
-		fmt.Fprintf(errw, "=== DEBUG: redacted prompt ===\n")
-		fmt.Fprintf(errw, "[SYSTEM]\n%s\n\n[USER PREFIX]\n%s\n[USER SPEC]\n%s\n", sysPrompt, userPrefix, userSpec)
-		fmt.Fprintf(errw, "=== END DEBUG ===\n")
+		_, _ = fmt.Fprintf(errw, "=== DEBUG: redacted prompt ===\n")
+		_, _ = fmt.Fprintf(errw, "[SYSTEM]\n%s\n\n[USER PREFIX]\n%s\n[USER SPEC]\n%s\n", sysPrompt, userPrefix, userSpec)
+		_, _ = fmt.Fprintf(errw, "=== END DEBUG ===\n")
 	}
 
 	newProvider := c.NewProvider
@@ -644,7 +644,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		return nil, "", err
 	}
 	if req.Debug {
-		fmt.Fprintf(errw, "=== DEBUG: chunk prompt components ===\n")
+		_, _ = fmt.Fprintf(errw, "=== DEBUG: chunk prompt components ===\n")
 		for _, ch := range plan.Chunks {
 			prefix, tail, err := chunk.BuildUserPrompt(chunk.PromptInput{
 				Spec:             s,
@@ -654,12 +654,12 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 				PreflightContext: preflightContext,
 			})
 			if err != nil {
-				fmt.Fprintf(errw, "WARN: building debug prompt for chunk %s failed: %s\n", ch.ID, err)
+				_, _ = fmt.Fprintf(errw, "WARN: building debug prompt for chunk %s failed: %s\n", ch.ID, err)
 				continue
 			}
-			fmt.Fprintf(errw, "[CHUNK %s USER PREFIX]\n%s\n[CHUNK %s USER SPEC]\n%s\n", ch.ID, prefix, ch.ID, tail)
+			_, _ = fmt.Fprintf(errw, "[CHUNK %s USER PREFIX]\n%s\n[CHUNK %s USER SPEC]\n%s\n", ch.ID, prefix, ch.ID, tail)
 		}
-		fmt.Fprintf(errw, "=== END DEBUG ===\n")
+		_, _ = fmt.Fprintf(errw, "=== END DEBUG ===\n")
 	}
 	results, err := chunk.ReviewChunks(ctx, provider, s, plan, chunk.ExecutorConfig{
 		SystemPrompt:     sysPrompt,
@@ -1132,7 +1132,7 @@ func resolveModel(req CheckRequest, errw io.Writer) (string, string, error) {
 		llmModel = llm.DefaultModelForProvider(llmProvider)
 	}
 	if !configured {
-		fmt.Fprintf(errw, "WARN: SPECCRITIC_LLM_PROVIDER/SPECCRITIC_LLM_MODEL not set, using default %s:%s\n", llmProvider, llmModel)
+		_, _ = fmt.Fprintf(errw, "WARN: SPECCRITIC_LLM_PROVIDER/SPECCRITIC_LLM_MODEL not set, using default %s:%s\n", llmProvider, llmModel)
 	}
 	return llmProvider, llmModel, nil
 }
@@ -1225,6 +1225,6 @@ func appError(kind ErrorKind, err error) error {
 
 func logVerbose(w io.Writer, verbose bool, format string, args ...any) {
 	if verbose {
-		fmt.Fprintf(w, "INFO: "+format+"\n", args...)
+		_, _ = fmt.Fprintf(w, "INFO: "+format+"\n", args...)
 	}
 }
