@@ -323,9 +323,10 @@ Prompt Must Include
 
 Validation
 	•	Strict JSON parse
-	•	Schema validation
+	•	Schema validation, applied one finding at a time: a finding that fails is dropped, the rest are kept, and the number dropped is reported in meta.dropped_findings
 	•	Evidence line bounds validation
-	•	One retry allowed with repair prompt
+	•	Issue and question IDs, bookkeeping tags and the evidence path are assigned locally, not taken from the model
+	•	One retry allowed with repair prompt, used only when a response holds nothing usable
 	•	A response cut off at the output cap after at least one complete finding is continued, not retried: the complete findings are kept and only the remainder is requested, up to three continuation calls
 
 ⸻

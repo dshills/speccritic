@@ -51,7 +51,7 @@ func testCall(req *Request) ReportCall {
 			if err != nil {
 				return Parsed{}, err
 			}
-			return Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
+			return Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, nil
 		},
 		RepairPrompt: func(reason error, _ string) string { return "\nREPAIR: " + reason.Error() },
 	}
@@ -67,6 +67,81 @@ func TestCompleteReport_CompleteResponseNeedsOneCall(t *testing.T) {
 	}
 	if len(provider.reqs) != 1 || model != "m" || len(report.Issues) != 1 {
 		t.Fatalf("calls=%d model=%q issues=%d", len(provider.reqs), model, len(report.Issues))
+	}
+}
+
+func TestCompleteReport_NumbersFindingsWhateverIDsTheModelUsed(t *testing.T) {
+	content := `{"issues":[` + strings.Join([]string{
+		issueJSON("ISSUE-0007", "One", 1),
+		issueJSON("ISSUE-0007", "Two", 2),
+		issueJSON("x", "Three", 3),
+	}, ",") + `],"questions":[{"id":"Q-9","severity":"WARN","question":"Why?","evidence":[{"line_start":1,"line_end":1}]}],"patches":[
+		{"issue_id":"ISSUE-0007","before":"a","after":"b"},
+		{"issue_id":"x","before":"c","after":"d"},
+		{"issue_id":"ISSUE-0001","before":"e","after":"f"}
+	]}`
+	provider := &scriptedProvider{responses: []*Response{{Content: content, Model: "m"}}}
+	report, _, err := CompleteReport(context.Background(), provider, testCall(&Request{UserPrompt: "spec", MaxTokens: 1000}))
+	if err != nil {
+		t.Fatalf("CompleteReport: %v", err)
+	}
+	for i, issue := range report.Issues {
+		if want := fmt.Sprintf("ISSUE-%04d", i+1); issue.ID != want {
+			t.Errorf("issue %q id = %s, want %s", issue.Title, issue.ID, want)
+		}
+	}
+	if len(report.Issues) != 3 || report.Questions[0].ID != "Q-0001" {
+		t.Fatalf("issues=%d question id=%s", len(report.Issues), report.Questions[0].ID)
+	}
+	// A reused ID resolves to the first issue that carried it. "ISSUE-0001" is
+	// not an ID the model used, so its patch has no issue to attach to.
+	var patched []string
+	for _, patch := range report.Patches {
+		patched = append(patched, patch.IssueID+":"+patch.Before)
+	}
+	if got := strings.Join(patched, ","); got != "ISSUE-0001:a,ISSUE-0003:c" {
+		t.Errorf("patches = %s, want ISSUE-0001:a,ISSUE-0003:c", got)
+	}
+}
+
+func TestCompleteReport_DropsInvalidFindingWithoutAnotherCall(t *testing.T) {
+	bad := strings.Replace(issueJSON("ISSUE-0002", "Bad", 2), `"WARN"`, `"HIGH"`, 1)
+	provider := &scriptedProvider{responses: []*Response{
+		{Content: reportJSON([]string{issueJSON("ISSUE-0001", "Good", 1), bad, issueJSON("ISSUE-0003", "Also good", 3)}, ""), Model: "m"},
+	}}
+	var logged []string
+	call := testCall(&Request{UserPrompt: "spec", MaxTokens: 1000})
+	call.Logf = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	report, _, err := CompleteReport(context.Background(), provider, call)
+	if err != nil {
+		t.Fatalf("CompleteReport: %v", err)
+	}
+	if len(provider.reqs) != 1 {
+		t.Fatalf("calls = %d, want no repair for one bad finding", len(provider.reqs))
+	}
+	if len(report.Issues) != 2 || report.Issues[1].ID != "ISSUE-0002" || report.Issues[1].Title != "Also good" {
+		t.Fatalf("issues = %#v, want the two valid findings numbered without a gap", report.Issues)
+	}
+	if report.Meta.DroppedFindings != 1 {
+		t.Errorf("dropped = %d, want 1", report.Meta.DroppedFindings)
+	}
+	if len(logged) != 1 || !strings.Contains(logged[0], "Dropped 1 invalid finding(s)") || !strings.Contains(logged[0], "invalid severity") {
+		t.Errorf("log = %q, want the drop and its reason", logged)
+	}
+}
+
+func TestCompleteReport_CountsDropsAcrossContinuedParts(t *testing.T) {
+	bad := strings.Replace(issueJSON("ISSUE-0009", "Bad", 2), `"WARN"`, `"HIGH"`, 1)
+	provider := &scriptedProvider{responses: []*Response{
+		{Content: cutAfterIssues(issueJSON("ISSUE-0001", "One", 1), bad), Model: "m", Truncated: true},
+		{Content: reportJSON([]string{bad, issueJSON("ISSUE-0002", "Two", 3)}, ""), Model: "m"},
+	}}
+	report, _, err := CompleteReport(context.Background(), provider, testCall(&Request{UserPrompt: "spec", MaxTokens: 1000}))
+	if err != nil {
+		t.Fatalf("CompleteReport: %v", err)
+	}
+	if len(report.Issues) != 2 || report.Meta.DroppedFindings != 2 {
+		t.Fatalf("issues=%d dropped=%d, want 2 and 2", len(report.Issues), report.Meta.DroppedFindings)
 	}
 }
 

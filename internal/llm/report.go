@@ -19,6 +19,8 @@ type Parsed struct {
 	// Incomplete is non-nil when the JSON ended early or broke mid-document.
 	// Report then holds only the findings that were read before that point.
 	Incomplete error
+	// Dropped explains each finding the parser left out as invalid.
+	Dropped []string
 }
 
 // ReportCall describes a model call that must return a findings report.
@@ -43,6 +45,10 @@ type ReportCall struct {
 // the findings already received are kept and the model is asked only for the
 // rest. A response with nothing usable is regenerated once with the repair
 // prompt.
+//
+// Issues and questions in the returned report are numbered ISSUE-0001 and
+// Q-0001 onward in the order they arrived, whatever IDs the model used, and
+// patches point at the renumbered issues.
 func CompleteReport(ctx context.Context, provider Provider, call ReportCall) (*schema.Report, string, error) {
 	resp, err := provider.Complete(ctx, call.Request)
 	if err != nil {
@@ -50,8 +56,9 @@ func CompleteReport(ctx context.Context, provider Provider, call ReportCall) (*s
 	}
 	parsed, parseErr := call.Parse(resp.Content)
 	if parseErr == nil {
+		call.logDropped(parsed)
 		if parsed.Incomplete == nil {
-			return parsed.Report, resp.Model, nil
+			return renumber(parsed.Report), resp.Model, nil
 		}
 		if findingCount(parsed.Report) > 0 {
 			return continueReport(ctx, provider, call, call.Request.MaxTokens, parsed.Report)
@@ -73,11 +80,13 @@ func CompleteReport(ctx context.Context, provider Provider, call ReportCall) (*s
 		return nil, "", fmt.Errorf("%sLLM repair call failed: %w", call.Label, err)
 	}
 	parsed, parseErr = call.Parse(resp.Content)
-	switch {
-	case parseErr != nil:
+	if parseErr != nil {
 		return nil, "", fmt.Errorf("%sinvalid model output after retry: %w", call.Label, parseErr)
+	}
+	call.logDropped(parsed)
+	switch {
 	case parsed.Incomplete == nil:
-		return parsed.Report, resp.Model, nil
+		return renumber(parsed.Report), resp.Model, nil
 	case findingCount(parsed.Report) == 0:
 		return nil, "", fmt.Errorf("%sinvalid model output after retry: %w", call.Label, parsed.Incomplete)
 	}
@@ -104,6 +113,7 @@ func continueReport(ctx context.Context, provider Provider, call ReportCall, max
 		if parseErr != nil {
 			return nil, "", fmt.Errorf("%sinvalid model output in continuation: %w", call.Label, parseErr)
 		}
+		call.logDropped(parsed)
 		before := findingCount(acc) + len(acc.Patches)
 		appendPart(acc, parsed.Report)
 		if parsed.Incomplete == nil {
@@ -117,30 +127,48 @@ func continueReport(ctx context.Context, provider Provider, call ReportCall, max
 	return nil, "", fmt.Errorf("%sresponse still incomplete after %d continuation calls; raise the max tokens setting", call.Label, maxContinuations)
 }
 
+// renumber returns report with its findings numbered from one.
+func renumber(report *schema.Report) *schema.Report {
+	out := &schema.Report{}
+	appendPart(out, report)
+	return out
+}
+
 // appendPart adds part's findings to acc, renumbering them to follow the
-// findings acc already holds. Findings and patches the model repeated are
-// skipped, and patches are re-pointed at the renumbered issues.
+// findings acc already holds and re-pointing part's patches at the renumbered
+// issues. Anything part repeats from an earlier part is skipped.
 func appendPart(acc, part *schema.Report) {
 	if part == nil {
 		return
 	}
-	known := make(map[string]bool, len(acc.Issues))
-	for _, issue := range acc.Issues {
+	earlierIssues := acc.Issues
+	earlierQuestions := acc.Questions
+	earlierPatches := acc.Patches
+	known := make(map[string]bool, len(earlierIssues))
+	for _, issue := range earlierIssues {
 		known[issue.ID] = true
 	}
+
+	// When the model reuses an ID inside one part, patches go to the first
+	// issue that carried it.
 	renumbered := make(map[string]string, len(part.Issues))
+	remember := func(modelID, id string) {
+		if _, seen := renumbered[modelID]; !seen {
+			renumbered[modelID] = id
+		}
+	}
 	for _, issue := range part.Issues {
-		if idx := repeatedIssue(acc.Issues, issue); idx >= 0 {
-			renumbered[issue.ID] = acc.Issues[idx].ID
+		if idx := repeatedIssue(earlierIssues, issue); idx >= 0 {
+			remember(issue.ID, earlierIssues[idx].ID)
 			continue
 		}
 		id := fmt.Sprintf("ISSUE-%04d", len(acc.Issues)+1)
-		renumbered[issue.ID] = id
+		remember(issue.ID, id)
 		issue.ID = id
 		acc.Issues = append(acc.Issues, issue)
 	}
 	for _, question := range part.Questions {
-		if repeatedQuestion(acc.Questions, question) {
+		if repeatedQuestion(earlierQuestions, question) {
 			continue
 		}
 		question.ID = fmt.Sprintf("Q-%04d", len(acc.Questions)+1)
@@ -154,13 +182,14 @@ func appendPart(acc, part *schema.Report) {
 		} else if !known[patch.IssueID] {
 			continue
 		}
-		if !slices.Contains(acc.Patches, patch) {
+		if !slices.Contains(earlierPatches, patch) {
 			acc.Patches = append(acc.Patches, patch)
 		}
 	}
 	if acc.Meta.ChunkSummary == "" {
 		acc.Meta.ChunkSummary = part.Meta.ChunkSummary
 	}
+	acc.Meta.DroppedFindings += part.Meta.DroppedFindings
 }
 
 func repeatedIssue(existing []schema.Issue, issue schema.Issue) int {
@@ -236,6 +265,12 @@ func findingCount(report *schema.Report) int {
 		return 0
 	}
 	return len(report.Issues) + len(report.Questions)
+}
+
+func (c ReportCall) logDropped(parsed Parsed) {
+	if len(parsed.Dropped) > 0 {
+		c.logf("Dropped %d invalid finding(s): %s", len(parsed.Dropped), strings.Join(parsed.Dropped, "; "))
+	}
 }
 
 func (c ReportCall) logf(format string, args ...any) {

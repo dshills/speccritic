@@ -111,10 +111,10 @@ func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		Request: req,
 		Label:   fmt.Sprintf("range %s ", rr.ID),
 		Parse: func(raw string) (llm.Parsed, error) {
-			return parseRangeResponse(raw, s.LineCount, rr)
+			return parseRangeResponse(raw, s.Path, s.LineCount, rr)
 		},
 		RepairPrompt: func(reason error, _ string) string {
-			return fmt.Sprintf("\n\nYour previous response failed incremental range validation.\n\nValidation error: %s\n\nReturn only valid JSON matching the schema, add tags %q and %q to every issue, and cite current spec line numbers included in the prompt.", reason, TagIncrementalReview, "range:"+rr.ID)
+			return fmt.Sprintf("\n\nYour previous response failed incremental range validation.\n\nValidation error: %s\n\nReturn only valid JSON matching the schema and cite current spec line numbers included in the prompt.", reason)
 		},
 	})
 	if err != nil {
@@ -125,9 +125,10 @@ func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 
 const TagIncrementalReview = "incremental-review"
 
-// ParseRangeResponse validates a complete incremental range response.
+// ParseRangeResponse reads a complete incremental range response. See
+// parseRangeResponse for what is kept and what is dropped.
 func ParseRangeResponse(raw string, lineCount int, rr ReviewRange) (*schema.Report, error) {
-	parsed, err := parseRangeResponse(raw, lineCount, rr)
+	parsed, err := parseRangeResponse(raw, "", lineCount, rr)
 	if err != nil {
 		return nil, err
 	}
@@ -137,32 +138,30 @@ func ParseRangeResponse(raw string, lineCount int, rr ReviewRange) (*schema.Repo
 	return parsed.Report, nil
 }
 
-// parseRangeResponse is ParseRangeResponse for a response that may have been
-// cut off.
-func parseRangeResponse(raw string, lineCount int, rr ReviewRange) (llm.Parsed, error) {
-	res, err := validate.ParseResponse(raw, validate.Options{LineCount: lineCount})
+// parseRangeResponse reads an incremental range response that may have been
+// cut off. Issues that cite lines outside the range's context are dropped. The
+// incremental and range tags and the evidence path are set here rather than
+// asked of the model.
+func parseRangeResponse(raw, specPath string, lineCount int, rr ReviewRange) (llm.Parsed, error) {
+	res, err := validate.ParseResponse(raw, validate.Options{
+		LineCount: lineCount,
+		SpecPath:  specPath,
+		CheckIssue: func(issue *schema.Issue) error {
+			for i, ev := range issue.Evidence {
+				if ev.LineStart < rr.Context.Start || ev.LineEnd > rr.Context.End {
+					return fmt.Errorf("evidence[%d] cites L%d-L%d outside range context L%d-L%d", i, ev.LineStart, ev.LineEnd, rr.Context.Start, rr.Context.End)
+				}
+			}
+			for _, tag := range []string{TagIncrementalReview, "range:" + rr.ID} {
+				if !hasTag(issue.Tags, tag) {
+					issue.Tags = append(issue.Tags, tag)
+				}
+			}
+			return nil
+		},
+	})
 	if err != nil {
 		return llm.Parsed{}, err
 	}
-	if err := validateRangeReport(res.Report, rr); err != nil {
-		return llm.Parsed{}, err
-	}
-	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
-}
-
-func validateRangeReport(report *schema.Report, rr ReviewRange) error {
-	for i, issue := range report.Issues {
-		if !hasTag(issue.Tags, TagIncrementalReview) {
-			return fmt.Errorf("issue[%d] missing %q tag", i, TagIncrementalReview)
-		}
-		if !hasTag(issue.Tags, "range:"+rr.ID) {
-			return fmt.Errorf("issue[%d] missing range tag %q", i, "range:"+rr.ID)
-		}
-		for j, ev := range issue.Evidence {
-			if ev.LineStart < rr.Context.Start || ev.LineEnd > rr.Context.End {
-				return fmt.Errorf("issue[%d].evidence[%d] cites L%d-L%d outside range context L%d-L%d", i, j, ev.LineStart, ev.LineEnd, rr.Context.Start, rr.Context.End)
-			}
-		}
-	}
-	return nil
+	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, nil
 }

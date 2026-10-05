@@ -23,7 +23,7 @@ calls, or the quality of what comes back.
 | # | Item | Helps | Effort | Status |
 |---|------|-------|--------|--------|
 | 1 | Stop discarding responses that hit the output cap | Speed, Tokens | Small | Done |
-| 2 | Salvage valid findings; stamp bookkeeping fields locally | Speed, Tokens | Small |  |
+| 2 | Salvage valid findings; stamp bookkeeping fields locally | Speed, Tokens | Small | Done |
 | 3 | Fix redaction collapsing lines | Accuracy | Small |  |
 | 4 | Record token usage and latency per call | All (measurement) | Small |  |
 | 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium |  |
@@ -66,7 +66,7 @@ that overflow.
 
 ## 2. Salvage valid findings; stamp bookkeeping fields locally
 
-**Helps:** Speed, Tokens. **Effort:** Small.
+**Helps:** Speed, Tokens. **Effort:** Small. **Status:** Done.
 
 **Today.** One bad finding rejects the whole response and triggers a full repair call.
 

@@ -165,7 +165,6 @@ Each chunk LLM call must be told:
 - Use normal issue IDs, but IDs are temporary before merge.
 - Do not emit score or verdict.
 - Emit a brief chunk summary in `meta.chunk_summary`.
-- Add tag `chunk:<CHUNK-ID>` to every issue emitted from a chunk.
 - Add tag `cross-section` when the issue depends on another section outside the primary range.
 - Add clarification questions only when the question blocks implementing the primary range.
 
@@ -174,7 +173,7 @@ Chunk summary requirements:
 - `meta.chunk_summary` must be a string of at most 600 characters.
 - It must describe the reviewed primary range, important local concepts, and referenced external sections.
 - It must not include findings, score, verdict, or implementation advice.
-- If the model omits `meta.chunk_summary`, the repair prompt must request the missing summary while preserving the original findings.
+- A summary longer than 600 characters is shortened locally. A missing summary is accepted: the chunk's findings are kept and synthesis runs without that summary.
 - Summaries are used only as synthesis input and are not rendered in normal JSON, Markdown, or web output.
 
 ## 11. Cross-Section Checks
@@ -214,7 +213,8 @@ Requirements:
 - Start at most `--chunk-concurrency` provider calls at a time.
 - Preserve deterministic merge order regardless of completion order.
 - Cancel outstanding chunk calls when the parent context is cancelled.
-- Retry invalid chunk JSON once using the existing repair prompt pattern.
+- Validate chunk output one finding at a time. Drop a finding that fails validation and keep the rest; count dropped findings in `meta.dropped_findings`.
+- Retry a chunk once using the existing repair prompt pattern only when its response holds nothing usable.
 - Retry transient provider errors according to existing provider retry policy if available.
 - If one chunk fails permanently, the whole check fails with provider/model-output error.
 - Log chunk start/end in verbose mode without printing spec text.
@@ -230,14 +230,15 @@ Provider safety:
 After chunk calls complete, SpecCritic must:
 
 1. Validate every evidence range against the original spec line count.
-2. Reject evidence outside the chunk primary range unless emitted by the synthesis call.
-3. Normalize chunk issue IDs into stable final IDs:
+2. Drop findings whose evidence falls outside the chunk primary range unless emitted by the synthesis call.
+3. Set tag `chunk:<CHUNK-ID>` and the evidence path on every chunk finding locally; the model is not asked for either.
+4. Normalize chunk issue IDs into stable final IDs:
    - `ISSUE-0001`, `ISSUE-0002`, ...
    - ordered by severity descending, line start ascending, category, title.
-4. Preserve original chunk IDs in tags.
-5. Merge all questions and patches.
-6. Deduplicate findings.
-7. Recompute score, verdict, and counts once after merge.
+5. Preserve original chunk IDs in tags.
+6. Merge all questions and patches.
+7. Deduplicate findings.
+8. Recompute score, verdict, and counts once after merge.
 
 Duplicate detection must include:
 

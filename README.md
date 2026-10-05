@@ -275,7 +275,8 @@ Implementation details:
 - Chunking happens after spec loading, redaction, and preflight.
 - `auto` mode uses a deterministic local estimate of one token per four UTF-8 bytes. This is a rough heuristic; code-heavy specs and non-English specs may need a lower `--chunk-token-threshold` or forced `--chunking on`.
 - Chunk reviews cite only their primary line range; overlap lines are context only.
-- Every chunk response must include `meta.chunk_summary`; summaries are used for synthesis and are not shown as user-facing output.
+- Chunk responses carry a `meta.chunk_summary`; summaries are used for synthesis and are not shown as user-facing output. A missing summary does not fail the chunk.
+- A chunk finding whose evidence falls outside the chunk's primary range is dropped; the rest of the chunk's findings are kept.
 - Chunk calls run with bounded concurrency.
 - If one chunk fails permanently after the built-in repair attempt, the check fails with model-output/provider error rather than returning partial results.
 - Synthesis runs when chunked review has findings or when the spec is at least `--synthesis-line-threshold` lines. A no-finding chunked review below that threshold skips synthesis.
@@ -622,6 +623,8 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
 ```
 
 > **Note:** `summary` counts always reflect all issues regardless of `--severity-threshold`. The `issues` array is filtered. The `input.severity_threshold` field records which filter was applied.
+
+> **Note:** Model output is validated one finding at a time. A finding that fails validation (an unknown category, evidence outside the spec, and so on) is left out and the rest are kept; `meta.dropped_findings` then reports how many were left out. The field is omitted when nothing was dropped. Issue and question IDs, bookkeeping tags and the evidence `path` are assigned by SpecCritic, not taken from the model.
 
 ### Patches
 

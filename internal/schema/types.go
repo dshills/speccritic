@@ -34,12 +34,15 @@ type Summary struct {
 
 // Meta holds runtime metadata about the LLM call.
 type Meta struct {
-	Model        string           `json:"model"`
-	Temperature  float64          `json:"temperature"`
-	ChunkSummary string           `json:"chunk_summary,omitempty"`
-	Incremental  *IncrementalMeta `json:"incremental,omitempty"`
-	Convergence  *ConvergenceMeta `json:"convergence,omitempty"`
-	Completion   *CompletionMeta  `json:"completion,omitempty"`
+	Model        string  `json:"model"`
+	Temperature  float64 `json:"temperature"`
+	ChunkSummary string  `json:"chunk_summary,omitempty"`
+	// DroppedFindings counts model findings that failed local validation and
+	// were left out of the report.
+	DroppedFindings int              `json:"dropped_findings,omitempty"`
+	Incremental     *IncrementalMeta `json:"incremental,omitempty"`
+	Convergence     *ConvergenceMeta `json:"convergence,omitempty"`
+	Completion      *CompletionMeta  `json:"completion,omitempty"`
 }
 
 // CompletionMeta describes optional profile-specific completion generation.

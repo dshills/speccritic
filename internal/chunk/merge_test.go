@@ -188,3 +188,17 @@ func testIssue(id string, severity schema.Severity, category schema.Category, ti
 		Tags:           tags,
 	}
 }
+
+func TestMergeReportsSumsDroppedFindings(t *testing.T) {
+	result := MergeReports(MergeInput{
+		ChunkResults: []ChunkResult{
+			{Chunk: Chunk{ID: "CHUNK-0001-L1-L2"}, Report: &schema.Report{Meta: schema.Meta{DroppedFindings: 2}}},
+			{Chunk: Chunk{ID: "CHUNK-0002-L3-L4"}},
+			{Chunk: Chunk{ID: "CHUNK-0003-L5-L6"}, Report: &schema.Report{Meta: schema.Meta{DroppedFindings: 1}}},
+		},
+		Synthesis: &schema.Report{Meta: schema.Meta{DroppedFindings: 4}},
+	})
+	if result.DroppedFindings != 7 {
+		t.Fatalf("dropped = %d, want 7", result.DroppedFindings)
+	}
+}

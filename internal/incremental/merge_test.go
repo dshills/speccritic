@@ -205,3 +205,23 @@ func TestMergeReportDropsAmbiguousRangePatches(t *testing.T) {
 		t.Fatalf("patches = %#v, want ambiguous patch dropped", report.Patches)
 	}
 }
+
+func TestMergeReportSumsDroppedFindings(t *testing.T) {
+	s := spec.New("SPEC.md", "# Spec\n## Behavior\none\n")
+	report, err := MergeReport(MergeInput{
+		Spec: s,
+		RangeResults: []RangeResult{
+			{Range: ReviewRange{ID: "RANGE-1"}, Report: &schema.Report{Meta: schema.Meta{DroppedFindings: 2}}},
+			{Range: ReviewRange{ID: "RANGE-2"}},
+			{Range: ReviewRange{ID: "RANGE-3"}, Report: &schema.Report{Meta: schema.Meta{DroppedFindings: 1}}},
+		},
+		Profile:           "general",
+		SeverityThreshold: "info",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Meta.DroppedFindings != 3 {
+		t.Fatalf("meta.dropped_findings = %d, want 3", report.Meta.DroppedFindings)
+	}
+}

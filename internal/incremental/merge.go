@@ -46,10 +46,12 @@ func MergeReport(input MergeInput) (*schema.Report, error) {
 
 	nextIssue := maxIssueID(issues) + 1
 	nextQuestion := maxQuestionID(questions) + 1
+	dropped := 0
 	for _, result := range input.RangeResults {
 		if result.Report == nil {
 			continue
 		}
+		dropped += result.Report.Meta.DroppedFindings
 		issueIDMap := make(map[string]string, len(result.Report.Issues))
 		for _, issue := range result.Report.Issues {
 			originalID := issue.ID
@@ -74,7 +76,7 @@ func MergeReport(input MergeInput) (*schema.Report, error) {
 	questions = sortQuestions(questions)
 	patches = validPatches(input.Spec.Raw, patches, issues)
 	critical, warn, info := review.Counts(issues)
-	meta := schema.Meta{Model: input.Model, Temperature: input.Temperature}
+	meta := schema.Meta{Model: input.Model, Temperature: input.Temperature, DroppedFindings: dropped}
 	if input.IncludeMetadata && input.IncrementalMetadata != nil {
 		meta.Incremental = input.IncrementalMetadata
 	}

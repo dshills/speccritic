@@ -16,7 +16,6 @@ func TestBuildUserPromptIncludesChunkContract(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Review only the primary range",
-		`tag "chunk:<CHUNK-ID>"`,
 		"meta.chunk_summary",
 		"<spec_table_of_contents>",
 		"L1-L12 #Spec",
@@ -27,7 +26,6 @@ func TestBuildUserPromptIncludesChunkContract(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<chunk id="` + ch.ID + `"`,
-		"<chunk_issue_tag>chunk:" + ch.ID + "</chunk_issue_tag>",
 		"<context_only_before>",
 		"L5: ",
 		"<primary_lines>",
@@ -38,6 +36,10 @@ func TestBuildUserPromptIncludesChunkContract(t *testing.T) {
 		if !strings.Contains(tail, want) {
 			t.Fatalf("tail missing %q:\n%s", want, tail)
 		}
+	}
+	// The chunk tag is added locally, so the model is not asked for it.
+	if strings.Contains(prefix+tail, "chunk:") {
+		t.Fatalf("prompt still asks for a chunk tag:\n%s%s", prefix, tail)
 	}
 }
 

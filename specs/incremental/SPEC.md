@@ -260,14 +260,16 @@ Relevant prior findings are findings whose remapped evidence is in the same sect
 
 The prompt must require JSON-only output matching the existing schema.
 
-For section-level incremental calls, every new issue must include tags:
+For section-level incremental calls, SpecCritic adds these tags to every new issue locally; the model is not asked for them:
 
 - `incremental-review`,
 - `range:<RANGE-ID>`.
 
-If chunking is also active, chunk tags remain required:
+If chunking is also active, chunk tags are added the same way:
 
 - `chunk:<CHUNK-ID>`.
+
+An issue whose evidence falls outside the range context is dropped and the rest of the response is kept.
 
 The final merged report may include both `incremental-review` and `chunked-review` tags.
 

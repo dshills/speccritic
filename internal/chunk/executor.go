@@ -125,7 +125,7 @@ func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 			return parseChunkResponse(raw, s.LineCount, ch)
 		},
 		RepairPrompt: func(reason error, failedOutput string) string {
-			return fmt.Sprintf("\n\nYour previous response failed chunk validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, include meta.chunk_summary, add the required chunk tag, and cite only primary-range lines.", reason, truncate(failedOutput, 4000))
+			return fmt.Sprintf("\n\nYour previous response failed chunk validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema and cite only primary-range lines.", reason, truncate(failedOutput, 4000))
 		},
 		Logf: func(format string, args ...any) {
 			logVerbose(logMu, cfg.ErrWriter, cfg.Verbose, "Chunk %s: "+format, append([]any{ch.ID}, args...)...)

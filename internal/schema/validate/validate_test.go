@@ -1,8 +1,11 @@
 package validate
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/dshills/speccritic/internal/schema"
 )
 
 const validJSON = `{
@@ -262,14 +265,155 @@ func TestParseResponse_NotJSONIsIncompleteWithNothingRead(t *testing.T) {
 	}
 }
 
-func TestParseResponse_InvalidFindingIsAnError(t *testing.T) {
-	bad := strings.Replace(twoIssueJSON, `"severity":"WARN","category":"AMBIGUOUS_BEHAVIOR"`, `"severity":"HIGH","category":"AMBIGUOUS_BEHAVIOR"`, 1)
-	if _, err := ParseResponse(bad, Options{LineCount: 10}); err == nil || !strings.Contains(err.Error(), "invalid severity") {
-		t.Fatalf("error = %v, want invalid severity", err)
+func TestParseResponse_DropsOnlyTheInvalidFinding(t *testing.T) {
+	cases := map[string]struct {
+		old, new   string
+		wantReason string
+	}{
+		"invalid severity": {`"severity":"WARN","category":"AMBIGUOUS_BEHAVIOR"`, `"severity":"HIGH","category":"AMBIGUOUS_BEHAVIOR"`, "invalid severity"},
+		"unknown category": {`"category":"AMBIGUOUS_BEHAVIOR"`, `"category":"VIBES"`, "unknown category"},
+		"missing title":    {`"title":"Second"`, `"title":""`, "title is required"},
+		"line past spec":   {`"line_start":2,"line_end":2`, `"line_start":2,"line_end":99`, "exceeds spec line count"},
+		"wrong field type": {`"line_start":2`, `"line_start":"two"`, "cannot unmarshal"},
+		"null element":     {`{"id":"ISSUE-0002","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Second","description":"d","evidence":[{"path":"SPEC.md","line_start":2,"line_end":2,"quote":"q"}],"impact":"i","recommendation":"r","blocking":false,"tags":[]}`, `null`, "invalid severity"},
 	}
-	wrongType := strings.Replace(twoIssueJSON, `"line_start":2`, `"line_start":"two"`, 1)
-	if _, err := ParseResponse(wrongType, Options{LineCount: 10}); err == nil || !strings.HasPrefix(err.Error(), "JSON parse failed") {
-		t.Fatalf("error = %v, want JSON parse failed", err)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			raw := strings.Replace(twoIssueJSON, tc.old, tc.new, 1)
+			if raw == twoIssueJSON {
+				t.Fatalf("replacement %q did not apply", tc.old)
+			}
+			res, err := ParseResponse(raw, Options{LineCount: 10})
+			if err != nil {
+				t.Fatalf("ParseResponse: %v", err)
+			}
+			if len(res.Report.Issues) != 1 || res.Report.Issues[0].Title != "First" {
+				t.Fatalf("issues = %#v, want only the valid finding", res.Report.Issues)
+			}
+			if len(res.Report.Questions) != 1 {
+				t.Errorf("questions = %d, want the valid question kept", len(res.Report.Questions))
+			}
+			if len(res.Dropped) != 1 || !strings.Contains(res.Dropped[0], tc.wantReason) || !strings.HasPrefix(res.Dropped[0], "issue[1]") {
+				t.Errorf("dropped = %q, want one issue[1] entry mentioning %q", res.Dropped, tc.wantReason)
+			}
+			if res.Report.Meta.DroppedFindings != 1 {
+				t.Errorf("meta dropped = %d, want 1", res.Report.Meta.DroppedFindings)
+			}
+		})
+	}
+}
+
+func TestParseResponse_NothingUsableIsAnError(t *testing.T) {
+	onlyBad := `{"issues":[{"id":"ISSUE-0001","severity":"HIGH","category":"AMBIGUOUS_BEHAVIOR","title":"t","evidence":[]}],"questions":[],"patches":[]}`
+	_, err := ParseResponse(onlyBad, Options{LineCount: 10})
+	if err == nil || !strings.Contains(err.Error(), "no usable findings") || !strings.Contains(err.Error(), "invalid severity") {
+		t.Fatalf("error = %v, want no usable findings with the reason", err)
+	}
+	// A response that reports nothing is usable: the spec had no defects.
+	res, err := ParseResponse(`{"issues":[],"questions":[],"patches":[]}`, Options{LineCount: 10})
+	if err != nil || res.Incomplete != nil || len(res.Dropped) != 0 {
+		t.Fatalf("empty report: err=%v incomplete=%v dropped=%v", err, res.Incomplete, res.Dropped)
+	}
+}
+
+func TestParseResponse_KeepsFindingsWhateverTheirIDs(t *testing.T) {
+	raw := strings.Replace(twoIssueJSON, `"id":"ISSUE-0002"`, `"id":"ISSUE-0001"`, 1)
+	raw = strings.Replace(raw, `"id":"Q-0001"`, `"id":"question one"`, 1)
+	res, err := ParseResponse(raw, Options{LineCount: 10})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if len(res.Report.Issues) != 2 || len(res.Report.Questions) != 1 || len(res.Dropped) != 0 {
+		t.Fatalf("issues=%d questions=%d dropped=%v, want everything kept", len(res.Report.Issues), len(res.Report.Questions), res.Dropped)
+	}
+}
+
+func TestParseResponse_EvidencePath(t *testing.T) {
+	escaping := strings.Replace(twoIssueJSON, `"path":"SPEC.md","line_start":2`, `"path":"../../etc/passwd","line_start":2`, 1)
+
+	// With no spec path given, the model's path is checked.
+	res, err := ParseResponse(escaping, Options{LineCount: 10})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if len(res.Report.Issues) != 1 || len(res.Dropped) != 1 || !strings.Contains(res.Dropped[0], "local relative path") {
+		t.Fatalf("issues=%d dropped=%q, want the escaping path dropped", len(res.Report.Issues), res.Dropped)
+	}
+
+	// With a spec path, every evidence entry gets it. A path that would fail
+	// the locality check is reduced to its base name.
+	for specPath, want := range map[string]string{
+		"specs/api/SPEC.md":   "specs/api/SPEC.md",
+		"/work/specs/SPEC.md": "SPEC.md",
+		"../shared/SPEC.md":   "SPEC.md",
+	} {
+		res, err := ParseResponse(escaping, Options{LineCount: 10, SpecPath: specPath})
+		if err != nil {
+			t.Fatalf("ParseResponse(%s): %v", specPath, err)
+		}
+		if len(res.Report.Issues) != 2 || len(res.Dropped) != 0 {
+			t.Fatalf("%s: issues=%d dropped=%q, want both kept", specPath, len(res.Report.Issues), res.Dropped)
+		}
+		for _, issue := range res.Report.Issues {
+			if issue.Evidence[0].Path != want {
+				t.Errorf("%s: issue %q evidence path = %q, want %q", specPath, issue.Title, issue.Evidence[0].Path, want)
+			}
+		}
+		if got := res.Report.Questions[0].Evidence[0].Path; got != want {
+			t.Errorf("%s: question evidence path = %q, want %q", specPath, got, want)
+		}
+	}
+}
+
+func TestParseResponse_CallerChecksCanDropAndAdjust(t *testing.T) {
+	res, err := ParseResponse(twoIssueJSON, Options{
+		LineCount: 10,
+		CheckIssue: func(issue *schema.Issue) error {
+			if issue.Evidence[0].LineStart > 1 {
+				return errors.New("outside the reviewed range")
+			}
+			issue.Tags = append(issue.Tags, "stamped")
+			return nil
+		},
+		CheckQuestion: func(*schema.Question) error { return errors.New("questions not wanted") },
+	})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if len(res.Report.Issues) != 1 || res.Report.Issues[0].Tags[0] != "stamped" {
+		t.Fatalf("issues = %#v, want the first issue kept and stamped", res.Report.Issues)
+	}
+	if len(res.Report.Questions) != 0 || len(res.Dropped) != 2 {
+		t.Fatalf("questions=%d dropped=%q, want the question and second issue dropped", len(res.Report.Questions), res.Dropped)
+	}
+	if !strings.Contains(res.Dropped[0], "issue[1]: outside the reviewed range") {
+		t.Errorf("dropped[0] = %q", res.Dropped[0])
+	}
+}
+
+func TestParseResponse_UnusablePatchesAndMetaAreSkippedQuietly(t *testing.T) {
+	raw := strings.Replace(twoIssueJSON, `"patches":[]`, `"patches":[
+		{"issue_id":"ISSUE-0001","before":"a","after":"b"},
+		{"issue_id":"","before":"a","after":"b"},
+		{"issue_id":"ISSUE-0002","before":" ","after":"b"},
+		{"issue_id":"ISSUE-0002","before":"a","after":""},
+		{"issue_id":7,"before":"a","after":"b"},
+		{"issue_id":"ISSUE-0404","before":"x","after":"y"}
+	],"meta":{"chunk_summary":["not","a","string"],"model":"made-up"}`, 1)
+	res, err := ParseResponse(raw, Options{LineCount: 10})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if len(res.Dropped) != 0 || len(res.Report.Issues) != 2 {
+		t.Fatalf("dropped=%q issues=%d, want no findings dropped", res.Dropped, len(res.Report.Issues))
+	}
+	// The patch for an issue this response does not hold is kept: it may
+	// belong to an earlier part of a continued response.
+	if len(res.Report.Patches) != 2 || res.Report.Patches[1].IssueID != "ISSUE-0404" {
+		t.Fatalf("patches = %#v, want the two well-formed patches", res.Report.Patches)
+	}
+	if res.Report.Meta.ChunkSummary != "" || res.Report.Meta.Model != "" {
+		t.Fatalf("meta = %#v, want model-supplied meta ignored", res.Report.Meta)
 	}
 }
 

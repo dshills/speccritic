@@ -265,14 +265,16 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		}, nil
 	}
 
-	report, responseModel, err := callWithRetry(ctx, provider, llmReq, s.LineCount, req.Verbose, errw)
+	report, responseModel, err := callWithRetry(ctx, provider, llmReq, s, req.Verbose, errw)
 	if err != nil {
 		return nil, appError(ErrorModelOutput, err)
 	}
+	dropped := report.Meta.DroppedFindings
 	report.Issues = mergeIssues(preflightIssues, report.Issues, knownPreflightIDs)
 	report.Patches = safeReportPatches(s.Raw, report.Issues, report.Patches)
 
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
+	report.Meta.DroppedFindings = dropped
 	if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
 		return nil, appError(ErrorInput, err)
 	}
@@ -657,6 +659,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		}
 	}
 	report := buildReport(req, s, merged.Issues, merged.Questions, merged.Patches, model)
+	report.Meta.DroppedFindings = merged.DroppedFindings
 	return report, model, nil
 }
 
@@ -1133,15 +1136,15 @@ func specLabel(req CheckRequest) string {
 	return "<text>"
 }
 
-func callWithRetry(ctx context.Context, provider llm.Provider, req *llm.Request, lineCount int, verbose bool, errw io.Writer) (*schema.Report, string, error) {
+func callWithRetry(ctx context.Context, provider llm.Provider, req *llm.Request, s *spec.Spec, verbose bool, errw io.Writer) (*schema.Report, string, error) {
 	return llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,
 		Parse: func(raw string) (llm.Parsed, error) {
-			res, err := validate.ParseResponse(raw, validate.Options{LineCount: lineCount})
+			res, err := validate.ParseResponse(raw, validate.Options{LineCount: s.LineCount, SpecPath: s.Path})
 			if err != nil {
 				return llm.Parsed{}, err
 			}
-			return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
+			return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, nil
 		},
 		RepairPrompt: func(reason error, _ string) string {
 			return fmt.Sprintf(

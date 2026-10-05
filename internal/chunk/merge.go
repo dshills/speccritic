@@ -19,6 +19,9 @@ type MergeResult struct {
 	Issues    []schema.Issue
 	Questions []schema.Question
 	Patches   []schema.Patch
+	// DroppedFindings counts findings the chunk and synthesis parsers left
+	// out as invalid.
+	DroppedFindings int
 }
 
 func MergeReports(input MergeInput) MergeResult {
@@ -62,7 +65,17 @@ func MergeReports(input MergeInput) MergeResult {
 		patches = appendValidPatches(patches, input.OriginalSpec, issueIDMap, input.Synthesis.Patches...)
 	}
 
-	return MergeResult{Issues: issues, Questions: questions, Patches: patches}
+	dropped := 0
+	for _, result := range input.ChunkResults {
+		if result.Report != nil {
+			dropped += result.Report.Meta.DroppedFindings
+		}
+	}
+	if input.Synthesis != nil {
+		dropped += input.Synthesis.Meta.DroppedFindings
+	}
+
+	return MergeResult{Issues: issues, Questions: questions, Patches: patches, DroppedFindings: dropped}
 }
 
 func appendIssues(dst []schema.Issue, src ...schema.Issue) []schema.Issue {

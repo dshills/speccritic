@@ -39,6 +39,16 @@ func Parse(raw string, lineCount int) (*schema.Report, error) {
 type Options struct {
 	// LineCount is the number of lines in the spec; evidence must stay inside it.
 	LineCount int
+	// SpecPath, when set, replaces the path on every evidence entry. The caller
+	// knows which file was reviewed, so the model's copy is not used. A path
+	// that is absolute or climbs out of the working directory is reduced to
+	// its base name, so evidence paths always pass the check Parse applies.
+	SpecPath string
+	// CheckIssue and CheckQuestion apply caller-specific rules to a finding
+	// that passed the general checks, and may adjust it. A non-nil error drops
+	// the finding.
+	CheckIssue    func(*schema.Issue) error
+	CheckQuestion func(*schema.Question) error
 }
 
 // Result is the usable part of a model response.
@@ -47,28 +57,107 @@ type Result struct {
 	// Incomplete is non-nil when the JSON ended early or broke mid-document.
 	// Report then holds only the findings that were read before that point.
 	Incomplete error
+	// Dropped explains each finding that failed validation and was left out.
+	Dropped []string
 }
 
-// ParseResponse reads a model response one finding at a time, so a response
-// cut off at the output cap still yields the findings that arrived whole.
-// Parse, by contrast, needs the whole document to be well formed.
+// ParseResponse reads a model response one finding at a time. A finding that
+// fails validation is dropped and the rest are kept, and a response cut off at
+// the output cap still yields the findings that arrived whole. It returns an
+// error only when the response holds nothing usable.
+//
+// IDs are returned as the model wrote them, so they may be malformed or
+// repeated; llm.CompleteReport renumbers them. Patches are not matched to
+// issues here, because a patch in a continued response may point at an issue
+// from an earlier part.
+//
+// Parse, by contrast, needs the whole document to be valid.
 func ParseResponse(raw string, opts Options) (Result, error) {
-	report, incomplete, err := decodeFindings(stripFences(raw))
+	if opts.SpecPath != "" && !filepath.IsLocal(opts.SpecPath) {
+		opts.SpecPath = filepath.Base(opts.SpecPath)
+	}
+	c := &collector{opts: opts, report: &schema.Report{}}
+	incomplete, err := decodeFindings(stripFences(raw), c)
 	if err != nil {
 		return Result{}, err
 	}
-	if _, err := validateFindings(report, opts.LineCount); err != nil {
-		return Result{}, err
+	c.report.Meta.DroppedFindings = len(c.dropped)
+	if len(c.dropped) > 0 && len(c.report.Issues)+len(c.report.Questions) == 0 {
+		return Result{}, fmt.Errorf("no usable findings, %d dropped: %s", len(c.dropped), c.dropped[0])
 	}
-	// A patch may point at an issue from an earlier part of a continued
-	// response, so only its shape is checked here. Callers drop patches whose
-	// issue they cannot resolve.
-	for i, patch := range report.Patches {
-		if err := validatePatchShape(patch, i); err != nil {
-			return Result{}, err
+	return Result{Report: c.report, Incomplete: incomplete, Dropped: c.dropped}, nil
+}
+
+// collector gathers the findings of one response that pass validation.
+type collector struct {
+	opts    Options
+	report  *schema.Report
+	dropped []string
+}
+
+func (c *collector) issue(idx int, issue schema.Issue) {
+	prefix := fmt.Sprintf("issue[%d]", idx)
+	c.stampPath(issue.Evidence)
+	err := validateIssueContent(issue, prefix, c.opts.LineCount)
+	if err == nil && c.opts.CheckIssue != nil {
+		if checkErr := c.opts.CheckIssue(&issue); checkErr != nil {
+			err = fmt.Errorf("%s: %w", prefix, checkErr)
 		}
 	}
-	return Result{Report: report, Incomplete: incomplete}, nil
+	if err != nil {
+		c.dropped = append(c.dropped, err.Error())
+		return
+	}
+	c.report.Issues = append(c.report.Issues, issue)
+}
+
+func (c *collector) question(idx int, question schema.Question) {
+	prefix := fmt.Sprintf("question[%d]", idx)
+	c.stampPath(question.Evidence)
+	err := validateQuestionContent(question, prefix, c.opts.LineCount)
+	if err == nil && c.opts.CheckQuestion != nil {
+		if checkErr := c.opts.CheckQuestion(&question); checkErr != nil {
+			err = fmt.Errorf("%s: %w", prefix, checkErr)
+		}
+	}
+	if err != nil {
+		c.dropped = append(c.dropped, err.Error())
+		return
+	}
+	c.report.Questions = append(c.report.Questions, question)
+}
+
+// patch keeps a patch that names an issue and an edit. Patches are advisory,
+// so an unusable one is left out without counting as a dropped finding.
+func (c *collector) patch(patch schema.Patch) {
+	if strings.TrimSpace(patch.IssueID) == "" || strings.TrimSpace(patch.Before) == "" || patch.After == "" {
+		return
+	}
+	c.report.Patches = append(c.report.Patches, patch)
+}
+
+func (c *collector) stampPath(evidence []schema.Evidence) {
+	if c.opts.SpecPath == "" {
+		return
+	}
+	for i := range evidence {
+		evidence[i].Path = c.opts.SpecPath
+	}
+}
+
+// wrongType handles a decode error for one element. JSON that was well formed
+// but of the wrong type leaves the decoder usable, so the element is skipped
+// (and recorded under label, if one is given) and decoding goes on. Any other
+// error is returned.
+func (c *collector) wrongType(label string, err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	if label != "" {
+		c.dropped = append(c.dropped, fmt.Sprintf("%s: %s", label, err))
+	}
+	return nil
 }
 
 // shapeError marks JSON that is well formed but is not shaped like a report.
@@ -76,47 +165,46 @@ type shapeError struct{ msg string }
 
 func (e *shapeError) Error() string { return e.msg }
 
-// decodeFindings reads as many complete issues, questions and patches as the
-// document holds. incomplete reports why reading stopped early; err reports
-// JSON that was read whole but has the wrong shape.
-func decodeFindings(cleaned string) (report *schema.Report, incomplete, err error) {
-	report = &schema.Report{}
+// decodeFindings feeds c every complete issue, question and patch the document
+// holds. incomplete reports why reading stopped early; err reports JSON that
+// was read whole but is not shaped like a report.
+func decodeFindings(cleaned string, c *collector) (incomplete, err error) {
 	dec := json.NewDecoder(strings.NewReader(cleaned))
 	if err := expectDelim(dec, '{'); err != nil {
-		return classifyDecodeError(report, err)
+		return classifyDecodeError(err)
 	}
 	for dec.More() {
 		tok, err := dec.Token()
 		if err != nil {
-			return classifyDecodeError(report, err)
+			return classifyDecodeError(err)
 		}
 		key, _ := tok.(string)
 		switch key {
 		case "issues":
-			err = decodeArray(dec, func() error {
+			err = decodeArray(dec, func(idx int) error {
 				var issue schema.Issue
 				if err := dec.Decode(&issue); err != nil {
-					return err
+					return c.wrongType(fmt.Sprintf("issue[%d]", idx), err)
 				}
-				report.Issues = append(report.Issues, issue)
+				c.issue(idx, issue)
 				return nil
 			})
 		case "questions":
-			err = decodeArray(dec, func() error {
+			err = decodeArray(dec, func(idx int) error {
 				var question schema.Question
 				if err := dec.Decode(&question); err != nil {
-					return err
+					return c.wrongType(fmt.Sprintf("question[%d]", idx), err)
 				}
-				report.Questions = append(report.Questions, question)
+				c.question(idx, question)
 				return nil
 			})
 		case "patches":
-			err = decodeArray(dec, func() error {
+			err = decodeArray(dec, func(int) error {
 				var patch schema.Patch
 				if err := dec.Decode(&patch); err != nil {
-					return err
+					return c.wrongType("", err)
 				}
-				report.Patches = append(report.Patches, patch)
+				c.patch(patch)
 				return nil
 			})
 		case "meta":
@@ -124,47 +212,48 @@ func decodeFindings(cleaned string) (report *schema.Report, incomplete, err erro
 			var meta struct {
 				ChunkSummary string `json:"chunk_summary"`
 			}
-			err = dec.Decode(&meta)
-			report.Meta.ChunkSummary = meta.ChunkSummary
+			if err = dec.Decode(&meta); err != nil {
+				err = c.wrongType("", err)
+			}
+			c.report.Meta.ChunkSummary = meta.ChunkSummary
 		default:
 			var skipped json.RawMessage
 			err = dec.Decode(&skipped)
 		}
 		if err != nil {
-			return classifyDecodeError(report, err)
+			return classifyDecodeError(err)
 		}
 	}
 	if err := expectDelim(dec, '}'); err != nil {
-		return classifyDecodeError(report, err)
+		return classifyDecodeError(err)
 	}
 	// Text after the report is ignored, but a second JSON value is not: its
 	// findings would be lost without anyone noticing.
 	rest := strings.TrimSpace(cleaned[dec.InputOffset():])
 	if strings.HasPrefix(rest, "{") || strings.HasPrefix(rest, "[") {
-		return report, nil, fmt.Errorf("JSON parse failed: unexpected second JSON value after the report")
+		return nil, fmt.Errorf("JSON parse failed: unexpected second JSON value after the report")
 	}
-	return report, nil, nil
+	return nil, nil
 }
 
 // classifyDecodeError separates JSON with the wrong shape, which is an error,
 // from a document that stopped or broke partway, which is merely incomplete.
-func classifyDecodeError(report *schema.Report, err error) (*schema.Report, error, error) {
-	var typeErr *json.UnmarshalTypeError
+func classifyDecodeError(err error) (incomplete, fatal error) {
 	var shapeErr *shapeError
-	if errors.As(err, &typeErr) || errors.As(err, &shapeErr) {
-		return report, nil, fmt.Errorf("JSON parse failed: %w", err)
+	if errors.As(err, &shapeErr) {
+		return nil, fmt.Errorf("JSON parse failed: %w", err)
 	}
 	if errors.Is(err, io.EOF) {
 		// A document that simply stops is an unexpected EOF whichever token it
 		// stopped on.
 		err = io.ErrUnexpectedEOF
 	}
-	return report, fmt.Errorf("JSON parse failed: %w", err), nil
+	return fmt.Errorf("JSON parse failed: %w", err), nil
 }
 
-// decodeArray calls elem once per element of the JSON array at the decoder's
-// position. A JSON null is treated as an empty array.
-func decodeArray(dec *json.Decoder, elem func() error) error {
+// decodeArray calls elem with the index of each element of the JSON array at
+// the decoder's position. A JSON null is treated as an empty array.
+func decodeArray(dec *json.Decoder, elem func(idx int) error) error {
 	tok, err := dec.Token()
 	if err != nil {
 		return err
@@ -175,8 +264,8 @@ func decodeArray(dec *json.Decoder, elem func() error) error {
 	if delim, ok := tok.(json.Delim); !ok || delim != '[' {
 		return &shapeError{msg: fmt.Sprintf("expected an array, got %v", tok)}
 	}
-	for dec.More() {
-		if err := elem(); err != nil {
+	for idx := 0; dec.More(); idx++ {
+		if err := elem(idx); err != nil {
 			return err
 		}
 	}
@@ -303,6 +392,11 @@ func validateIssue(issue schema.Issue, idx int, lineCount int) error {
 	if !issueIDPattern.MatchString(issue.ID) {
 		return fmt.Errorf("%s: id %q does not match ISSUE-XXXX format", prefix, issue.ID)
 	}
+	return validateIssueContent(issue, prefix, lineCount)
+}
+
+// validateIssueContent checks everything about an issue except its ID.
+func validateIssueContent(issue schema.Issue, prefix string, lineCount int) error {
 	if err := validateSeverity(issue.Severity, prefix); err != nil {
 		return err
 	}
@@ -326,6 +420,11 @@ func validateQuestion(q schema.Question, idx int, lineCount int) error {
 	if !questionIDPattern.MatchString(q.ID) {
 		return fmt.Errorf("%s: id %q does not match Q-XXXX format", prefix, q.ID)
 	}
+	return validateQuestionContent(q, prefix, lineCount)
+}
+
+// validateQuestionContent checks everything about a question except its ID.
+func validateQuestionContent(q schema.Question, prefix string, lineCount int) error {
 	if err := validateSeverity(q.Severity, prefix); err != nil {
 		return err
 	}

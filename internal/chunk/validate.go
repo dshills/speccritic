@@ -3,7 +3,6 @@ package chunk
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/schema"
@@ -12,7 +11,11 @@ import (
 
 const maxChunkSummaryRunes = 600
 
-// ParseChunkResponse validates a complete chunk review response.
+// chunkTagPrefix starts the tag that records which chunk produced an issue.
+const chunkTagPrefix = "chunk:"
+
+// ParseChunkResponse reads a complete chunk review response. See
+// parseChunkResponse for what is kept and what is dropped.
 func ParseChunkResponse(raw string, lineCount int, ch Chunk) (*schema.Report, error) {
 	parsed, err := parseChunkResponse(raw, lineCount, ch)
 	if err != nil {
@@ -24,80 +27,61 @@ func ParseChunkResponse(raw string, lineCount int, ch Chunk) (*schema.Report, er
 	return parsed.Report, nil
 }
 
-// parseChunkResponse is ParseChunkResponse for a response that may have been
-// cut off. A cut-off response is not held to the summary requirement, because
-// the summary may simply not have arrived yet.
+// parseChunkResponse reads a chunk review response that may have been cut
+// off. Findings that cite lines outside the chunk's primary range are dropped;
+// the neighbouring chunk reviews those lines. The chunk tag and evidence path
+// are set here rather than trusted from the model, and an over-long summary is
+// shortened. A missing summary is allowed: it only feeds synthesis.
 func parseChunkResponse(raw string, lineCount int, ch Chunk) (llm.Parsed, error) {
-	res, err := validate.ParseResponse(raw, validate.Options{LineCount: lineCount})
+	res, err := validate.ParseResponse(raw, validate.Options{
+		LineCount: lineCount,
+		SpecPath:  ch.Path,
+		CheckIssue: func(issue *schema.Issue) error {
+			if err := evidenceInPrimaryRange(issue.Evidence, ch); err != nil {
+				return err
+			}
+			issue.Tags = withChunkTag(issue.Tags, ch.ID)
+			return nil
+		},
+		CheckQuestion: func(question *schema.Question) error {
+			return evidenceInPrimaryRange(question.Evidence, ch)
+		},
+	})
 	if err != nil {
 		return llm.Parsed{}, err
 	}
-	if res.Incomplete == nil {
-		err = ValidateChunkReport(res.Report, ch, lineCount)
-	} else {
-		err = validateReportEvidence(res.Report, ch, lineCount, false)
-	}
-	if err != nil {
-		return llm.Parsed{}, err
-	}
-	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
+	res.Report.Meta.ChunkSummary = truncateRunes(strings.TrimSpace(res.Report.Meta.ChunkSummary), maxChunkSummaryRunes)
+	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, nil
 }
 
-func ValidateChunkReport(report *schema.Report, ch Chunk, lineCount int) error {
-	if report == nil {
-		return fmt.Errorf("chunk report is required")
-	}
-	if ch.ID == "" {
-		return fmt.Errorf("chunk ID is required")
-	}
-	if strings.TrimSpace(report.Meta.ChunkSummary) == "" {
-		return fmt.Errorf("chunk %s missing meta.chunk_summary", ch.ID)
-	}
-	if utf8.RuneCountInString(report.Meta.ChunkSummary) > maxChunkSummaryRunes {
-		return fmt.Errorf("chunk %s meta.chunk_summary exceeds %d characters", ch.ID, maxChunkSummaryRunes)
-	}
-	return validateReportEvidence(report, ch, lineCount, false)
-}
-
-func ValidateSynthesisReport(report *schema.Report, lineCount int) error {
-	if report == nil {
-		return fmt.Errorf("synthesis report is required")
-	}
-	return validateReportEvidence(report, Chunk{}, lineCount, true)
-}
-
-func validateReportEvidence(report *schema.Report, ch Chunk, lineCount int, synthesis bool) error {
-	for i, issue := range report.Issues {
-		if !synthesis && !hasTag(issue.Tags, "chunk:"+ch.ID) {
-			return fmt.Errorf("issue[%d] missing chunk tag chunk:%s", i, ch.ID)
-		}
-		for j, ev := range issue.Evidence {
-			if err := validateChunkEvidence(ev, ch, lineCount, synthesis); err != nil {
-				return fmt.Errorf("issue[%d].evidence[%d]: %w", i, j, err)
-			}
-		}
-	}
-	for i, question := range report.Questions {
-		for j, ev := range question.Evidence {
-			if err := validateChunkEvidence(ev, ch, lineCount, synthesis); err != nil {
-				return fmt.Errorf("question[%d].evidence[%d]: %w", i, j, err)
-			}
+func evidenceInPrimaryRange(evidence []schema.Evidence, ch Chunk) error {
+	for i, ev := range evidence {
+		if ev.LineStart < ch.LineStart || ev.LineEnd > ch.LineEnd {
+			return fmt.Errorf("evidence[%d]: line range %d-%d outside chunk primary range %d-%d", i, ev.LineStart, ev.LineEnd, ch.LineStart, ch.LineEnd)
 		}
 	}
 	return nil
 }
 
-func validateChunkEvidence(ev schema.Evidence, ch Chunk, lineCount int, synthesis bool) error {
-	if ev.LineStart < 1 || ev.LineEnd < ev.LineStart || ev.LineEnd > lineCount {
-		return fmt.Errorf("invalid original line range %d-%d for %d-line spec", ev.LineStart, ev.LineEnd, lineCount)
+// withChunkTag returns tags with exactly one chunk tag, the one for chunkID.
+// Any chunk tag the model wrote is replaced.
+func withChunkTag(tags []string, chunkID string) []string {
+	out := make([]string, 0, len(tags)+1)
+	for _, tag := range tags {
+		if len(tag) >= len(chunkTagPrefix) && strings.EqualFold(tag[:len(chunkTagPrefix)], chunkTagPrefix) {
+			continue
+		}
+		out = append(out, tag)
 	}
-	if synthesis {
-		return nil
+	return append(out, chunkTagPrefix+chunkID)
+}
+
+func truncateRunes(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
 	}
-	if ev.LineStart < ch.LineStart || ev.LineEnd > ch.LineEnd {
-		return fmt.Errorf("line range %d-%d outside chunk primary range %d-%d", ev.LineStart, ev.LineEnd, ch.LineStart, ch.LineEnd)
-	}
-	return nil
+	return string(runes[:limit])
 }
 
 func hasTag(tags []string, want string) bool {

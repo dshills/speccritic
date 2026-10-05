@@ -57,9 +57,7 @@ func BuildSynthesisPrompt(input SynthesisInput) (cachedPrefix, variable string, 
 	prefix.WriteString("Return JSON matching the SpecCritic schema. Do not return prose or markdown fences.\n")
 	prefix.WriteString("Do not re-review the whole spec. Use the table of contents, existing findings, preflight findings, and chunk summaries only to identify cross-section defects that chunk-local reviews may miss.\n")
 	prefix.WriteString("You may identify duplicates, contradictions between findings, missing interfaces referenced across sections, terminology inconsistencies, ordering gaps, and blocking clarification questions.\n")
-	prefix.WriteString("Cite valid original spec line numbers. Add tag \"")
-	prefix.WriteString(TagSynthesis)
-	prefix.WriteString("\" to every issue. Do not emit score or verdict.\n")
+	prefix.WriteString("Cite valid original spec line numbers. Do not emit score or verdict.\n")
 	prefix.WriteString("\n<spec_table_of_contents>\n")
 	prefix.WriteString(escapePromptBlock(TableOfContents(input.Plan)))
 	prefix.WriteString("</spec_table_of_contents>\n")
@@ -120,35 +118,37 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 		Request: req,
 		Label:   "synthesis ",
 		Parse: func(raw string) (llm.Parsed, error) {
-			return parseSynthesisResponse(raw, s.LineCount)
+			return parseSynthesisResponse(raw, s.Path, s.LineCount)
 		},
 		RepairPrompt: func(reason error, failedOutput string) string {
-			return fmt.Sprintf("\n\nYour previous response failed synthesis validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema, cite valid original line numbers, and add tag %q to every issue.", reason, truncate(failedOutput, 4000), TagSynthesis)
+			return fmt.Sprintf("\n\nYour previous response failed synthesis validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema and cite valid original line numbers.", reason, truncate(failedOutput, 4000))
 		},
 	})
 }
 
 // parseSynthesisResponse reads a synthesis response that may have been cut
-// off, adding the synthesis tag to every issue it keeps.
-func parseSynthesisResponse(raw string, lineCount int) (llm.Parsed, error) {
-	res, err := validate.ParseResponse(raw, validate.Options{LineCount: lineCount})
+// off. Synthesis may cite any line of the spec. The synthesis tag and the
+// evidence path are set here rather than asked of the model.
+func parseSynthesisResponse(raw, specPath string, lineCount int) (llm.Parsed, error) {
+	res, err := validate.ParseResponse(raw, validate.Options{
+		LineCount: lineCount,
+		SpecPath:  specPath,
+		CheckIssue: func(issue *schema.Issue) error {
+			if !hasTag(issue.Tags, TagSynthesis) {
+				issue.Tags = appendUniqueStrings(copyStrings(issue.Tags), TagSynthesis)
+			}
+			return nil
+		},
+	})
 	if err != nil {
 		return llm.Parsed{}, err
 	}
-	if err := ValidateSynthesisReport(res.Report, lineCount); err != nil {
-		return llm.Parsed{}, err
-	}
-	for i := range res.Report.Issues {
-		if !hasTag(res.Report.Issues[i].Tags, TagSynthesis) {
-			res.Report.Issues[i].Tags = appendUniqueStrings(copyStrings(res.Report.Issues[i].Tags), TagSynthesis)
-		}
-	}
-	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete}, nil
+	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, nil
 }
 
-// ParseSynthesisResponse validates a complete synthesis response.
+// ParseSynthesisResponse reads a complete synthesis response.
 func ParseSynthesisResponse(raw string, lineCount int) (*schema.Report, error) {
-	parsed, err := parseSynthesisResponse(raw, lineCount)
+	parsed, err := parseSynthesisResponse(raw, "", lineCount)
 	if err != nil {
 		return nil, err
 	}

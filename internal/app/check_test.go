@@ -327,6 +327,56 @@ func TestCheckerContinuesResponseCutOffAtOutputCap(t *testing.T) {
 	}
 }
 
+func TestCheckerDropsInvalidFindingWithoutRetry(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	// One finding has a made-up category; the other is valid but carries an
+	// odd ID and someone else's path.
+	provider := &fakeProvider{content: `{
+		"issues":[
+			{"id":"ISSUE-0001","severity":"WARN","category":"VIBES","title":"Bad","description":"d","evidence":[{"line_start":1,"line_end":1,"quote":"q"}],"impact":"i","recommendation":"r","blocking":false,"tags":[]},
+			{"id":"finding-two","severity":"CRITICAL","category":"NON_TESTABLE_REQUIREMENT","title":"Good","description":"d","evidence":[{"path":"../other.md","line_start":1,"line_end":1,"quote":"q"}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}
+		],
+		"questions":[],
+		"patches":[]
+	}`}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "Requirement.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Source:            SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(provider.reqs) != 1 {
+		t.Fatalf("provider calls = %d, want no repair call for one bad finding", len(provider.reqs))
+	}
+	if len(result.Report.Issues) != 1 {
+		t.Fatalf("issues = %#v, want only the valid finding", result.Report.Issues)
+	}
+	issue := result.Report.Issues[0]
+	if issue.ID != "ISSUE-0001" || issue.Title != "Good" {
+		t.Fatalf("issue = %s %q, want the valid finding renumbered ISSUE-0001", issue.ID, issue.Title)
+	}
+	if issue.Evidence[0].Path != "SPEC.md" {
+		t.Fatalf("evidence path = %q, want the reviewed spec", issue.Evidence[0].Path)
+	}
+	if result.Report.Meta.DroppedFindings != 1 {
+		t.Fatalf("meta.dropped_findings = %d, want 1", result.Report.Meta.DroppedFindings)
+	}
+	if result.Report.Summary.Verdict != schema.VerdictInvalid {
+		t.Fatalf("verdict = %s, want INVALID from the kept finding", result.Report.Summary.Verdict)
+	}
+}
+
 func TestCheckerReturnsAllIssuesRegardlessOfSeverityThreshold(t *testing.T) {
 	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
 	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
@@ -1072,7 +1122,7 @@ func (p *chunkAwareProvider) Complete(_ context.Context, req *llm.Request) (*llm
 	case strings.Contains(req.UserPromptCachedPrefix, "Analyze cross-section risks"):
 		p.synthCalls++
 		return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[]}`, Model: "fake:synthesis"}, nil
-	case strings.Contains(req.UserPrompt, "<chunk_issue_tag>"):
+	case strings.Contains(req.UserPrompt, chunkIDAttr):
 		p.chunkCalls++
 		if p.emptyChunks {
 			return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, Model: "fake:chunk"}, nil
@@ -1086,14 +1136,16 @@ func (p *chunkAwareProvider) Complete(_ context.Context, req *llm.Request) (*llm
 	}
 }
 
+// chunkIDAttr opens the chunk element of a chunk review prompt.
+const chunkIDAttr = `<chunk id="`
+
 func chunkIDFromPrompt(prompt string) string {
-	const prefix = "<chunk_issue_tag>chunk:"
-	start := strings.Index(prompt, prefix)
+	start := strings.Index(prompt, chunkIDAttr)
 	if start < 0 {
 		return "CHUNK-0001-L1-L1"
 	}
-	start += len(prefix)
-	end := strings.Index(prompt[start:], "</chunk_issue_tag>")
+	start += len(chunkIDAttr)
+	end := strings.Index(prompt[start:], `"`)
 	if end < 0 {
 		return "CHUNK-0001-L1-L1"
 	}

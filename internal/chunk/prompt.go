@@ -40,7 +40,7 @@ func BuildUserPrompt(input PromptInput) (cachedPrefix, variable string, err erro
 	prefix.WriteString("Analyze one section chunk of the following specification.\n")
 	prefix.WriteString("Return JSON matching the SpecCritic schema. Do not return prose or markdown fences.\n")
 	prefix.WriteString("Review only the primary range for defects. Use context-only lines only to interpret the primary range.\n")
-	prefix.WriteString("Cite only primary-range line numbers. Add tag \"chunk:<CHUNK-ID>\" using the chunk id from the chunk metadata to every issue. Add tag \"cross-section\" when a finding depends on another section.\n")
+	prefix.WriteString("Cite only primary-range line numbers. Add tag \"cross-section\" when a finding depends on another section.\n")
 	prefix.WriteString("Do not emit score or verdict. Emit meta.chunk_summary as a <=600 character summary of the primary range.\n")
 	if len(input.ContextFiles) > 0 {
 		prefix.WriteString("\n")
@@ -64,7 +64,6 @@ func BuildUserPrompt(input PromptInput) (cachedPrefix, variable string, err erro
 
 	var tail strings.Builder
 	fmt.Fprintf(&tail, "\n<chunk id=%q file=%q primary_range=\"L%d-L%d\">\n", input.Chunk.ID, input.Chunk.Path, input.Chunk.LineStart, input.Chunk.LineEnd)
-	fmt.Fprintf(&tail, "<chunk_issue_tag>chunk:%s</chunk_issue_tag>\n", input.Chunk.ID)
 	if len(input.Chunk.HeadingPath) > 0 {
 		fmt.Fprintf(&tail, "<heading_path>%s</heading_path>\n", strings.Join(input.Chunk.HeadingPath, " > "))
 	}

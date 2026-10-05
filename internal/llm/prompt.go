@@ -34,8 +34,6 @@ Anti-hallucination rules:
 - Do not invent requirements not present in the spec
 - Do not suggest architectural solutions
 - Every issue must have at least one evidence block with valid line numbers
-- Issue IDs must follow format ISSUE-XXXX (four digits, zero-padded)
-- Question IDs must follow format Q-XXXX
 
 Output rules:
 - Return JSON only — no prose, no markdown fences, no explanation
@@ -55,7 +53,7 @@ const schemaExample = `{
       "category": "NON_TESTABLE_REQUIREMENT",
       "title": "Short title describing the defect",
       "description": "Detailed explanation of the defect",
-      "evidence": [{"path": "SPEC.md", "line_start": 10, "line_end": 12, "quote": "exact text from spec"}],
+      "evidence": [{"line_start": 10, "line_end": 12, "quote": "exact text from spec"}],
       "impact": "What goes wrong if this is not fixed",
       "recommendation": "Minimal corrective action",
       "blocking": true,
@@ -69,7 +67,7 @@ const schemaExample = `{
       "question": "Specific question that must be answered before implementation",
       "why_needed": "Why this question blocks implementation",
       "blocks": ["REQ-001"],
-      "evidence": [{"path": "SPEC.md", "line_start": 10, "line_end": 12, "quote": "exact text"}]
+      "evidence": [{"line_start": 10, "line_end": 12, "quote": "exact text"}]
     }
   ],
   "patches": [
