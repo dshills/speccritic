@@ -53,6 +53,16 @@ const assignedValue = `[ \t]*[:=][ \t]*(?:` +
 	`"[^"\n]+|` + "`[^`\n]+" + `|'[^'\n]+|` +
 	`[^\s"',;{}[\]()]+)`
 
+// quotedPhrase matches a value opened with the quote character q that holds a
+// space or tab, without leaving its line. A backslash-escaped or doubled q
+// inside the value does not close it. The value runs through its closing quote
+// and anything attached to that quote up to a delimiter; if the quote is never
+// closed on the line, it runs to the end of the line.
+func quotedPhrase(q string) string {
+	body := `(?:\\[^\n]|` + q + q + `|[^` + q + `\n])*`
+	return q + body + `[ \t]` + body + `(?:` + q + `[^\s,;{}[\]()]*|(?m:$))`
+}
+
 // numPatterns is enforced as an array length below; adding a pattern without
 // updating this constant is a compile-time error — preventing silent
 // out-of-bounds in the per-pattern hit tracker.
@@ -75,7 +85,11 @@ var patterns = [numPatterns]redactPattern{
 	// a lowercased copy of the input.
 	{re: regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*`), triggers: []string{"bearer"}, fold: true},
 	// Inline password assignments (case-insensitive regex; lowercase triggers).
-	{re: regexp.MustCompile(`(?i)password[ \t]*[:=][ \t]*\S+`), triggers: []string{"password"}, fold: true},
+	// The value is a run of non-whitespace, not cut at `,;{}[]()` — passwords
+	// legitimately contain those. A quoted value ("val", 'val', `val`) holding a
+	// space or tab is instead matched as a quotedPhrase, so a passphrase does
+	// not leak past its first word; one without is already covered whole by \S+.
+	{re: regexp.MustCompile(`(?i)password[ \t]*[:=][ \t]*(?:` + quotedPhrase(`"`) + `|` + quotedPhrase("`") + `|` + quotedPhrase(`'`) + `|\S+)`), triggers: []string{"password"}, fold: true},
 	// api_key / apiKey / api-key assignments — optional closing quote handles JSON keys.
 	{re: regexp.MustCompile(`(?i)api[-_]?key"?` + assignedValue), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
 	// client_secret / clientSecret / secret_key / private_key OAuth secret assignments.

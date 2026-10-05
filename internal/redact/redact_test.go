@@ -206,6 +206,102 @@ func TestRedact_LineCountPreservedForEveryPattern(t *testing.T) {
 	}
 }
 
+func TestRedact_QuotedPassword(t *testing.T) {
+	// A quoted password is redacted up to its closing quote, spaces included —
+	// stopping at the first space would send the rest of the passphrase to the
+	// provider. Everything else keeps matching as a whole run of non-whitespace.
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "double-quoted multi-word",
+			input: "before\npassword: \"my secret phrase\"\nafter line\n",
+			want:  "before\n[REDACTED]\nafter line\n",
+		},
+		{
+			name:  "single-quoted multi-word",
+			input: "before\nPassword = 'my secret phrase'\nafter line\n",
+			want:  "before\n[REDACTED]\nafter line\n",
+		},
+		{
+			name:  "backtick-quoted multi-word",
+			input: "before\npassword: `my secret phrase`\nafter line\n",
+			want:  "before\n[REDACTED]\nafter line\n",
+		},
+		{
+			name:  "text after the closing quote is kept",
+			input: "password: \"my secret phrase\" # rotate monthly\n",
+			want:  "[REDACTED] # rotate monthly\n",
+		},
+		{
+			name:  "windows line ending after the closing quote is kept",
+			input: "password: \"my secret phrase\"\r\nafter line\r\n",
+			want:  "[REDACTED]\r\nafter line\r\n",
+		},
+		{
+			name:  "unquoted value with delimiters",
+			input: "password: abc,def;{x}[y](z)\n",
+			want:  "[REDACTED]\n",
+		},
+		{
+			name:  "escaped quote inside a quoted value",
+			input: "password: \"ab\\\"cd\"\n",
+			want:  "[REDACTED]\n",
+		},
+		{
+			name:  "doubled quote inside a quoted value",
+			input: "password: 'it''s'\n",
+			want:  "[REDACTED]\n",
+		},
+		{
+			name:  "characters attached to the closing quote",
+			input: "password: \"abc\"def, next\n",
+			want:  "[REDACTED] next\n",
+		},
+		{
+			name:  "suffix attached to a quoted multi-word value",
+			input: "password: \"my secret\"suffix next\n",
+			want:  "[REDACTED] next\n",
+		},
+		{
+			name:  "escaped quotes inside a multi-word value",
+			input: "password: \"my \\\"secret\\\" phrase\"\n",
+			want:  "[REDACTED]\n",
+		},
+		{
+			name:  "escaped apostrophe inside a multi-word value",
+			input: "password: 'don\\'t tell anyone'\n",
+			want:  "[REDACTED]\n",
+		},
+		{
+			name:  "doubled apostrophe inside a multi-word value",
+			input: "password: 'don''t tell anyone'\n",
+			want:  "[REDACTED]\n",
+		},
+		{
+			name:  "backslash before the closing quote",
+			input: "password: \"C:\\my dir\\\"\nnext line\n",
+			want:  "[REDACTED]\nnext line\n",
+		},
+		{
+			name:  "second key directly after a quoted multi-word value",
+			input: "{password: \"a b\",db_password: \"c d\"}\n",
+			want:  "{[REDACTED],db_[REDACTED]}\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := Redact(tc.input)
+			assertNewlinesPreserved(t, tc.input, out)
+			if out != tc.want {
+				t.Errorf("unexpected output:\ngot:  %q\nwant: %q", out, tc.want)
+			}
+		})
+	}
+}
+
 func TestRedact_KeyWithoutValueOnSameLine(t *testing.T) {
 	// A key whose line ends at the separator names a field; whatever is on the
 	// next line is not its value. Nothing here is a secret, so nothing may
@@ -387,6 +483,9 @@ func TestRedact_UnclosedQuoteIsRedactedToEndOfItsLine(t *testing.T) {
 		{"quoted phrase on a later line", "client_secret = \"abc def\nsaid \"hello\"\nnext line\n", "[REDACTED]\nsaid \"hello\"\nnext line\n"},
 		{"inline code on a later line", "auth_token: `abc def\nrun `make`\nnext line\n", "[REDACTED]\nrun `make`\nnext line\n"},
 		{"apostrophe before an accented letter", "api_key: 'abc def\nl'état des lieux\nnext line\n", "[REDACTED]\nl'état des lieux\nnext line\n"},
+		{"password, quote closed on a later line", "password: \"abc def\nsecond part\" # rotate\nnext line\n", "[REDACTED]\nsecond part\" # rotate\nnext line\n"},
+		{"password, apostrophe in later prose", "password = 'abc def\nThe user's guide\nnext line\n", "[REDACTED]\nThe user's guide\nnext line\n"},
+		{"password, inline code on a later line", "Password: `abc def\nrun `make`\nnext line\n", "[REDACTED]\nrun `make`\nnext line\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
