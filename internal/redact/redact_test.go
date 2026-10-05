@@ -302,6 +302,66 @@ func TestRedact_QuotedPassword(t *testing.T) {
 	}
 }
 
+func TestRedact_PasswordJSONKey(t *testing.T) {
+	// A JSON key has a closing quote between the key and the separator. The key
+	// must still be recognised, or the whole value goes to the provider. The
+	// value is matched as for an unquoted key: a quoted value holding a space
+	// ends at its closing quote, anything else is a run of non-whitespace.
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "single-word value",
+			input: "{\"password\": \"hunter2\"}\n",
+			want:  "{\"[REDACTED]\n",
+		},
+		{
+			name:  "multi-word value",
+			input: "{\"password\": \"hunter2 two\"}\n",
+			want:  "{\"[REDACTED]}\n",
+		},
+		{
+			name:  "mixed case with a space before the separator",
+			input: "\"Password\" : \"my secret phrase\"\n",
+			want:  "\"[REDACTED]\n",
+		},
+		{
+			name:  "no space after the separator",
+			input: "{\"password\":\"hunter2 two\"}\n",
+			want:  "{\"[REDACTED]}\n",
+		},
+		{
+			name:  "field after the value is kept",
+			input: "{\"password\": \"hunter2 two\", \"user\": \"bob\"}\n",
+			want:  "{\"[REDACTED], \"user\": \"bob\"}\n",
+		},
+		{
+			name:  "escaped quotes inside the value",
+			input: "{\"password\": \"my \\\"secret\\\" phrase\"}\n",
+			want:  "{\"[REDACTED]}\n",
+		},
+		{
+			name:  "pretty-printed object",
+			input: "{\n  \"password\": \"hunter2 two\",\n  \"name\": \"service\"\n}\n",
+			want:  "{\n  \"[REDACTED],\n  \"name\": \"service\"\n}\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := Redact(tc.input)
+			assertNewlinesPreserved(t, tc.input, out)
+			if out != tc.want {
+				t.Errorf("unexpected output:\ngot:  %q\nwant: %q", out, tc.want)
+			}
+			if !ContainsSecret(tc.input) {
+				t.Errorf("ContainsSecret returned false for %q", tc.input)
+			}
+		})
+	}
+}
+
 func TestRedact_KeyWithoutValueOnSameLine(t *testing.T) {
 	// A key whose line ends at the separator names a field; whatever is on the
 	// next line is not its value. Nothing here is a secret, so nothing may
@@ -310,6 +370,7 @@ func TestRedact_KeyWithoutValueOnSameLine(t *testing.T) {
 	inputs := []string{
 		"## Login schema\nproperties:\n  password:\n    type: string\n  api_key:\n    type: string\nNext requirement line\n",
 		"  Password:\n    type: string\n",
+		"  \"password\":\n    {\"type\": \"string\"}\n",
 		"  apiKey:\n    type: string\n",
 		"  api-key:\n    type: string\n",
 		"  \"api_key\":\n    {\"type\": \"string\"}\n",
@@ -517,7 +578,7 @@ func TestRedact_QuotedValueOnOneLine(t *testing.T) {
 func TestRedact_LineCountSurvivesBreaksAnywhere(t *testing.T) {
 	samples := []string{
 		"AKIAABCDEFGHIJKLMNOP", "sk-abcdefghijklmnopqrstuvwx", "eyJabc.def.ghi",
-		"Bearer abcdefghijklmnopqrstuvwxyz", "password: hunter2",
+		"Bearer abcdefghijklmnopqrstuvwxyz", "password: hunter2", `"password": "abc def"`,
 		`api_key: "abc def"`, "client_secret: 'abc def'", "access_token: `abc def`",
 		`"api_key": "abc"`, "private_key=abc", "refresh_token = abc",
 		"-----BEGIN RSA PRIVATE KEY-----MIIE-----END RSA PRIVATE KEY-----",

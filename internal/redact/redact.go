@@ -84,12 +84,13 @@ var patterns = [numPatterns]redactPattern{
 	// Regex is case-insensitive, so triggers are lowercase and matched against
 	// a lowercased copy of the input.
 	{re: regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*`), triggers: []string{"bearer"}, fold: true},
-	// Inline password assignments (case-insensitive regex; lowercase triggers).
+	// Inline password assignments (case-insensitive regex; lowercase triggers) —
+	// optional closing quote handles JSON keys.
 	// The value is a run of non-whitespace, not cut at `,;{}[]()` — passwords
 	// legitimately contain those. A quoted value ("val", 'val', `val`) holding a
 	// space or tab is instead matched as a quotedPhrase, so a passphrase does
 	// not leak past its first word; one without is already covered whole by \S+.
-	{re: regexp.MustCompile(`(?i)password[ \t]*[:=][ \t]*(?:` + quotedPhrase(`"`) + `|` + quotedPhrase("`") + `|` + quotedPhrase(`'`) + `|\S+)`), triggers: []string{"password"}, fold: true},
+	{re: regexp.MustCompile(`(?i)password"?[ \t]*[:=][ \t]*(?:` + quotedPhrase(`"`) + `|` + quotedPhrase("`") + `|` + quotedPhrase(`'`) + `|\S+)`), triggers: []string{"password"}, fold: true},
 	// api_key / apiKey / api-key assignments — optional closing quote handles JSON keys.
 	{re: regexp.MustCompile(`(?i)api[-_]?key"?` + assignedValue), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
 	// client_secret / clientSecret / secret_key / private_key OAuth secret assignments.
