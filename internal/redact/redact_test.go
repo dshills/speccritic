@@ -107,105 +107,306 @@ func TestRedact_LineCountPreserved(t *testing.T) {
 	}
 }
 
-// A key at the end of a line has no value on that line, so nothing on it or on
-// the line below is a secret. YAML schema snippets in specs look exactly like
-// this, and matching across the line break used to merge the two lines.
-func TestRedact_KeyAtEndOfLineLeavesBothLinesAlone(t *testing.T) {
-	keys := []string{
-		"password:", "Password =", "api_key:", "apiKey:", `"api-key":`,
-		"client_secret:", "secret_key:", "private_key:",
-		"auth_token:", "accessToken:", "refresh_token =",
-		"Authorization: Bearer",
+func assertNewlinesPreserved(t *testing.T, input, out string) {
+	t.Helper()
+	if before, after := strings.Count(input, "\n"), strings.Count(out, "\n"); before != after {
+		t.Errorf("line count changed after redaction: before=%d after=%d\nin:  %q\nout: %q", before, after, input, out)
 	}
-	for _, key := range keys {
-		t.Run(key, func(t *testing.T) {
-			input := "properties:\n  " + key + "\n    type: string_of_at_least_twenty_chars\nnext requirement\n"
-			if out := Redact(input); out != input {
-				t.Errorf("input changed:\n in: %q\nout: %q", input, out)
+}
+
+func TestRedact_LineCountPreservedForEveryPattern(t *testing.T) {
+	// Each case puts one secret between two ordinary lines. The secret must go,
+	// the newline count must hold, and the surrounding lines must survive.
+	cases := []struct {
+		name   string
+		input  string
+		secret string
+		want   string
+	}{
+		{
+			name:   "aws access key",
+			input:  "before\naccess_key = AKIAIOSFODNN7EXAMPLE\nafter line\n",
+			secret: "AKIAIOSFODNN7EXAMPLE",
+			want:   "before\naccess_key = [REDACTED]\nafter line\n",
+		},
+		{
+			name:   "sk- key",
+			input:  "before\nkey sk-abcdefghijklmnopqrstuvwxyz123456\nafter line\n",
+			secret: "sk-abcdefghijklmnopqrstuvwxyz123456",
+			want:   "before\nkey [REDACTED]\nafter line\n",
+		},
+		{
+			name:   "jwt",
+			input:  "before\njwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c\nafter line\n",
+			secret: "eyJhbGciOiJIUzI1NiJ9",
+			want:   "before\njwt [REDACTED]\nafter line\n",
+		},
+		{
+			name:   "bearer token",
+			input:  "before\nAuthorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789\nafter line\n",
+			secret: "abcdefghijklmnopqrstuvwxyz0123456789",
+			want:   "before\nAuthorization: [REDACTED]\nafter line\n",
+		},
+		{
+			name:   "password",
+			input:  "before\npassword: supersecret123\nafter line\n",
+			secret: "supersecret123",
+			want:   "before\n[REDACTED]\nafter line\n",
+		},
+		{
+			name:   "api key",
+			input:  "before\napi_key = \"abc123def456\"\nafter line\n",
+			secret: "abc123def456",
+			want:   "before\n[REDACTED]\nafter line\n",
+		},
+		{
+			name:   "client secret",
+			input:  "before\nclient_secret: 'shh-very-secret'\nafter line\n",
+			secret: "shh-very-secret",
+			want:   "before\n[REDACTED]\nafter line\n",
+		},
+		{
+			name:   "refresh token",
+			input:  "before\nrefresh_token=tok_live_12345\nafter line\n",
+			secret: "tok_live_12345",
+			want:   "before\n[REDACTED]\nafter line\n",
+		},
+		{
+			name:   "pem block",
+			input:  "before\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\nafter line\n",
+			secret: "MIIEowIBAAKCAQEA",
+			want:   "before\n[REDACTED]\n[REDACTED]\n[REDACTED]\nafter line\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := Redact(tc.input)
+			assertNewlinesPreserved(t, tc.input, out)
+			if strings.Contains(out, tc.secret) {
+				t.Errorf("secret not redacted: %q", out)
+			}
+			if out != tc.want {
+				t.Errorf("unexpected output:\ngot:  %q\nwant: %q", out, tc.want)
+			}
+		})
+	}
+
+	// A pattern added to the table without a case above would go unchecked.
+	for i, p := range patterns {
+		covered := false
+		for _, tc := range cases {
+			if p.re.MatchString(tc.input) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			t.Errorf("patterns[%d] (%s) has no line-count case", i, p.re)
+		}
+	}
+}
+
+func TestRedact_KeyWithoutValueOnSameLine(t *testing.T) {
+	// A key whose line ends at the separator names a field; whatever is on the
+	// next line is not its value. Nothing here is a secret, so nothing may
+	// change — in particular the match must not reach across the newline and
+	// swallow the following line.
+	inputs := []string{
+		"## Login schema\nproperties:\n  password:\n    type: string\n  api_key:\n    type: string\nNext requirement line\n",
+		"  Password:\n    type: string\n",
+		"  apiKey:\n    type: string\n",
+		"  api-key:\n    type: string\n",
+		"  \"api_key\":\n    {\"type\": \"string\"}\n",
+		"  client_secret:\n    type: string\n",
+		"  clientSecret:\n    type: string\n",
+		"  secret_key:\n    type: string\n",
+		"  private_key:\n    type: string\n",
+		"  auth_token:\n    type: string\n",
+		"  accessToken:\n    type: string\n",
+		"  refresh_token:\n    type: string\n",
+		"Authorization: Bearer\n  type: string\n",
+		"password =\nnext line\n",
+		"password: \t\nnext line\n",
+		"password\n: next line\n",
+		"auth_token\n=\nnext line\n",
+		"password:\r\n  type: string\r\n",
+		"api_key:\r\n  type: string\r\n",
+		"password:",
+	}
+	for _, input := range inputs {
+		out := Redact(input)
+		assertNewlinesPreserved(t, input, out)
+		if out != input {
+			t.Errorf("key without a value was modified:\ngot:  %q\nwant: %q", out, input)
+		}
+		if ContainsSecret(input) {
+			t.Errorf("ContainsSecret returned true for key without a value: %q", input)
+		}
+	}
+}
+
+func TestRedact_QuotedValueDoesNotSpanLines(t *testing.T) {
+	// An opening quote with no closing quote on its own line must not pair
+	// with a quote further down and take the lines in between with it.
+	cases := []struct {
+		name   string
+		input  string
+		secret string
+	}{
+		{name: "single quote closed by a later apostrophe", input: "api_key: 'see vault\nThe user's guide\nnext line\n"},
+		{name: "double quote closed on a later line", input: "client_secret = \"see vault\nsaid \"hello\"\nnext line\n"},
+		{name: "backtick closed on a later line", input: "auth_token: `see vault\nrun `make`\nnext line\n"},
+		{
+			name:   "quoted pem block",
+			input:  "private_key: \"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\"\nnext line\n",
+			secret: "MIIEowIBAAKCAQEA",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := Redact(tc.input)
+			assertNewlinesPreserved(t, tc.input, out)
+			if tc.secret != "" {
+				if strings.Contains(out, tc.secret) {
+					t.Errorf("secret not redacted: %q", out)
+				}
+				if !strings.HasSuffix(out, "\nnext line\n") {
+					t.Errorf("line after the block was modified: %q", out)
+				}
+				return
+			}
+			// Every line after the one holding the key must come through intact.
+			_, wantRest, _ := strings.Cut(tc.input, "\n")
+			_, gotRest, _ := strings.Cut(out, "\n")
+			if gotRest != wantRest {
+				t.Errorf("following lines were modified:\ngot:  %q\nwant: %q", gotRest, wantRest)
 			}
 		})
 	}
 }
 
-func TestRedact_PreservesEveryLine(t *testing.T) {
-	cases := map[string]struct {
-		input      string
-		wantGone   []string
-		wantIntact []string
+// A quoted value that really does span lines is a secret on every one of them.
+// Limiting every pattern to a single line would leave such a value readable.
+func TestRedact_QuotedValueSpanningLinesIsRedactedOnEveryLine(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		want     string
+		wantGone []string
 	}{
-		"yaml schema with secret-named keys": {
-			input:      "## Login schema\nproperties:\n  password:\n    type: string\n  api_key:\n    type: string\nNext requirement line\n",
-			wantIntact: []string{"  password:", "    type: string", "  api_key:", "Next requirement line"},
+		{
+			name:     "double quotes then a comment",
+			input:    "before\nprivate_key: \"first part\nsecond part\nthird part\" # rotate yearly\nafter\n",
+			want:     "before\n[REDACTED]\n[REDACTED]\n[REDACTED] # rotate yearly\nafter\n",
+			wantGone: []string{"first part", "second part", "third part"},
 		},
-		"values on the same line are still redacted": {
-			input:      "password: hunter2\n  api_key: abc123\nclient_secret = \"s3cret value\"\nrefresh_token: 'tok en'\nplain line\n",
-			wantGone:   []string{"hunter2", "abc123", "s3cret value", "tok en"},
-			wantIntact: []string{"plain line"},
+		{
+			name:     "double quotes then a line comment",
+			input:    "before\nprivate_key: \"first part\nsecond part\" // rotate yearly\nafter\n",
+			want:     "before\n[REDACTED]\n[REDACTED] // rotate yearly\nafter\n",
+			wantGone: []string{"first part", "second part"},
 		},
-		"quoted value over several lines is redacted on every line": {
-			input:      "before\nprivate_key: \"first part\nsecond part\nthird part\" # rotate yearly\nafter\n",
-			wantGone:   []string{"first part", "second part", "third part"},
-			wantIntact: []string{"before", "after"},
+		{
+			name:     "double quotes then a block comment",
+			input:    "before\nprivate_key: \"first part\nsecond part\"/* rotate yearly */\nafter\n",
+			want:     "before\n[REDACTED]\n[REDACTED]/* rotate yearly */\nafter\n",
+			wantGone: []string{"first part", "second part"},
 		},
-		"single-quoted value over several lines": {
-			input:      "before\nclient_secret = 'first part\nsecond part'\nafter\n",
-			wantGone:   []string{"first part", "second part"},
-			wantIntact: []string{"before", "after"},
+		{
+			name:     "double quotes then more text",
+			input:    "before\nprivate_key: \"first part\nsecond part\" is the signing key.\nafter\n",
+			want:     "before\n[REDACTED]\n[REDACTED] is the signing key.\nafter\n",
+			wantGone: []string{"first part", "second part"},
 		},
-		"backtick value over several lines": {
-			input:      "before\naccess_token: `first part\nsecond part`\nafter\n",
-			wantGone:   []string{"first part", "second part"},
-			wantIntact: []string{"before", "after"},
+		{
+			name:     "single quotes at end of line",
+			input:    "before\nclient_secret = 'first part\nsecond part'\nafter\n",
+			want:     "before\n[REDACTED]\n[REDACTED]\nafter\n",
+			wantGone: []string{"first part", "second part"},
 		},
-		"quote never closed is redacted to the end of its line": {
-			input:      "api_key: \"abc def\nno quote on this line\nlast line\n",
-			wantGone:   []string{"abc def"},
-			wantIntact: []string{"no quote on this line", "last line"},
+		{
+			name:     "backticks at end of input",
+			input:    "before\naccess_token: `first part\nsecond part`",
+			want:     "before\n[REDACTED]\n[REDACTED]",
+			wantGone: []string{"first part", "second part"},
 		},
-		"empty quoted value is not a secret": {
-			input:      "api_key: \"\" # set from the environment\nnext line\n",
-			wantIntact: []string{"api_key: \"\" # set from the environment", "next line"},
+		{
+			name:     "json string followed by a comma",
+			input:    "{\n  \"api_key\": \"first part\nsecond part\",\n  \"name\": \"service\"\n}\n",
+			want:     "{\n  \"[REDACTED]\n[REDACTED],\n  \"name\": \"service\"\n}\n",
+			wantGone: []string{"first part", "second part"},
 		},
-		"bearer token wrapped onto the next line": {
-			input:      "before\nAuthorization: Bearer\n  abcdefghijklmnopqrstuvwxyz012345\nafter\n",
-			wantGone:   []string{"abcdefghijklmnopqrstuvwxyz012345"},
-			wantIntact: []string{"before", "after"},
-		},
-		"pem block": {
-			input:      "before\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\nafter\n",
-			wantGone:   []string{"MIIEowIBAAKCAQEA"},
-			wantIntact: []string{"before", "after"},
-		},
-		"windows line endings": {
-			input:      "password:\r\n  type: string\r\napi_key: abc123\r\nend\r\n",
-			wantGone:   []string{"abc123"},
-			wantIntact: []string{"password:\r", "  type: string\r", "end\r"},
+		{
+			name:     "windows line endings",
+			input:    "before\r\nsecret_key: \"first part\r\nsecond part\"\r\nafter\r\n",
+			want:     "before\r\n[REDACTED]\n[REDACTED]\r\nafter\r\n",
+			wantGone: []string{"first part", "second part"},
 		},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			out := Redact(tc.input)
-			inLines := strings.Split(tc.input, "\n")
-			outLines := strings.Split(out, "\n")
-			if len(inLines) != len(outLines) {
-				t.Fatalf("line count changed: before=%d after=%d\nout: %q", len(inLines), len(outLines), out)
-			}
+			assertNewlinesPreserved(t, tc.input, out)
 			for _, secret := range tc.wantGone {
 				if strings.Contains(out, secret) {
 					t.Errorf("secret %q still present: %q", secret, out)
 				}
 			}
-			for _, line := range tc.wantIntact {
-				kept := false
-				for i := range inLines {
-					if inLines[i] == line && outLines[i] == line {
-						kept = true
-						break
-					}
-				}
-				if !kept {
-					t.Errorf("line %q was changed or moved:\nout: %q", line, out)
-				}
+			if out != tc.want {
+				t.Errorf("unexpected output:\ngot:  %q\nwant: %q", out, tc.want)
+			}
+		})
+	}
+}
+
+// A token-shaped run on the line after "Bearer" is treated as a wrapped token.
+// A short word there, as in a schema, is not long enough to match.
+func TestRedact_BearerTokenWrappedOntoNextLine(t *testing.T) {
+	input := "before\nAuthorization: Bearer\n  abcdefghijklmnopqrstuvwxyz0123456789\nafter\n"
+	want := "before\nAuthorization: [REDACTED]\n[REDACTED]\nafter\n"
+	out := Redact(input)
+	assertNewlinesPreserved(t, input, out)
+	if out != want {
+		t.Errorf("unexpected output:\ngot:  %q\nwant: %q", out, want)
+	}
+	if !ContainsSecret(input) {
+		t.Error("ContainsSecret returned false for a wrapped bearer token")
+	}
+}
+
+// When the quote that follows an unclosed one does not end a value, only the
+// key's own line is redacted: the secret on it goes, the lines below stay.
+func TestRedact_UnclosedQuoteIsRedactedToEndOfItsLine(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"no quote anywhere below", "api_key: \"abc def\nno quote on this line\nlast line\n", "[REDACTED]\nno quote on this line\nlast line\n"},
+		{"apostrophe in later prose", "api_key: 'abc def\nThe user's guide\nnext line\n", "[REDACTED]\nThe user's guide\nnext line\n"},
+		{"quoted phrase on a later line", "client_secret = \"abc def\nsaid \"hello\"\nnext line\n", "[REDACTED]\nsaid \"hello\"\nnext line\n"},
+		{"inline code on a later line", "auth_token: `abc def\nrun `make`\nnext line\n", "[REDACTED]\nrun `make`\nnext line\n"},
+		{"apostrophe before an accented letter", "api_key: 'abc def\nl'état des lieux\nnext line\n", "[REDACTED]\nl'état des lieux\nnext line\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if out := Redact(tc.input); out != tc.want {
+				t.Errorf("unexpected output:\ngot:  %q\nwant: %q", out, tc.want)
+			}
+		})
+	}
+}
+
+func TestRedact_QuotedValueOnOneLine(t *testing.T) {
+	cases := map[string]struct{ input, want string }{
+		"text after the closing quote is kept": {"api_key: \"abc\" is the key\n", "[REDACTED] is the key\n"},
+		"empty value is not a secret":          {"api_key: \"\" # set from the environment\n", "api_key: \"\" # set from the environment\n"},
+		"delimiter after the value is kept":    {"{\"api_key\": \"abc\", \"n\": 1}\n", "{\"[REDACTED], \"n\": 1}\n"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if out := Redact(tc.input); out != tc.want {
+				t.Errorf("unexpected output:\ngot:  %q\nwant: %q", out, tc.want)
 			}
 		})
 	}

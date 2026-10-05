@@ -27,21 +27,41 @@ type redactPattern struct {
 	fold     bool
 }
 
+// tailGroup names the capture group holding text that a pattern matched only to
+// confirm where a value ends. That text is not part of the secret and is put
+// back unchanged.
+const tailGroup = "tail"
+
 // assignedValue matches a separator and the value assigned after it. The
 // separator and the start of the value must be on the key's own line, so a key
 // with nothing after it (as in a YAML schema) does not pull in the line below.
-// A quoted value may then run over several lines. An opening quote that is
-// never closed is redacted to the end of its line.
-const assignedValue = `[ \t]*[:=][ \t]*(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+'|"[^"\n]+|` + "`[^`\n]+" + `|'[^'\n]+|[^\s"',;{}[\]()]+)`
+//
+// The value is, in order of preference:
+//   - a quoted value closed on the same line;
+//   - a quoted value closed on a later line, unless the closing quote runs
+//     straight into a letter or digit. That is what an apostrophe ("user's")
+//     or the opening quote of a later phrase looks like, and treating one as
+//     the end of the value would let an unclosed quote swallow the lines
+//     below it. Anything else after the quote (end of line or input, space,
+//     delimiter, comment) ends the value, so the doubt goes toward redacting;
+//   - an opening quote that is never closed that way, redacted to the end of
+//     its own line;
+//   - an unquoted value, which stops at whitespace and delimiters.
+const assignedValue = `[ \t]*[:=][ \t]*(?:` +
+	`"[^"\n]+"|` + "`[^`\n]+`" + `|'[^'\n]+'|` +
+	`(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+')(?P<` + tailGroup + `>[^\pL\pN_]|\z)|` +
+	`"[^"\n]+|` + "`[^`\n]+" + `|'[^'\n]+|` +
+	`[^\s"',;{}[\]()]+)`
 
 // numPatterns is enforced as an array length below; adding a pattern without
 // updating this constant is a compile-time error — preventing silent
 // out-of-bounds in the per-pattern hit tracker.
 const numPatterns = 8
 
-// A match may span several lines (a quoted value, or a token wrapped onto the
-// line after "Bearer"). Redact replaces such a match line by line, so the
-// number of lines never changes.
+// A key and its separator never match across a line break, so a key with no
+// value on its line is left alone. A quoted value, a PEM block, or a token
+// wrapped onto the line after "Bearer" may span lines; Redact replaces such a
+// match line by line, so the number of lines never changes.
 var patterns = [numPatterns]redactPattern{
 	// AWS access key IDs
 	{re: regexp.MustCompile(`AKIA[0-9A-Z]{16}`), triggers: []string{"AKIA"}},
@@ -81,10 +101,34 @@ func Redact(input string) string {
 	// Apply only the patterns whose triggers were observed.
 	for i, p := range patterns {
 		if hits[i] {
-			input = p.re.ReplaceAllStringFunc(input, redactLines)
+			input = redactMatches(p.re, input)
 		}
 	}
 	return input
+}
+
+// redactMatches redacts every match of re in input, keeping any text the
+// pattern captured in its tail group.
+func redactMatches(re *regexp.Regexp, input string) string {
+	matches := re.FindAllStringSubmatchIndex(input, -1)
+	if len(matches) == 0 {
+		return input
+	}
+	tail := re.SubexpIndex(tailGroup)
+	var b strings.Builder
+	b.Grow(len(input))
+	last := 0
+	for _, m := range matches {
+		secretEnd := m[1]
+		if tail >= 0 && m[2*tail] >= 0 {
+			secretEnd = m[2*tail]
+		}
+		b.WriteString(input[last:m[0]])
+		b.WriteString(redactLines(input[m[0]:secretEnd]))
+		last = secretEnd
+	}
+	b.WriteString(input[last:])
+	return b.String()
 }
 
 // redactLines replaces a match with the redaction marker, once per line the
