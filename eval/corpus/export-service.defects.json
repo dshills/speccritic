@@ -1,0 +1,193 @@
+{
+  "id": "export-service",
+  "profile": "general",
+  "provenance": "Spec written for this eval and checked to be free of preflight findings. Defects are seeded by construction: each mutation removes or replaces text that the clean spec needs. Labels were written with the mutations and have not been verified by a second person.",
+  "mutations": [
+    {
+      "id": "expiry-contradiction",
+      "note": "The ready email promises 30 days; the expiry is defined as 7 days. The two statements are in different sections.",
+      "categories": [
+        "CONTRADICTION"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "contradict",
+        "conflict",
+        "inconsisten",
+        "30 days",
+        "7 days"
+      ],
+      "edits": [
+        {
+          "find": "The email for `ready` MUST contain the request id and the expiry.",
+          "replace": "The email for `ready` MUST contain the request id and state that the archive stays available for 30 days."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ex-notify-1`**"
+        },
+        {
+          "text": "- **Expiry**:"
+        }
+      ]
+    },
+    {
+      "id": "terminology-and-state-drift",
+      "note": "ex-build-3 speaks of a builder, a bundle, a job and a state `pending`; none is defined, and `pending` is not a lifecycle state.",
+      "categories": [
+        "TERMINOLOGY_INCONSISTENT",
+        "CONTRADICTION",
+        "UNDEFINED_INTERFACE",
+        "AMBIGUOUS_BEHAVIOR"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "pending",
+        "builder",
+        "bundle",
+        "terminolog",
+        "undefined state",
+        "not defined",
+        "not a defined"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`ex-build-3`**",
+          "with": "- **`ex-build-3`**: If a builder stops before the bundle is complete, the job MUST move from `running` back to `pending`, and any partial bundle MUST be deleted. A job MUST return to `pending` at most 2 times; the third time it MUST move to `failed` with the failure reason `worker_lost`."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ex-build-3`**"
+        }
+      ]
+    },
+    {
+      "id": "audit-interface-undefined",
+      "note": "Downloads must be reported to an Audit Service through an event interface that the spec never describes.",
+      "categories": [
+        "UNDEFINED_INTERFACE",
+        "ASSUMPTION_REQUIRED",
+        "MISSING_FAILURE_MODE"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "audit service",
+        "event interface",
+        "undefined",
+        "not defined",
+        "not specified"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`ex-download-3`**",
+          "with": "- **`ex-download-3`**: Each successful download MUST be reported to the Audit Service through its event interface."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ex-download-3`**"
+        }
+      ]
+    },
+    {
+      "id": "storage-write-failure-unspecified",
+      "note": "Nothing says what a worker does when writing the archive to the archive store fails.",
+      "categories": [
+        "MISSING_FAILURE_MODE",
+        "UNSPECIFIED_CONSTRAINT",
+        "ASSUMPTION_REQUIRED"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "archive store",
+        "write fail",
+        "writing the archive",
+        "storage fail",
+        "storage error",
+        "store is unavailable",
+        "store fails"
+      ],
+      "edits": [
+        {
+          "delete_line": "**`ex-build-4`**"
+        },
+        {
+          "delete_line": "A test makes the archive store reject writes"
+        }
+      ],
+      "evidence": [
+        {
+          "section": "Building the archive"
+        }
+      ]
+    },
+    {
+      "id": "download-latency-not-measurable",
+      "note": "ex-perf-2 says 'without noticeable delay' with no number.",
+      "categories": [
+        "NON_TESTABLE_REQUIREMENT",
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "noticeable",
+        "delay",
+        "latency",
+        "measur",
+        "quantif",
+        "threshold"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`ex-perf-2`**",
+          "with": "- **`ex-perf-2`**: The download endpoint MUST start sending the archive without noticeable delay."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ex-perf-2`**"
+        },
+        {
+          "text": "A load test meets"
+        }
+      ]
+    },
+    {
+      "id": "final-state-contradiction",
+      "note": "ex-create-5 lets a failed request go back to queued; ex-state-1 and ex-state-2 make `failed` final. The statements are in different sections.",
+      "categories": [
+        "CONTRADICTION",
+        "UNDEFINED_INTERFACE"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "contradict",
+        "conflict",
+        "inconsisten",
+        "final",
+        "restart",
+        "transition"
+      ],
+      "edits": [
+        {
+          "insert_after_line": "**`ex-create-4`**",
+          "with": "- **`ex-create-5`**: An account owner MUST be able to restart a `failed` export request with `POST /accounts/{account_id}/exports/{request_id}/restart`, which moves it back to `queued`."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ex-create-5`**"
+        },
+        {
+          "text": "**`ex-state-1`**"
+        },
+        {
+          "text": "**`ex-state-2`**"
+        }
+      ]
+    }
+  ]
+}

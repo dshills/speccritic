@@ -28,7 +28,7 @@ calls, or the quality of what comes back.
 | 3 | Fix redaction collapsing lines | Accuracy | Small | Done |
 | 4 | Record token usage and latency per call | All (measurement) | Small | Done |
 | 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium | Done |
-| 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium |  |
+| 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium | Done |
 | 7 | Enforce the output schema at the provider | Speed, Tokens | Medium |  |
 | 8 | Verify and re-anchor evidence locally | Accuracy | Medium |  |
 | 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small |  |
@@ -162,7 +162,11 @@ out of reach.
 
 ## 6. Build an eval set before tuning prompts or chunking
 
-**Helps:** Accuracy, by making it measurable. **Effort:** Medium.
+**Helps:** Accuracy, by making it measurable. **Effort:** Medium. **Status:** Done.
+
+**As built.** `make eval` reviews four clean specs and their seeded twins (24 defects, ten
+categories) and writes the metrics below to `eval/results/`. It has not been run against a model
+yet: the first run is the calibration of the corpus. See `eval/README.md`.
 
 **Today.** `testdata/` holds one good spec, one bad spec and canned mock responses. The tests
 prove the plumbing, not the quality of a review. Nothing measures precision, recall, severity

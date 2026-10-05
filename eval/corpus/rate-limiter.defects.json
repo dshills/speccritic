@@ -1,0 +1,215 @@
+{
+  "id": "rate-limiter",
+  "profile": "general",
+  "provenance": "Spec written for this eval and checked to be free of preflight findings. Defects are seeded by construction: each mutation removes or replaces text that the clean spec needs. Labels were written with the mutations and have not been verified by a second person.",
+  "mutations": [
+    {
+      "id": "performance-not-measurable",
+      "note": "rl-perf-1 no longer states a latency bound, a percentile or how it is measured.",
+      "categories": [
+        "NON_TESTABLE_REQUIREMENT",
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "minimal overhead",
+        "overhead",
+        "latency",
+        "measur",
+        "quantif",
+        "threshold",
+        "benchmark"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`rl-perf-1`**",
+          "with": "- **`rl-perf-1`**: `Allow` MUST add only minimal overhead to the calling request."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`rl-perf-1`**"
+        },
+        {
+          "text": "A benchmark on the reference machine"
+        }
+      ]
+    },
+    {
+      "id": "store-failure-unspecified",
+      "note": "Nothing says what Allow does when the counter store errors or does not answer.",
+      "categories": [
+        "MISSING_FAILURE_MODE",
+        "UNSPECIFIED_CONSTRAINT",
+        "ASSUMPTION_REQUIRED"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "unavailable",
+        "unreachable",
+        "outage",
+        "store fail",
+        "store error",
+        "does not answer",
+        "not respond",
+        "timeout",
+        "fail open",
+        "fail closed",
+        "failure of the counter store",
+        "counter store fail"
+      ],
+      "edits": [
+        {
+          "delete_line": "**`rl-store-3`**"
+        },
+        {
+          "delete_line": "A test makes the counter store unreachable"
+        }
+      ],
+      "evidence": [
+        {
+          "section": "Counter store"
+        },
+        {
+          "text": "**`rl-dec-1`**"
+        }
+      ]
+    },
+    {
+      "id": "window-ambiguous",
+      "note": "The window is no longer a fixed, epoch-aligned 60 seconds, so two implementations would count differently.",
+      "categories": [
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT",
+        "NON_TESTABLE_REQUIREMENT",
+        "ASSUMPTION_REQUIRED"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "roughly",
+        "window",
+        "boundar",
+        "align",
+        "sliding",
+        "fixed"
+      ],
+      "edits": [
+        {
+          "replace_line": "- **Window**:",
+          "with": "- **Window**: a period of roughly one minute."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "- **Window**:"
+        },
+        {
+          "text": "| `ResetAt` |"
+        },
+        {
+          "text": "**`rl-dec-5`**"
+        }
+      ]
+    },
+    {
+      "id": "key-unconstrained",
+      "note": "The key has no length bound and no rule for an invalid key.",
+      "categories": [
+        "UNSPECIFIED_CONSTRAINT",
+        "MISSING_FAILURE_MODE",
+        "ASSUMPTION_REQUIRED",
+        "AMBIGUOUS_BEHAVIOR"
+      ],
+      "severity": "WARN",
+      "keywords": [
+        "key length",
+        "empty key",
+        "length of the key",
+        "key size",
+        "invalid key",
+        "key valid",
+        "constraints on key",
+        "key format"
+      ],
+      "edits": [
+        {
+          "delete_line": "**`rl-val-1`**"
+        }
+      ],
+      "evidence": [
+        {
+          "text": "- **Key**:"
+        },
+        {
+          "text": "Allow(key string, limit int)"
+        },
+        {
+          "section": "Input validation"
+        }
+      ]
+    },
+    {
+      "id": "concurrency-unspecified",
+      "note": "The read and the increment are no longer required to be atomic, yet a test still expects exact counts under concurrency.",
+      "categories": [
+        "ORDERING_UNDEFINED",
+        "MISSING_INVARIANT",
+        "AMBIGUOUS_BEHAVIOR",
+        "ASSUMPTION_REQUIRED",
+        "UNSPECIFIED_CONSTRAINT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "concurren",
+        "atomic",
+        "race",
+        "simultaneous",
+        "parallel",
+        "interleav"
+      ],
+      "edits": [
+        {
+          "delete_line": "**`rl-dec-4`**"
+        }
+      ],
+      "evidence": [
+        {
+          "section": "Decision"
+        },
+        {
+          "text": "A test makes 1,000 concurrent calls"
+        }
+      ]
+    },
+    {
+      "id": "rejected-requests-contradiction",
+      "note": "rl-store-4 says every call adds to the counter; rl-dec-3 says a rejected call must not change it.",
+      "categories": [
+        "CONTRADICTION"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "contradict",
+        "conflict",
+        "inconsisten",
+        "rl-dec-3",
+        "rl-store-4"
+      ],
+      "edits": [
+        {
+          "insert_after_line": "**`rl-store-2`**",
+          "with": "- **`rl-store-4`**: Every call to `Allow`, whether allowed or rejected, MUST add 1 to the counter for its key."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`rl-store-4`**"
+        },
+        {
+          "text": "**`rl-dec-3`**"
+        }
+      ]
+    }
+  ]
+}

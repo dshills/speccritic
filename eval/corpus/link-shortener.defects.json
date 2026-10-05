@@ -1,0 +1,207 @@
+{
+  "id": "link-shortener",
+  "profile": "general",
+  "provenance": "Spec written for this eval and checked to be free of preflight findings. Defects are seeded by construction: each mutation removes or replaces text that the clean spec needs. Labels were written with the mutations and have not been verified by a second person.",
+  "mutations": [
+    {
+      "id": "authentication-undefined",
+      "note": "Requests must be 'authenticated' but the mechanism and the response to a failed check are gone.",
+      "categories": [
+        "UNDEFINED_INTERFACE",
+        "ASSUMPTION_REQUIRED",
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT",
+        "MISSING_FAILURE_MODE"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "authenticat",
+        "client key",
+        "credential",
+        "401",
+        "unauthorized"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`ls-auth-1`**",
+          "with": "- **`ls-auth-1`**: Every request to `POST /links` and `DELETE /links/{code}` MUST be authenticated."
+        },
+        {
+          "delete_line": "**`ls-auth-2`**"
+        }
+      ],
+      "evidence": [
+        {
+          "section": "Authentication"
+        },
+        {
+          "text": "- **Client**:"
+        }
+      ]
+    },
+    {
+      "id": "code-length-contradiction",
+      "note": "ls-create-4 requires 8-character codes; the definition says exactly 7.",
+      "categories": [
+        "CONTRADICTION",
+        "TERMINOLOGY_INCONSISTENT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "contradict",
+        "conflict",
+        "inconsisten",
+        "8 characters",
+        "7 characters"
+      ],
+      "edits": [
+        {
+          "insert_after_line": "**`ls-create-3`**",
+          "with": "- **`ls-create-4`**: The short code in the response MUST be 8 characters long."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ls-create-4`**"
+        },
+        {
+          "text": "- **Short code**:"
+        }
+      ]
+    },
+    {
+      "id": "storage-implementation-leak",
+      "note": "ls-store-2 dictates a database, a table layout, a driver and a pool size instead of behavior.",
+      "categories": [
+        "SCOPE_LEAK"
+      ],
+      "severity": "WARN",
+      "keywords": [
+        "implementation",
+        "postgres",
+        "pgx",
+        "driver",
+        "b-tree",
+        "design detail",
+        "technology"
+      ],
+      "edits": [
+        {
+          "insert_after_line": "**`ls-store-1`**",
+          "with": "- **`ls-store-2`**: Links MUST be stored in a PostgreSQL table named `links` with a B-tree index on the column `code`, and the service MUST reach it through the `pgx` driver with a pool of 20 connections."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ls-store-2`**"
+        }
+      ]
+    },
+    {
+      "id": "code-uniqueness-unstated",
+      "note": "Nothing requires a new short code to be unused, or forbids reusing the code of a deleted link.",
+      "categories": [
+        "MISSING_INVARIANT",
+        "UNSPECIFIED_CONSTRAINT",
+        "AMBIGUOUS_BEHAVIOR",
+        "ASSUMPTION_REQUIRED",
+        "MISSING_FAILURE_MODE"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "unique",
+        "reuse",
+        "reassign",
+        "collision",
+        "collide",
+        "duplicate",
+        "already in use",
+        "already exists"
+      ],
+      "edits": [
+        {
+          "delete_line": "**`ls-inv-1`**"
+        },
+        {
+          "find": "create a link with a short code that no other link has ever used, and respond",
+          "replace": "create a link with a short code, and respond"
+        },
+        {
+          "delete_line": "A test creates a link after deleting another"
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ls-create-2`**"
+        },
+        {
+          "text": "- **Short code**:"
+        },
+        {
+          "text": "**`ls-create-3`**"
+        }
+      ]
+    },
+    {
+      "id": "redirect-latency-not-measurable",
+      "note": "ls-perf-1 says 'promptly' and 'many links' with no number.",
+      "categories": [
+        "NON_TESTABLE_REQUIREMENT",
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "promptly",
+        "latency",
+        "measur",
+        "quantif",
+        "threshold",
+        "many links"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`ls-perf-1`**",
+          "with": "- **`ls-perf-1`**: `GET /{code}` MUST respond promptly, even when many links are stored."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ls-perf-1`**"
+        },
+        {
+          "text": "A load test meets"
+        }
+      ]
+    },
+    {
+      "id": "rate-window-ambiguous",
+      "note": "'per minute' does not say whether the window is fixed or sliding, which changes when the 61st request is rejected.",
+      "categories": [
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT",
+        "ASSUMPTION_REQUIRED"
+      ],
+      "severity": "WARN",
+      "keywords": [
+        "per minute",
+        "window",
+        "sliding",
+        "fixed",
+        "boundar",
+        "calendar minute"
+      ],
+      "edits": [
+        {
+          "find": "per client key in any window of 60 consecutive seconds.",
+          "replace": "per client key per minute."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`ls-rate-1`**"
+        }
+      ]
+    }
+  ]
+}

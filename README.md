@@ -760,7 +760,15 @@ make run-web
 
 # Code review (staged changes)
 prism review staged
+
+# Show what the accuracy eval would review (free)
+make eval-plan
+
+# Run the accuracy eval against the configured LLM (spends real money)
+make eval
 ```
+
+The eval reviews specs with known, seeded defects and reports recall, precision, false alarms on clean specs, verdict stability and cost. Run it before and after changing prompts, chunking, model or effort. See [eval/README.md](eval/README.md).
 
 ## Agentic Integration
 

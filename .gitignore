@@ -17,6 +17,9 @@
 coverage.txt
 coverage.html
 
+# Eval run output (reports, results, summaries); the corpus is committed
+/eval/results/
+
 # Go workspace files (not committed — each dev's local layout)
 go.work
 go.work.sum

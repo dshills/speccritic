@@ -10,7 +10,7 @@ WEB_ADDR   := 127.0.0.1:8080
 
 .DEFAULT_GOAL := help
 
-.PHONY: build build-web build-all install install-web run-web test race lint help
+.PHONY: build build-web build-all install install-web run-web test race lint eval eval-plan help
 
 $(BIN_DIR):
 	@mkdir -p "$(BIN_DIR)"
@@ -50,6 +50,14 @@ race:
 lint:
 	$(GO) vet ./...
 	golangci-lint run ./...
+
+## eval-plan: Show what `make eval` would review, without calling the LLM
+eval-plan:
+	$(GO) run ./cmd/speccritic-eval $(EVAL_FLAGS)
+
+## eval: Review the eval corpus with the configured LLM (spends real money; see eval/README.md)
+eval:
+	$(GO) run ./cmd/speccritic-eval --run $(EVAL_FLAGS)
 
 ## help: Show available targets
 help:

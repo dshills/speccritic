@@ -1,0 +1,214 @@
+{
+  "id": "job-queue",
+  "profile": "general",
+  "provenance": "Spec written for this eval and checked to be free of preflight findings. Defects are seeded by construction: each mutation removes or replaces text that the clean spec needs. Labels were written with the mutations and have not been verified by a second person.",
+  "mutations": [
+    {
+      "id": "group-ordering-removed",
+      "note": "The rules that order jobs within a group are gone, though a test still expects enqueue order.",
+      "categories": [
+        "ORDERING_UNDEFINED",
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT",
+        "ASSUMPTION_REQUIRED",
+        "MISSING_INVARIANT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "order",
+        "sequence",
+        "within a group",
+        "same group"
+      ],
+      "edits": [
+        {
+          "delete_line": "**`jq-ord-1`**"
+        },
+        {
+          "delete_line": "**`jq-ord-2`**"
+        }
+      ],
+      "evidence": [
+        {
+          "section": "Ordering"
+        },
+        {
+          "text": "A test enqueues three jobs with one group key"
+        },
+        {
+          "text": "The only ordering rule is the one in"
+        },
+        {
+          "text": "**`jq-redeliver-4`**"
+        }
+      ]
+    },
+    {
+      "id": "attempt-limit-not-testable",
+      "note": "A job is dead-lettered 'eventually' instead of after the 5th failed attempt.",
+      "categories": [
+        "NON_TESTABLE_REQUIREMENT",
+        "AMBIGUOUS_BEHAVIOR",
+        "UNSPECIFIED_CONSTRAINT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "eventually",
+        "keeps failing",
+        "how many",
+        "maximum number",
+        "attempt limit",
+        "number of attempts",
+        "threshold"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`jq-redeliver-3`**",
+          "with": "- **`jq-redeliver-3`**: A job that keeps failing MUST eventually be moved to the dead-letter queue."
+        },
+        {
+          "find": "If an attempt numbered 1 to 4 is not acknowledged before its lease ends",
+          "replace": "If an attempt is not acknowledged before its lease ends"
+        },
+        {
+          "find": "After a `Nack` on an attempt numbered 1 to 4, the queue",
+          "replace": "After a `Nack`, the queue"
+        },
+        {
+          "replace_line": "A test never acknowledges a job and observes exactly 5 attempts",
+          "with": "- A test never acknowledges a job and eventually finds the job in the dead-letter queue."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`jq-redeliver-3`**"
+        },
+        {
+          "text": "eventually finds the job in the dead-letter queue"
+        }
+      ]
+    },
+    {
+      "id": "terminology-drift",
+      "note": "jq-del-3 speaks of a consumer, a message and a visibility window; everywhere else these are a worker, a job and a lease.",
+      "categories": [
+        "TERMINOLOGY_INCONSISTENT",
+        "AMBIGUOUS_BEHAVIOR",
+        "UNDEFINED_INTERFACE"
+      ],
+      "severity": "WARN",
+      "keywords": [
+        "consumer",
+        "message",
+        "visibility window",
+        "terminolog",
+        "undefined term",
+        "not defined"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`jq-del-3`**",
+          "with": "- **`jq-del-3`**: A consumer confirms a message by calling `Ack(receipt)` before the visibility window closes. A confirmed message MUST be deleted and MUST NOT be delivered again."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`jq-del-3`**"
+        }
+      ]
+    },
+    {
+      "id": "payload-size-unspecified",
+      "note": "jq-enq-1 rejects payloads outside 'the sizes given in Definitions', but the payload definition no longer gives a size.",
+      "categories": [
+        "UNSPECIFIED_CONSTRAINT",
+        "UNDEFINED_INTERFACE",
+        "AMBIGUOUS_BEHAVIOR",
+        "ASSUMPTION_REQUIRED",
+        "CONTRADICTION"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "payload size",
+        "size of the payload",
+        "payload limit",
+        "maximum payload",
+        "size limit",
+        "payload length"
+      ],
+      "edits": [
+        {
+          "replace_line": "- **Payload**:",
+          "with": "- **Payload**: opaque data."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "- **Payload**:"
+        },
+        {
+          "text": "**`jq-enq-1`**"
+        }
+      ]
+    },
+    {
+      "id": "delivery-guarantee-vague",
+      "note": "'Delivered reliably' replaces the at-least-once guarantee and its end conditions.",
+      "categories": [
+        "AMBIGUOUS_BEHAVIOR",
+        "NON_TESTABLE_REQUIREMENT",
+        "UNSPECIFIED_CONSTRAINT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "reliabl",
+        "at least once",
+        "at-least-once",
+        "delivery guarantee",
+        "delivery semantic"
+      ],
+      "edits": [
+        {
+          "replace_line": "**`jq-del-1`**",
+          "with": "- **`jq-del-1`**: Jobs MUST be delivered reliably."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`jq-del-1`**"
+        }
+      ]
+    },
+    {
+      "id": "lease-duration-contradiction",
+      "note": "jq-fail-3 speaks of a 5-minute lease; the definition says 30 seconds.",
+      "categories": [
+        "CONTRADICTION",
+        "TERMINOLOGY_INCONSISTENT"
+      ],
+      "severity": "CRITICAL",
+      "keywords": [
+        "contradict",
+        "conflict",
+        "inconsisten",
+        "5-minute",
+        "5 minute",
+        "30 seconds"
+      ],
+      "edits": [
+        {
+          "insert_after_line": "**`jq-fail-1`**",
+          "with": "- **`jq-fail-3`**: A worker that needs longer than the 5-minute lease MUST split its work into smaller jobs."
+        }
+      ],
+      "evidence": [
+        {
+          "text": "**`jq-fail-3`**"
+        },
+        {
+          "text": "- **Lease**:"
+        }
+      ]
+    }
+  ]
+}
