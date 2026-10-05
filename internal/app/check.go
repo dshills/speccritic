@@ -60,19 +60,22 @@ type ContextDocument struct {
 }
 
 type CheckRequest struct {
-	Version                         string
-	SpecPath                        string
-	SpecName                        string
-	SpecText                        string
-	ContextPaths                    []string
-	ContextDocuments                []ContextDocument
-	Profile                         string
-	Strict                          bool
-	SeverityThreshold               string
-	LLMProvider                     string
-	LLMModel                        string
-	Temperature                     float64
-	MaxTokens                       int
+	Version           string
+	SpecPath          string
+	SpecName          string
+	SpecText          string
+	ContextPaths      []string
+	ContextDocuments  []ContextDocument
+	Profile           string
+	Strict            bool
+	SeverityThreshold string
+	LLMProvider       string
+	LLMModel          string
+	Temperature       float64
+	MaxTokens         int
+	// Effort asks the model for more or less reasoning. Empty leaves the
+	// provider's default in place.
+	Effort                          string
 	Offline                         bool
 	Debug                           bool
 	Verbose                         bool
@@ -202,6 +205,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		UserPrompt:             userSpec,
 		Temperature:            &req.Temperature,
 		MaxTokens:              req.MaxTokens,
+		Effort:                 req.Effort,
 	}
 
 	if req.Debug {
@@ -241,7 +245,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 				return nil, appError(ErrorInput, err)
 			}
 			result.PatchDiff = patchDiffForReport(originalRaw, result.Report, redactedSpec, errw)
-			result.Report.Meta.Usage = usageMeta(meter.Totals())
+			applyRunMeta(result.Report, req, meter.Totals())
 			return result, nil
 		}
 		logVerbose(errw, req.Verbose, "Incremental review fell back to full review")
@@ -263,7 +267,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 			return nil, appError(ErrorInput, err)
 		}
 		patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
-		report.Meta.Usage = usageMeta(meter.Totals())
+		applyRunMeta(report, req, meter.Totals())
 		return &CheckResult{
 			Report:       report,
 			PatchDiff:    patchDiff,
@@ -290,7 +294,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		return nil, appError(ErrorInput, err)
 	}
 	patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
-	report.Meta.Usage = usageMeta(meter.Totals())
+	applyRunMeta(report, req, meter.Totals())
 
 	return &CheckResult{
 		Report:       report,
@@ -299,6 +303,16 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+// applyRunMeta records how the LLM was actually called: what the calls used,
+// the effort that was asked for, and the temperature that reached the model.
+func applyRunMeta(report *schema.Report, req CheckRequest, totals llm.Totals) {
+	report.Meta.Usage = usageMeta(totals)
+	report.Meta.Effort = req.Effort
+	if totals.TemperatureDropped {
+		report.Meta.Temperature = 0
+	}
 }
 
 // usageMeta converts call totals to their report form. It returns nil when no
@@ -332,6 +346,9 @@ func logUsage(w io.Writer, verbose bool, t llm.Totals) {
 		t.InputTokens, t.CacheReadTokens, t.CacheWriteTokens, t.OutputTokens,
 		t.CallDuration.Round(time.Millisecond), t.WallDuration.Round(time.Millisecond),
 	)
+	if t.TemperatureDropped {
+		logVerbose(w, verbose, "Temperature was not sent: the model does not accept one, so its default applies")
+	}
 }
 
 func (c *Checker) applyConvergence(req CheckRequest, report *schema.Report, coverage convergence.ReviewCoverage, errw io.Writer) error {
@@ -476,6 +493,7 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 			SystemPrompt: sysPrompt,
 			Temperature:  req.Temperature,
 			MaxTokens:    req.MaxTokens,
+			Effort:       req.Effort,
 			Concurrency:  req.ChunkConcurrency,
 			Issues:       reuse.Issues,
 			Questions:    reuse.Questions,
@@ -666,6 +684,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		PreflightContext: preflightContext,
 		Temperature:      req.Temperature,
 		MaxTokens:        req.MaxTokens,
+		Effort:           req.Effort,
 		Concurrency:      cfg.ChunkConcurrency,
 		Verbose:          req.Verbose,
 		ErrWriter:        errw,
@@ -683,6 +702,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		SystemPrompt:  sysPrompt,
 		Temperature:   req.Temperature,
 		MaxTokens:     req.MaxTokens,
+		Effort:        req.Effort,
 		LineThreshold: cfg.SynthesisLineThreshold,
 		Enabled:       true,
 	})
@@ -1023,6 +1043,9 @@ func validateRequest(req CheckRequest) error {
 	}
 	if err := validateCompletionRequest(req); err != nil {
 		return err
+	}
+	if !llm.IsValidEffort(req.Effort) {
+		return fmt.Errorf("effort %q must be one of %s", req.Effort, strings.Join(llm.EffortLevels(), ", "))
 	}
 	if req.Source == SourceWeb {
 		if req.SpecPath != "" {

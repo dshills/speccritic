@@ -34,9 +34,14 @@ type Summary struct {
 
 // Meta holds runtime metadata about the LLM call.
 type Meta struct {
-	Model        string  `json:"model"`
-	Temperature  float64 `json:"temperature"`
-	ChunkSummary string  `json:"chunk_summary,omitempty"`
+	Model string `json:"model"`
+	// Temperature is the temperature sent to the model. It is 0 when none was
+	// sent because the model does not accept one.
+	Temperature float64 `json:"temperature"`
+	// Effort is the reasoning effort requested with --effort. It is omitted
+	// when the provider's default was used.
+	Effort       string `json:"effort,omitempty"`
+	ChunkSummary string `json:"chunk_summary,omitempty"`
 	// DroppedFindings counts model findings that failed local validation and
 	// were left out of the report.
 	DroppedFindings int `json:"dropped_findings,omitempty"`

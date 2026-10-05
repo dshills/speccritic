@@ -1,12 +1,7 @@
 package llm
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 	"strings"
 )
 
@@ -24,162 +19,24 @@ func SetOpenAIAPIURL(u string) { openaiAPIURL = u }
 type openaiProvider struct {
 	model  string
 	apiKey string // unexported; never serialized by encoding/json
-}
-
-type openaiRequest struct {
-	Model               string          `json:"model"`
-	Messages            []openaiMessage `json:"messages"`
-	MaxTokens           int             `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64        `json:"temperature,omitempty"`
-	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
-}
-
-type responseFormat struct {
-	Type string `json:"type"`
-}
-
-type openaiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// openaiFinishLength is the finish_reason OpenAI-compatible APIs report when a
-// response hits the output token cap.
-const openaiFinishLength = "length"
-
-type openaiResponse struct {
-	Model   string `json:"model"`
-	Choices []struct {
-		Message      openaiMessage `json:"message"`
-		FinishReason string        `json:"finish_reason"`
-	} `json:"choices"`
-	// Usage reports prompt_tokens inclusive of cached tokens; the cached share
-	// is broken out in prompt_tokens_details when the provider sends it.
-	Usage struct {
-		PromptTokens        int `json:"prompt_tokens"`
-		CompletionTokens    int `json:"completion_tokens"`
-		PromptTokensDetails struct {
-			CachedTokens int `json:"cached_tokens"`
-		} `json:"prompt_tokens_details"`
-	} `json:"usage"`
-	Error *struct {
-		Message string `json:"message"`
-		Type    string `json:"type"`
-	} `json:"error"`
+	state  chatState
 }
 
 func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
-	model := p.model
-	if req.Model != "" {
-		model = req.Model
+	endpoint := chatEndpoint{
+		name:             "openai",
+		url:              openaiAPIURL,
+		apiKey:           p.apiKey,
+		completionTokens: openaiUsesMaxCompletionTokens,
 	}
-
-	// Only include system message when non-empty to avoid unnecessary token usage.
-	var messages []openaiMessage
-	if req.SystemPrompt != "" {
-		messages = append(messages, openaiMessage{Role: "system", Content: req.SystemPrompt})
-	}
-	messages = append(messages, openaiMessage{Role: "user", Content: req.UserPromptCachedPrefix + req.UserPrompt})
-
-	useCompletionTokens := openaiUsesMaxCompletionTokens(model)
-	oaiResp, retry, err := p.completeOnce(ctx, model, messages, req, useCompletionTokens)
-	if retry {
-		oaiResp, _, err = p.completeOnce(ctx, model, messages, req, !useCompletionTokens)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	if len(oaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("openai: empty choices in response")
-	}
-
-	return &Response{
-		Content:    oaiResp.Choices[0].Message.Content,
-		Model:      fmt.Sprintf("openai:%s", oaiResp.Model),
-		StopReason: oaiResp.Choices[0].FinishReason,
-		Truncated:  oaiResp.Choices[0].FinishReason == openaiFinishLength,
-		Usage:      oaiResp.usage(),
-	}, nil
+	return completeChat(ctx, endpoint, &p.state, p.model, req)
 }
 
-// usage converts the OpenAI-style counts, where cached tokens are part of
-// prompt_tokens, to Usage, where they are counted separately.
-func (r openaiResponse) usage() Usage {
-	cached := r.Usage.PromptTokensDetails.CachedTokens
-	return Usage{
-		InputTokens:     max(r.Usage.PromptTokens-cached, 0),
-		OutputTokens:    r.Usage.CompletionTokens,
-		CacheReadTokens: cached,
-	}
-}
-
-func (p *openaiProvider) completeOnce(ctx context.Context, model string, messages []openaiMessage, req *Request, useCompletionTokens bool) (openaiResponse, bool, error) {
-	body := openaiRequest{
-		Model:    model,
-		Messages: messages,
-	}
-	if req.Temperature != nil {
-		body.Temperature = req.Temperature
-	}
-	if req.MaxTokens > 0 {
-		if useCompletionTokens {
-			body.MaxCompletionTokens = req.MaxTokens
-		} else {
-			body.MaxTokens = req.MaxTokens
-		}
-	}
-	body.ResponseFormat = &responseFormat{Type: "json_object"}
-
-	bodyBytes, err := json.Marshal(body)
-	if err != nil {
-		return openaiResponse{}, false, fmt.Errorf("marshaling request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, openaiAPIURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return openaiResponse{}, false, fmt.Errorf("creating HTTP request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-
-	resp, err := sharedHTTPClient.Do(httpReq)
-	if err != nil {
-		return openaiResponse{}, false, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
-	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-	if err != nil {
-		return openaiResponse{}, false, fmt.Errorf("reading response body: %w", err)
-	}
-	respStr := string(respBytes)
-
-	var oaiResp openaiResponse
-	if err := json.Unmarshal(respBytes, &oaiResp); err != nil {
-		return openaiResponse{}, false, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		if oaiResp.Error != nil {
-			retry := unsupportedTokenParameter(oaiResp.Error.Message)
-			return openaiResponse{}, retry, fmt.Errorf("openai: %s: %s", oaiResp.Error.Type, oaiResp.Error.Message)
-		}
-		return openaiResponse{}, false, fmt.Errorf("openai: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
-	}
-	return oaiResp, false, nil
-}
-
+// openaiUsesMaxCompletionTokens reports whether model takes
+// max_completion_tokens. Every model since GPT-5 requires it, so it is the
+// assumption for any model not known to predate it; completeChat swaps the
+// parameter if the API disagrees.
 func openaiUsesMaxCompletionTokens(model string) bool {
 	model = strings.ToLower(model)
-	return isOpenAIReasoningModel(model) ||
-		strings.HasPrefix(model, "gpt-5")
-}
-
-func unsupportedTokenParameter(message string) bool {
-	message = strings.ToLower(message)
-	return strings.Contains(message, "unsupported parameter") &&
-		(strings.Contains(message, "max_tokens") || strings.Contains(message, "max_completion_tokens"))
+	return !strings.HasPrefix(model, "gpt-3.5") && !strings.HasPrefix(model, "gpt-4")
 }

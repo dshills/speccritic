@@ -27,7 +27,7 @@ calls, or the quality of what comes back.
 | 2 | Salvage valid findings; stamp bookkeeping fields locally | Speed, Tokens | Small | Done |
 | 3 | Fix redaction collapsing lines | Accuracy | Small | Done |
 | 4 | Record token usage and latency per call | All (measurement) | Small | Done |
-| 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium |  |
+| 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium | Done |
 | 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium |  |
 | 7 | Enforce the output schema at the provider | Speed, Tokens | Medium |  |
 | 8 | Verify and re-anchor evidence locally | Accuracy | Medium |  |
@@ -126,7 +126,15 @@ one-line summary under `--verbose`.
 
 ## 5. Make requests valid for current models; refresh defaults
 
-**Helps:** Accuracy. **Effort:** Medium. **Not verified with a live call.**
+**Helps:** Accuracy. **Effort:** Medium. **Status:** Done.
+
+**As built.** Two things differ from the plan below. The temperature is still sent by default
+to models that accept one, because dropping the 0.2 default would have made reviews on those
+models less repeatable; it is left out only where the model rejects it, by rule for known Claude
+models and by retry for anything else. And the provider model lists, checked on 2026-10-05,
+showed the old Anthropic and Gemini defaults were no longer served, so both changed
+(`claude-opus-5-5`, `gemini-3.8-flash`). `gpt-4o` is still served and was left as the OpenAI
+default; whether to move it is a cost decision.
 
 **Today.**
 

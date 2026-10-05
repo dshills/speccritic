@@ -60,6 +60,24 @@ func TestMeter_CountsFailedCallsWithoutTokens(t *testing.T) {
 	}
 }
 
+func TestMeter_ReportsADroppedTemperature(t *testing.T) {
+	meter := NewMeter(&scriptedProvider{responses: []*Response{{Content: "{}"}, {Content: "{}", TemperatureDropped: true}, {Content: "{}"}}})
+	if _, err := meter.Complete(context.Background(), &Request{}); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if meter.Totals().TemperatureDropped {
+		t.Fatal("TemperatureDropped = true before any call dropped it")
+	}
+	for range 2 {
+		if _, err := meter.Complete(context.Background(), &Request{}); err != nil {
+			t.Fatalf("Complete: %v", err)
+		}
+	}
+	if !meter.Totals().TemperatureDropped {
+		t.Fatal("TemperatureDropped = false after a call dropped it")
+	}
+}
+
 func TestMeter_NoCalls(t *testing.T) {
 	if got := NewMeter(&usageProvider{}).Totals(); got != (Totals{}) {
 		t.Fatalf("totals = %+v, want zero", got)

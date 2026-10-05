@@ -23,7 +23,7 @@ When active, Claude Code will:
    ```
 3. **Model + API key** exported in the shell that runs Claude Code:
    ```sh
-   export SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6   # or openai:gpt-4o, gemini:gemini-2.0-flash
+   export SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6   # or openai:gpt-4o, gemini:gemini-3.8-flash
    export ANTHROPIC_API_KEY=...                          # or OPENAI_API_KEY / GEMINI_API_KEY
    ```
 

@@ -13,9 +13,9 @@
         <div class="field">
           <label for="llm_provider">Provider</label>
           <select id="llm_provider" name="llm_provider">
-            <option value="anthropic" data-default-model="claude-sonnet-4-20250514" {{ if eq .ModelProvider "anthropic" }}selected{{ end }}>Anthropic</option>
+            <option value="anthropic" data-default-model="claude-opus-5-5" {{ if eq .ModelProvider "anthropic" }}selected{{ end }}>Anthropic</option>
             <option value="openai" data-default-model="gpt-4o" {{ if eq .ModelProvider "openai" }}selected{{ end }}>OpenAI</option>
-            <option value="gemini" data-default-model="gemini-2.0-flash" {{ if eq .ModelProvider "gemini" }}selected{{ end }}>Gemini</option>
+            <option value="gemini" data-default-model="gemini-3.8-flash" {{ if eq .ModelProvider "gemini" }}selected{{ end }}>Gemini</option>
           </select>
         </div>
         <div class="field">

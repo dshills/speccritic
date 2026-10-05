@@ -15,6 +15,7 @@ type ExecutorConfig struct {
 	SystemPrompt string
 	Temperature  float64
 	MaxTokens    int
+	Effort       string
 	Concurrency  int
 	Issues       []schema.Issue
 	Questions    []schema.Question
@@ -106,6 +107,7 @@ func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		UserPrompt:             tail,
 		Temperature:            &cfg.Temperature,
 		MaxTokens:              cfg.MaxTokens,
+		Effort:                 cfg.Effort,
 	}
 	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,

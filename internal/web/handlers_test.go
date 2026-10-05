@@ -627,7 +627,7 @@ func TestConfiguredModelDisplay(t *testing.T) {
 	t.Setenv("SPECCRITIC_LLM_PROVIDER", "gemini")
 	t.Setenv("SPECCRITIC_LLM_MODEL", "")
 	provider, model = configuredModelDisplay()
-	if provider != "gemini" || model != "gemini-2.0-flash" {
+	if provider != "gemini" || model != llm.DefaultModelForProvider("gemini") {
 		t.Fatalf("partial configured model = %q/%q", provider, model)
 	}
 }

@@ -34,19 +34,22 @@ const (
 )
 
 type CheckOptions struct {
-	Version                         string
-	SpecPath                        string
-	SpecName                        string
-	SpecText                        string
-	ContextPaths                    []string
-	ContextDocuments                []ContextDocument
-	Profile                         string
-	Strict                          bool
-	SeverityThreshold               string
-	LLMProvider                     string
-	LLMModel                        string
-	Temperature                     float64
-	MaxTokens                       int
+	Version           string
+	SpecPath          string
+	SpecName          string
+	SpecText          string
+	ContextPaths      []string
+	ContextDocuments  []ContextDocument
+	Profile           string
+	Strict            bool
+	SeverityThreshold string
+	LLMProvider       string
+	LLMModel          string
+	Temperature       float64
+	MaxTokens         int
+	// Effort asks the model for more or less reasoning; empty uses the
+	// provider's default.
+	Effort                          string
 	Offline                         bool
 	Debug                           bool
 	Verbose                         bool
@@ -145,6 +148,7 @@ func Check(ctx context.Context, opts CheckOptions) (*CheckResult, error) {
 		LLMModel:                        opts.LLMModel,
 		Temperature:                     opts.Temperature,
 		MaxTokens:                       opts.MaxTokens,
+		Effort:                          opts.Effort,
 		Offline:                         opts.Offline,
 		Debug:                           opts.Debug,
 		Verbose:                         opts.Verbose,

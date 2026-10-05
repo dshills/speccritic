@@ -1348,3 +1348,111 @@ func TestCheckerOmitsUsageWithoutLLMCalls(t *testing.T) {
 		t.Errorf("verbose log reports usage for a review with no calls:\n%s", errw.String())
 	}
 }
+
+// settingsProvider records the effort of every request, and can report that
+// the temperature was left out.
+type settingsProvider struct {
+	inner              llm.Provider
+	temperatureDropped bool
+
+	mu      sync.Mutex
+	efforts []string
+}
+
+func (p *settingsProvider) Complete(ctx context.Context, req *llm.Request) (*llm.Response, error) {
+	p.mu.Lock()
+	p.efforts = append(p.efforts, req.Effort)
+	p.mu.Unlock()
+	resp, err := p.inner.Complete(ctx, req)
+	if resp != nil {
+		resp.TemperatureDropped = p.temperatureDropped
+	}
+	return resp, err
+}
+
+func TestCheckerPassesEffortToEveryCall(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	cases := map[string]func(*CheckRequest){
+		"single call": func(*CheckRequest) {},
+		"chunked": func(req *CheckRequest) {
+			req.SpecText = longSpec(200)
+			req.Chunking = "on"
+			req.ChunkLines = 40
+		},
+	}
+	for name, configure := range cases {
+		t.Run(name, func(t *testing.T) {
+			provider := &settingsProvider{inner: &chunkAwareProvider{}}
+			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+			var errw strings.Builder
+			req := usageCheckRequest(&errw)
+			req.Effort = "high"
+			configure(&req)
+
+			result, err := checker.Check(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Check returned error: %v", err)
+			}
+			if len(provider.efforts) == 0 {
+				t.Fatal("no LLM calls were made")
+			}
+			for i, effort := range provider.efforts {
+				if effort != "high" {
+					t.Errorf("call %d effort = %q, want high", i, effort)
+				}
+			}
+			if result.Report.Meta.Effort != "high" {
+				t.Errorf("meta.effort = %q, want high", result.Report.Meta.Effort)
+			}
+		})
+	}
+}
+
+func TestCheckerRejectsUnknownEffort(t *testing.T) {
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) {
+		t.Fatal("an invalid request must not create a provider")
+		return nil, nil
+	}}
+	var errw strings.Builder
+	req := usageCheckRequest(&errw)
+	req.Effort = "turbo"
+
+	_, err := checker.Check(context.Background(), req)
+	var appErr *Error
+	if !errors.As(err, &appErr) || appErr.Kind != ErrorInput || !strings.Contains(err.Error(), `effort "turbo"`) {
+		t.Fatalf("error = %v, want an input error naming the effort", err)
+	}
+}
+
+func TestCheckerReportsTheTemperatureThatReachedTheModel(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	cases := map[string]struct {
+		dropped bool
+		want    float64
+	}{
+		"sent":    {dropped: false, want: 0.2},
+		"dropped": {dropped: true, want: 0},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			provider := &settingsProvider{inner: &chunkAwareProvider{}, temperatureDropped: tc.dropped}
+			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+			var errw strings.Builder
+
+			result, err := checker.Check(context.Background(), usageCheckRequest(&errw))
+			if err != nil {
+				t.Fatalf("Check returned error: %v", err)
+			}
+			if result.Report.Meta.Temperature != tc.want {
+				t.Errorf("meta.temperature = %v, want %v", result.Report.Meta.Temperature, tc.want)
+			}
+			if logged := strings.Contains(errw.String(), "Temperature was not sent"); logged != tc.dropped {
+				t.Errorf("temperature notice logged = %v, want %v:\n%s", logged, tc.dropped, errw.String())
+			}
+		})
+	}
+}

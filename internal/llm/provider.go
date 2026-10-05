@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -23,7 +24,10 @@ const DefaultMaxTokens = 16384
 const (
 	// DefaultProvider and DefaultModel are used when model configuration is omitted.
 	DefaultProvider = "anthropic"
-	DefaultModel    = "claude-sonnet-4-20250514"
+	DefaultModel    = "claude-opus-5-5"
+
+	defaultOpenAIModel = "gpt-4o"
+	defaultGeminiModel = "gemini-3.8-flash"
 )
 
 // Request holds the parameters for an LLM completion call.
@@ -43,6 +47,10 @@ type Request struct {
 	MaxTokens   int
 	// Model overrides the provider's configured model when non-empty.
 	Model string
+	// Effort asks the model for more or less reasoning. Empty leaves the
+	// provider's default in place. The value is passed through unchanged:
+	// which levels exist depends on the provider and the model.
+	Effort string
 	// Attempt says why this request is being made. It is used for usage
 	// reporting only and is never sent to the provider.
 	Attempt Attempt
@@ -77,6 +85,20 @@ type Usage struct {
 	CacheWriteTokens int
 }
 
+// effortLevels are the reasoning effort names any supported provider accepts.
+// No provider accepts all of them, and which ones a model takes changes with
+// each release, so a level is passed through as given and the provider has the
+// last word.
+var effortLevels = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// EffortLevels returns the values Request.Effort may take, weakest first.
+func EffortLevels() []string { return slices.Clone(effortLevels) }
+
+// IsValidEffort reports whether effort is empty or a known effort level.
+func IsValidEffort(effort string) bool {
+	return effort == "" || slices.Contains(effortLevels, effort)
+}
+
 // Response holds the result of an LLM completion call.
 type Response struct {
 	Content string
@@ -89,6 +111,9 @@ type Response struct {
 	// Usage is what the provider reported for this call. It is zero when the
 	// provider reported nothing.
 	Usage Usage
+	// TemperatureDropped reports that the request asked for a temperature and
+	// the provider did not send it, because the model does not accept one.
+	TemperatureDropped bool
 }
 
 // Provider is the interface for LLM completion backends.
@@ -108,9 +133,9 @@ func IsSupportedProvider(provider string) bool {
 func DefaultModelForProvider(provider string) string {
 	switch strings.ToLower(provider) {
 	case "openai":
-		return "gpt-4o"
+		return defaultOpenAIModel
 	case "gemini":
-		return "gemini-2.0-flash"
+		return defaultGeminiModel
 	default:
 		return DefaultModel
 	}
@@ -136,11 +161,11 @@ func isOpenAIReasoningModel(model string) bool {
 
 // NewProvider parses a "provider:model" string and returns the appropriate Provider.
 // The API key is read from the environment at construction time and validated immediately.
-// Example: "anthropic:claude-sonnet-4-20250514" or "openai:gpt-4o".
+// Example: "anthropic:claude-opus-5-5" or "openai:gpt-4o".
 func NewProvider(providerModel string) (Provider, error) {
 	parts := strings.SplitN(providerModel, ":", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return nil, fmt.Errorf("invalid model format %q: expected provider:model (e.g. anthropic:claude-sonnet-4-20250514)", providerModel)
+		return nil, fmt.Errorf("invalid model format %q: expected provider:model (e.g. anthropic:claude-opus-5-5)", providerModel)
 	}
 	provider := strings.ToLower(parts[0])
 	switch provider {

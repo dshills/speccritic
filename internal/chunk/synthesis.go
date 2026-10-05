@@ -23,6 +23,7 @@ type SynthesisConfig struct {
 	SystemPrompt  string
 	Temperature   float64
 	MaxTokens     int
+	Effort        string
 	LineThreshold int
 	Enabled       bool
 }
@@ -113,6 +114,7 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 		UserPrompt:             tail,
 		Temperature:            &cfg.Temperature,
 		MaxTokens:              cfg.MaxTokens,
+		Effort:                 cfg.Effort,
 	}
 	return llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,

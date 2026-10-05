@@ -352,39 +352,72 @@ func TestGeminiComplete_RequestsJSONMode(t *testing.T) {
 }
 
 func TestOpenAIComplete_RetriesAlternateTokenParameter(t *testing.T) {
-	var captured [][]byte
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		captured = append(captured, body)
-		w.Header().Set("Content-Type", "application/json")
-		if len(captured) == 1 {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."}}`))
-			return
+	cases := map[string]struct {
+		model       string
+		firstField  string
+		secondField string
+	}{
+		// A model in a family that predates max_completion_tokens but turns out
+		// to require it.
+		"legacy family rejects max_tokens": {"gpt-4o-next", "max_tokens", "max_completion_tokens"},
+		// An unrecognized model that only knows the older parameter.
+		"unknown model rejects max_completion_tokens": {"new-model", "max_completion_tokens", "max_tokens"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var captured [][]byte
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				captured = append(captured, body)
+				w.Header().Set("Content-Type", "application/json")
+				if len(captured) == 1 {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"Unsupported parameter: '` + tc.firstField + `' is not supported with this model. Use '` + tc.secondField + `' instead."}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"model":"m","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+			}))
+			t.Cleanup(srv.Close)
+
+			original := OpenAIAPIURL()
+			SetOpenAIAPIURL(srv.URL)
+			t.Cleanup(func() { SetOpenAIAPIURL(original) })
+
+			p := &openaiProvider{model: tc.model, apiKey: "k"}
+			if _, err := p.Complete(context.Background(), &Request{UserPrompt: "hi", MaxTokens: 1234}); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if len(captured) != 2 {
+				t.Fatalf("calls = %d, want retry with alternate token field", len(captured))
+			}
+			if !strings.Contains(string(captured[0]), `"`+tc.firstField+`"`) {
+				t.Fatalf("first request = %s, want %s", captured[0], tc.firstField)
+			}
+			if !strings.Contains(string(captured[1]), `"`+tc.secondField+`"`) || strings.Contains(string(captured[1]), `"`+tc.firstField+`"`) {
+				t.Fatalf("second request = %s, want only %s", captured[1], tc.secondField)
+			}
+		})
+	}
+}
+
+func TestOpenAIUsesMaxCompletionTokens(t *testing.T) {
+	cases := map[string]bool{
+		"gpt-3.5-turbo": false,
+		"gpt-4":         false,
+		"gpt-4-turbo":   false,
+		"gpt-4o":        false,
+		"gpt-4.1-mini":  false,
+		"gpt-5":         true,
+		"gpt-5.5-pro":   true,
+		"gpt-6.1-sol":   true,
+		"GPT-6-Sol":     true,
+		"o3":            true,
+		"some-new-name": true,
+	}
+	for model, want := range cases {
+		if got := openaiUsesMaxCompletionTokens(model); got != want {
+			t.Errorf("openaiUsesMaxCompletionTokens(%q) = %v, want %v", model, got, want)
 		}
-		_, _ = w.Write([]byte(`{"model":"new-model","choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-
-	original := OpenAIAPIURL()
-	SetOpenAIAPIURL(srv.URL)
-	t.Cleanup(func() { SetOpenAIAPIURL(original) })
-
-	p := &openaiProvider{model: "new-model", apiKey: "k"}
-	if _, err := p.Complete(context.Background(), &Request{
-		UserPrompt: "hi",
-		MaxTokens:  1234,
-	}); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if len(captured) != 2 {
-		t.Fatalf("calls = %d, want retry with alternate token field", len(captured))
-	}
-	if !strings.Contains(string(captured[0]), `"max_tokens"`) {
-		t.Fatalf("first request = %s, want max_tokens", captured[0])
-	}
-	if !strings.Contains(string(captured[1]), `"max_completion_tokens"`) {
-		t.Fatalf("second request = %s, want max_completion_tokens", captured[1])
 	}
 }
 

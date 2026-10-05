@@ -7,7 +7,7 @@ SpecCritic evaluates software specifications as formal contracts, identifying de
 ```
 $ speccritic check SPEC.md --verbose
 INFO: Loading spec: SPEC.md
-INFO: Calling LLM: anthropic:claude-sonnet-4-20250514
+INFO: Calling LLM: anthropic:claude-opus-5-5
 INFO: Rendering output (format: json)
 
 Verdict: INVALID  Score: 60/100  Critical: 2  Warn: 3  Info: 1
@@ -53,7 +53,7 @@ Set your model and API key when you are ready for a full review:
 
 ```bash
 export SPECCRITIC_LLM_PROVIDER=anthropic
-export SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514
+export SPECCRITIC_LLM_MODEL=claude-opus-5-5
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -119,7 +119,7 @@ Set the same provider configuration used by the CLI:
 
 ```bash
 export SPECCRITIC_LLM_PROVIDER=anthropic
-export SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514
+export SPECCRITIC_LLM_MODEL=claude-opus-5-5
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
@@ -179,21 +179,29 @@ The Air config builds `./cmd/speccritic-web` into `./tmp/speccritic-web` and run
 
 ### Model Selection
 
-Set `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL`, or pass `--llm-provider` and `--llm-model` for a single CLI run. If unset, SpecCritic defaults to `SPECCRITIC_LLM_PROVIDER=anthropic` and `SPECCRITIC_LLM_MODEL=claude-sonnet-4-20250514` with a warning to stderr. If a provider is set without a model, SpecCritic uses the default model for that provider. Preflight-only checks do not require model configuration.
+Set `SPECCRITIC_LLM_PROVIDER` and `SPECCRITIC_LLM_MODEL`, or pass `--llm-provider` and `--llm-model` for a single CLI run. If unset, SpecCritic defaults to `SPECCRITIC_LLM_PROVIDER=anthropic` and `SPECCRITIC_LLM_MODEL=claude-opus-5-5` with a warning to stderr. If a provider is set without a model, SpecCritic uses the default model for that provider. Preflight-only checks do not require model configuration.
 
 Current builds read the split provider/model variables. If you have old shell or CI snippets that set `SPECCRITIC_MODEL=provider:model`, replace them with the two variables above.
 
 | Provider | API Key Env Var | Model Value Example |
 |----------|-----------------|-----------------------|
-| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-opus-5-5` |
 | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
-| `gemini` | `GEMINI_API_KEY` | `gemini-2.0-flash` |
+| `gemini` | `GEMINI_API_KEY` | `gemini-3.8-flash` |
 
 ```bash
 export SPECCRITIC_LLM_PROVIDER=openai
 export SPECCRITIC_LLM_MODEL=gpt-4o
 export OPENAI_API_KEY=sk-...
 ```
+
+The table shows each provider's default model. They are pinned to a model generation, so check them against the provider's current lineup from time to time.
+
+**Temperature.** Recent models reject a temperature other than their default: Claude Opus 4.7 and later, Claude Sonnet 5 and later, and some OpenAI reasoning models. SpecCritic leaves the temperature out for Claude models known to reject it, and for any other model it retries without the temperature if the provider turns it down. The report's `meta.temperature` is the value that reached the model, or `0` when none was sent.
+
+**Effort.** `--effort` (or `SPECCRITIC_LLM_EFFORT`) is sent as `output_config.effort` to Anthropic and as `reasoning_effort` to OpenAI and Gemini, unchanged. A level the model does not support comes back as a provider error. When set, it is recorded in `meta.effort`.
+
+**Refusals.** If a model declines to review a spec, SpecCritic reports that as an error naming the provider's reason rather than treating the reply as a review.
 
 ### Preflight
 
@@ -408,7 +416,8 @@ speccritic check <spec-file> [flags]
 | `--patch-out` | (none) | Write suggested patches to file |
 | `--llm-provider` | env/default | LLM provider override: `anthropic`, `openai`, or `gemini` |
 | `--llm-model` | env/provider default | LLM model override |
-| `--temperature` | `0.2` | LLM temperature (0.0–2.0) |
+| `--temperature` | `0.2` | LLM temperature (0.0–2.0). Left out of the request for models that do not accept one (see below) |
+| `--effort` | provider default | Reasoning effort passed to the model: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Which levels exist depends on the provider and model |
 | `--max-tokens` | `16384` | Maximum response tokens per call. A response that still hits the cap is continued, not regenerated: the findings already received are kept and only the rest is requested |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
 | `--verbose` | `false` | Print processing steps to stderr |
@@ -608,7 +617,7 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
   "questions": [...],
   "patches": [...],
   "meta": {
-    "model": "anthropic:claude-sonnet-4-20250514",
+    "model": "anthropic:claude-opus-5-5",
     "temperature": 0.2,
     "completion": {
       "enabled": true,
@@ -714,7 +723,7 @@ Any behavior not explicitly stated is flagged. Any assumption required to implem
 - name: Check specification
   env:
     SPECCRITIC_LLM_PROVIDER: anthropic
-    SPECCRITIC_LLM_MODEL: claude-sonnet-4-20250514
+    SPECCRITIC_LLM_MODEL: claude-opus-5-5
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
   run: |
     speccritic check SPEC.md \

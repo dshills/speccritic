@@ -18,6 +18,7 @@ type ExecutorConfig struct {
 	PreflightContext string
 	Temperature      float64
 	MaxTokens        int
+	Effort           string
 	Concurrency      int
 	Verbose          bool
 	ErrWriter        io.Writer
@@ -117,6 +118,7 @@ func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		UserPrompt:             tail,
 		Temperature:            &cfg.Temperature,
 		MaxTokens:              cfg.MaxTokens,
+		Effort:                 cfg.Effort,
 	}
 	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,
