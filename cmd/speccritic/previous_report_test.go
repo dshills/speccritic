@@ -122,6 +122,16 @@ func countIDs(issues []schema.Issue, prefix string) int {
 	return n
 }
 
+func countTagged(issues []schema.Issue, want string) int {
+	n := 0
+	for _, issue := range issues {
+		if slices.Contains(issue.Tags, want) {
+			n++
+		}
+	}
+	return n
+}
+
 func issueIDs(issues []schema.Issue) []string {
 	ids := make([]string, 0, len(issues))
 	for _, issue := range issues {
@@ -321,25 +331,40 @@ func TestRunCheck_ReportWithAbsoluteEvidencePathRoundTrips(t *testing.T) {
 }
 
 // A completion patch names the issue it came from, which for a preflight
-// finding is a rule ID rather than an ISSUE number.
-func TestRunCheck_ReportWithCompletionPatchLoads(t *testing.T) {
+// finding is a rule ID rather than an ISSUE number. That issue is also tagged
+// completion-suggested, after convergence has compared the run's findings, so
+// the tag is on the previous report and never on the findings compared to it.
+// bad_spec.md has several missing-section findings quoting line 1, which only
+// their fingerprints tell apart.
+func TestRunCheck_ReportWithCompletionPatchRoundTrips(t *testing.T) {
 	spec := badSpecCopy(t, true)
 	prev, prevFile := preflightOnlyReport(t, spec, true)
 	if len(prev.Patches) == 0 || !strings.HasPrefix(prev.Patches[0].IssueID, "PREFLIGHT-") {
 		t.Fatalf("patches = %#v, want a completion patch naming a preflight rule", prev.Patches)
 	}
-
-	flags := previousReportFlags(t)
-	flags.preflight = true
-	flags.preflightMode = "only"
-	flags.convergenceFrom = prevFile
-	flags.convergenceMode = "on"
-	if err := runCheck(spec, flags); err != nil {
-		t.Fatalf("runCheck: %v", err)
+	if countTagged(prev.Issues, "completion-suggested") == 0 {
+		t.Fatalf("no issue is tagged completion-suggested: %#v", prev.Issues)
 	}
-	meta := readJSONReport(t, flags.out).Meta.Convergence
-	if meta == nil || meta.Status != schema.ConvergenceStatusComplete {
-		t.Fatalf("convergence meta = %#v, want status complete", meta)
+
+	for _, rerun := range []struct {
+		name       string
+		completion bool
+	}{
+		{"rerun without completion suggestions", false},
+		{"rerun with completion suggestions", true},
+	} {
+		t.Run(rerun.name, func(t *testing.T) {
+			flags := previousReportFlags(t)
+			flags.preflight = true
+			flags.preflightMode = "only"
+			flags.completionSuggestions = rerun.completion
+			flags.convergenceFrom = prevFile
+			flags.convergenceMode = "on"
+			if err := runCheck(spec, flags); err != nil {
+				t.Fatalf("runCheck: %v", err)
+			}
+			wantAllStillOpen(t, readJSONReport(t, flags.out))
+		})
 	}
 }
 

@@ -132,7 +132,7 @@ The previous report may also contain:
 - `meta.incremental`,
 - `meta.convergence`,
 - `meta.redaction_config_hash`,
-- issue/question tags from preflight, chunking, incremental review, or provider repair,
+- issue/question tags from preflight, chunking, incremental review, provider repair, or completion suggestions,
 - preflight findings identified by their rule ID (`PREFLIGHT-<GROUP>-<NNN>`) instead of an `ISSUE-NNNN` ID; one rule ID may appear on several findings.
 
 Every report SpecCritic writes must load as a previous report. Evidence paths and `patches` are not validated when a previous report is loaded: convergence reads neither, and reports written by earlier versions hold absolute evidence paths.
@@ -176,7 +176,7 @@ Normalization rules:
 - Trim leading and trailing whitespace.
 - Collapse internal whitespace to one ASCII space.
 - Lowercase category and severity.
-- Remove volatile tags such as `chunk:<ID>`, `range:<ID>`, `incremental-review`, `incremental-reused`, and provider repair tags from fingerprint input.
+- Remove volatile tags such as `chunk:<ID>`, `range:<ID>`, `incremental-review`, `incremental-reused`, `completion-suggested`, and provider repair tags from fingerprint input. A volatile tag records how one run produced or processed a finding, not what the finding is.
 - Do not include current issue ids such as `ISSUE-0001` because IDs may be reassigned after filtering, merging, or provider output changes.
 
 ## 10. Status Classification
