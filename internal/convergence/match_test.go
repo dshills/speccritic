@@ -93,6 +93,38 @@ func TestMatchFindingsDifferentEvidenceIsNew(t *testing.T) {
 	}
 }
 
+// Findings that quote the same text tie on the evidence fallback, so they
+// match only while their fingerprints do. The tag an incremental range review
+// adds must not break that.
+func TestMatchFindingsSharedEvidenceAcrossIncrementalReview(t *testing.T) {
+	prev := []TrackedFinding{
+		testFinding("ISSUE-0001", "Authentication requirement contradicts itself", "Users must be authenticated."),
+		testFinding("ISSUE-0002", "Scope of unauthenticated access is not stated", "Users must be authenticated."),
+	}
+	prev[0].Tags = []string{"incremental-review", "range:SEC-003"}
+	prev[1].Tags = []string{"incremental-review", "range:SEC-003"}
+	for name, tags := range map[string][]string{
+		"full review": nil,
+		"reused":      {"incremental-reused"},
+	} {
+		cur := []TrackedFinding{
+			testFinding("ISSUE-0001", "Authentication requirement contradicts itself", "Users must be authenticated."),
+			testFinding("ISSUE-0002", "Scope of unauthenticated access is not stated", "Users must be authenticated."),
+		}
+		cur[0].Tags = tags
+		cur[1].Tags = tags
+		matches := MatchFindings(prev, cur)
+		if len(matches) != 2 {
+			t.Fatalf("%s: matches = %#v, want both findings matched", name, matches)
+		}
+		for _, match := range matches {
+			if match.Method != matchMethodFingerprint || match.Previous.ID != match.Current.ID {
+				t.Errorf("%s: %s matched %s by %s, want the same finding by fingerprint", name, match.Current.ID, match.Previous.ID, match.Method)
+			}
+		}
+	}
+}
+
 func testFinding(id, text, quote string) TrackedFinding {
 	return TrackedFinding{
 		Kind:        KindIssue,

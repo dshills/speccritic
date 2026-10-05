@@ -176,7 +176,7 @@ Normalization rules:
 - Trim leading and trailing whitespace.
 - Collapse internal whitespace to one ASCII space.
 - Lowercase category and severity.
-- Remove volatile tags such as `chunk:<ID>`, `range:<ID>`, `incremental-reused`, and provider repair tags from fingerprint input.
+- Remove volatile tags such as `chunk:<ID>`, `range:<ID>`, `incremental-review`, `incremental-reused`, and provider repair tags from fingerprint input.
 - Do not include current issue ids such as `ISSUE-0001` because IDs may be reassigned after filtering, merging, or provider output changes.
 
 ## 10. Status Classification
