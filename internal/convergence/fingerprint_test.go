@@ -25,6 +25,26 @@ func TestTrackIssuesFingerprintIgnoresIDAndVolatileTags(t *testing.T) {
 	}
 }
 
+// A previous report written with completion suggestions carries the
+// completion-suggested tag; the current findings never do when they are compared.
+func TestTrackIssuesFingerprintIgnoresCompletionSuggestedTag(t *testing.T) {
+	current := schema.Issue{
+		ID:       "PREFLIGHT-STRUCTURE-001",
+		Severity: schema.SeverityCritical,
+		Category: schema.CategoryUnspecifiedConstraint,
+		Title:    "Missing purpose or goals section",
+		Evidence: []schema.Evidence{{Quote: "# Bad Specification"}},
+		Tags:     []string{"missing-section", "preflight"},
+	}
+	previous := current
+	previous.Tags = []string{"completion-suggested", "missing-section", "preflight"}
+	trackedCurrent := ComputeFingerprints(TrackIssues([]schema.Issue{current}))[0]
+	trackedPrevious := ComputeFingerprints(TrackIssues([]schema.Issue{previous}))[0]
+	if trackedCurrent.Fingerprint != trackedPrevious.Fingerprint {
+		t.Fatalf("fingerprints differ:\n%s\n%s", trackedCurrent.Fingerprint, trackedPrevious.Fingerprint)
+	}
+}
+
 func TestTrackQuestionsFingerprint(t *testing.T) {
 	q := schema.Question{
 		ID:       "Q-0001",
