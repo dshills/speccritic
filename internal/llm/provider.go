@@ -43,6 +43,38 @@ type Request struct {
 	MaxTokens   int
 	// Model overrides the provider's configured model when non-empty.
 	Model string
+	// Attempt says why this request is being made. It is used for usage
+	// reporting only and is never sent to the provider.
+	Attempt Attempt
+}
+
+// Attempt distinguishes a first request from the follow-up requests made to
+// fix or finish its response.
+type Attempt string
+
+const (
+	// AttemptFirst is the original request.
+	AttemptFirst Attempt = ""
+	// AttemptRepair regenerates a response that held nothing usable.
+	AttemptRepair Attempt = "repair"
+	// AttemptContinuation asks for the rest of a response that was cut off.
+	AttemptContinuation Attempt = "continuation"
+)
+
+// Usage is the token accounting for one completion call. Providers report
+// cached input differently; these fields are normalized so the three input
+// counts never overlap.
+type Usage struct {
+	// InputTokens counts prompt tokens billed at the full rate: those neither
+	// read from nor written to the provider's prompt cache.
+	InputTokens int
+	// OutputTokens counts generated tokens, including any reasoning tokens
+	// the provider bills as output.
+	OutputTokens int
+	// CacheReadTokens counts prompt tokens served from the prompt cache.
+	CacheReadTokens int
+	// CacheWriteTokens counts prompt tokens written to the prompt cache.
+	CacheWriteTokens int
 }
 
 // Response holds the result of an LLM completion call.
@@ -54,6 +86,9 @@ type Response struct {
 	// Truncated reports that generation stopped at the output token cap, so
 	// Content may end mid-document.
 	Truncated bool
+	// Usage is what the provider reported for this call. It is zero when the
+	// provider reported nothing.
+	Usage Usage
 }
 
 // Provider is the interface for LLM completion backends.

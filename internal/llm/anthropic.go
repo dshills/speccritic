@@ -82,6 +82,14 @@ type anthropicResponse struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	// Usage reports input_tokens exclusive of cached tokens, which arrive in
+	// the two cache fields.
+	Usage struct {
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
@@ -174,6 +182,12 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 		Model:      fmt.Sprintf("anthropic:%s", ar.Model),
 		StopReason: ar.StopReason,
 		Truncated:  truncated,
+		Usage: Usage{
+			InputTokens:      ar.Usage.InputTokens,
+			OutputTokens:     ar.Usage.OutputTokens,
+			CacheReadTokens:  ar.Usage.CacheReadInputTokens,
+			CacheWriteTokens: ar.Usage.CacheCreationInputTokens,
+		},
 	}, nil
 }
 

@@ -39,10 +39,33 @@ type Meta struct {
 	ChunkSummary string  `json:"chunk_summary,omitempty"`
 	// DroppedFindings counts model findings that failed local validation and
 	// were left out of the report.
-	DroppedFindings int              `json:"dropped_findings,omitempty"`
-	Incremental     *IncrementalMeta `json:"incremental,omitempty"`
-	Convergence     *ConvergenceMeta `json:"convergence,omitempty"`
-	Completion      *CompletionMeta  `json:"completion,omitempty"`
+	DroppedFindings int `json:"dropped_findings,omitempty"`
+	// Usage totals the LLM calls behind this report. It is omitted when the
+	// review made none.
+	Usage       *UsageMeta       `json:"usage,omitempty"`
+	Incremental *IncrementalMeta `json:"incremental,omitempty"`
+	Convergence *ConvergenceMeta `json:"convergence,omitempty"`
+	Completion  *CompletionMeta  `json:"completion,omitempty"`
+}
+
+// UsageMeta totals the LLM calls a review made. The three input token counts
+// do not overlap: input_tokens excludes anything read from or written to the
+// provider's prompt cache.
+type UsageMeta struct {
+	// Calls counts every request sent, including repair and continuation calls.
+	Calls              int `json:"calls"`
+	RepairCalls        int `json:"repair_calls"`
+	ContinuationCalls  int `json:"continuation_calls"`
+	TruncatedResponses int `json:"truncated_responses"`
+	InputTokens        int `json:"input_tokens"`
+	OutputTokens       int `json:"output_tokens"`
+	CacheReadTokens    int `json:"cache_read_tokens"`
+	CacheWriteTokens   int `json:"cache_write_tokens"`
+	// CallDurationMS adds up the time spent inside calls; with concurrent
+	// chunk calls it exceeds WallDurationMS, which runs from the start of the
+	// first call to the end of the last.
+	CallDurationMS int64 `json:"call_duration_ms"`
+	WallDurationMS int64 `json:"wall_duration_ms"`
 }
 
 // CompletionMeta describes optional profile-specific completion generation.

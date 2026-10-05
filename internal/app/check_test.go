@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dshills/speccritic/internal/llm"
@@ -1110,14 +1111,20 @@ func writePreviousReport(t *testing.T, specHash, profile string, strict bool, th
 	return path
 }
 
+// chunkAwareProvider is called from concurrent chunk workers, so its counters
+// are guarded by mu.
 type chunkAwareProvider struct {
 	emptyChunks bool
+
+	mu          sync.Mutex
 	chunkCalls  int
 	synthCalls  int
 	singleCalls int
 }
 
 func (p *chunkAwareProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	switch {
 	case strings.Contains(req.UserPromptCachedPrefix, "Analyze cross-section risks"):
 		p.synthCalls++
@@ -1199,4 +1206,145 @@ func completeSpecWithRequirement(requirement string) string {
 		"## Acceptance Criteria",
 		"Each requirement has an objective test.",
 	}, "\n")
+}
+
+// usageProvider answers each call with the next scripted response and a fixed
+// usage report.
+type usageProvider struct {
+	responses []string
+	calls     int
+}
+
+func (p *usageProvider) Complete(_ context.Context, _ *llm.Request) (*llm.Response, error) {
+	content := p.responses[min(p.calls, len(p.responses)-1)]
+	p.calls++
+	return &llm.Response{
+		Content: content,
+		Model:   "fake:model",
+		Usage:   llm.Usage{InputTokens: 100, OutputTokens: 10, CacheReadTokens: 5, CacheWriteTokens: 1},
+	}, nil
+}
+
+func usageCheckRequest(errw *strings.Builder) CheckRequest {
+	return CheckRequest{
+		Version:           "test",
+		SpecName:          "SPEC.md",
+		SpecText:          "The system must do one thing.\n",
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Verbose:           true,
+		Source:            SourceWeb,
+		ErrWriter:         errw,
+	}
+}
+
+func TestCheckerReportsUsageForSingleCall(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &usageProvider{responses: []string{`{"issues":[],"questions":[],"patches":[]}`}}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	var errw strings.Builder
+
+	result, err := checker.Check(context.Background(), usageCheckRequest(&errw))
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	usage := result.Report.Meta.Usage
+	if usage == nil {
+		t.Fatal("meta.usage is nil, want usage for an LLM-backed review")
+	}
+	if usage.Calls != 1 || usage.RepairCalls != 0 || usage.ContinuationCalls != 0 {
+		t.Errorf("calls=%d repair=%d continuation=%d, want 1/0/0", usage.Calls, usage.RepairCalls, usage.ContinuationCalls)
+	}
+	if usage.InputTokens != 100 || usage.OutputTokens != 10 || usage.CacheReadTokens != 5 || usage.CacheWriteTokens != 1 {
+		t.Errorf("tokens = %+v, want 100 input, 10 output, 5 cache read, 1 cache write", *usage)
+	}
+	if !strings.Contains(errw.String(), "INFO: LLM usage: 1 call(s) (0 repair, 0 continuation, 0 truncated); tokens: 100 input, 5 cache read, 1 cache write, 10 output;") {
+		t.Errorf("verbose log missing the usage line:\n%s", errw.String())
+	}
+}
+
+func TestCheckerReportsRepairCallsInUsage(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &usageProvider{responses: []string{`not json`, `{"issues":[],"questions":[],"patches":[]}`}}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	var errw strings.Builder
+
+	result, err := checker.Check(context.Background(), usageCheckRequest(&errw))
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	usage := result.Report.Meta.Usage
+	if usage == nil || usage.Calls != 2 || usage.RepairCalls != 1 || usage.InputTokens != 200 || usage.OutputTokens != 20 {
+		t.Fatalf("usage = %+v, want 2 calls, 1 repair, tokens for both calls", usage)
+	}
+}
+
+func TestCheckerLogsUsageWhenTheReviewFails(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &usageProvider{responses: []string{`not json`}}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	var errw strings.Builder
+
+	if _, err := checker.Check(context.Background(), usageCheckRequest(&errw)); err == nil {
+		t.Fatal("expected invalid model output error")
+	}
+	if !strings.Contains(errw.String(), "LLM usage: 2 call(s) (1 repair,") {
+		t.Errorf("verbose log should still report what the failed review used:\n%s", errw.String())
+	}
+}
+
+func TestCheckerReportsUsageAcrossChunkCalls(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &chunkAwareProvider{}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	var errw strings.Builder
+	req := usageCheckRequest(&errw)
+	req.SpecText = longSpec(200)
+	req.Chunking = "on"
+	req.ChunkLines = 40
+	req.ChunkConcurrency = 2
+
+	result, err := checker.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if provider.chunkCalls < 2 {
+		t.Fatalf("chunk calls = %d, want a multi-chunk review", provider.chunkCalls)
+	}
+	usage := result.Report.Meta.Usage
+	if usage == nil || usage.Calls != provider.chunkCalls+provider.synthCalls {
+		t.Fatalf("usage = %+v, want %d chunk + %d synthesis calls", usage, provider.chunkCalls, provider.synthCalls)
+	}
+}
+
+func TestCheckerOmitsUsageWithoutLLMCalls(t *testing.T) {
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) {
+		t.Fatal("preflight-only review must not create a provider")
+		return nil, nil
+	}}
+	var errw strings.Builder
+	req := usageCheckRequest(&errw)
+	req.Preflight = true
+	req.PreflightMode = "only"
+
+	result, err := checker.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if result.Report.Meta.Usage != nil {
+		t.Fatalf("meta.usage = %+v, want nil when no LLM call was made", result.Report.Meta.Usage)
+	}
+	if strings.Contains(errw.String(), "LLM usage") {
+		t.Errorf("verbose log reports usage for a review with no calls:\n%s", errw.String())
+	}
 }

@@ -71,6 +71,7 @@ func CompleteReport(ctx context.Context, provider Provider, call ReportCall) (*s
 	}
 	call.logf("Validation failed, retrying: %s", reason)
 	repairReq := *call.Request
+	repairReq.Attempt = AttemptRepair
 	if resp.Truncated || parsed.Incomplete != nil || IncompleteJSON(parseErr) {
 		repairReq.MaxTokens = RepairMaxTokens(call.Request.MaxTokens)
 	}
@@ -103,6 +104,7 @@ func continueReport(ctx context.Context, provider Provider, call ReportCall, max
 	for range maxContinuations {
 		call.logf("Response cut off after %d finding(s), requesting the rest", findingCount(acc))
 		contReq := *call.Request
+		contReq.Attempt = AttemptContinuation
 		contReq.MaxTokens = maxTokens
 		contReq.UserPrompt = call.Request.UserPrompt + continuationPrompt(acc)
 		resp, err := provider.Complete(ctx, &contReq)

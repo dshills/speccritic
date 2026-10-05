@@ -681,3 +681,70 @@ func TestOpenAICompatibleComplete_ReportsFinishReason(t *testing.T) {
 		})
 	}
 }
+
+func TestAnthropicComplete_ReportsUsage(t *testing.T) {
+	original := AnthropicAPIURL()
+	SetAnthropicAPIURL(serveJSON(t, `{"model":"claude","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}],
+		"usage":{"input_tokens":120,"output_tokens":45,"cache_creation_input_tokens":900,"cache_read_input_tokens":3000}}`))
+	t.Cleanup(func() { SetAnthropicAPIURL(original) })
+
+	p := &anthropicProvider{model: "claude-test", apiKey: "k"}
+	resp, err := p.Complete(context.Background(), &Request{UserPrompt: "spec"})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	want := Usage{InputTokens: 120, OutputTokens: 45, CacheReadTokens: 3000, CacheWriteTokens: 900}
+	if resp.Usage != want {
+		t.Errorf("usage = %+v, want %+v", resp.Usage, want)
+	}
+}
+
+func TestOpenAICompatibleComplete_ReportsUsage(t *testing.T) {
+	cases := map[string]struct {
+		usage string
+		want  Usage
+	}{
+		// prompt_tokens includes the cached share, which must not be counted twice.
+		"with cached tokens":    {`{"prompt_tokens":1000,"completion_tokens":50,"prompt_tokens_details":{"cached_tokens":800}}`, Usage{InputTokens: 200, OutputTokens: 50, CacheReadTokens: 800}},
+		"without cache details": {`{"prompt_tokens":1000,"completion_tokens":50}`, Usage{InputTokens: 1000, OutputTokens: 50}},
+	}
+	providers := map[string]struct {
+		provider Provider
+		setURL   func(string)
+		url      func() string
+	}{
+		"openai": {provider: &openaiProvider{model: "gpt-test", apiKey: "k"}, setURL: SetOpenAIAPIURL, url: OpenAIAPIURL},
+		"gemini": {provider: &geminiProvider{model: "gemini-test", apiKey: "k"}, setURL: SetGeminiAPIURL, url: GeminiAPIURL},
+	}
+	for providerName, pc := range providers {
+		for name, tc := range cases {
+			t.Run(providerName+"/"+name, func(t *testing.T) {
+				original := pc.url()
+				t.Cleanup(func() { pc.setURL(original) })
+				pc.setURL(serveJSON(t, `{"model":"m","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":`+tc.usage+`}`))
+
+				resp, err := pc.provider.Complete(context.Background(), &Request{UserPrompt: "spec"})
+				if err != nil {
+					t.Fatalf("Complete: %v", err)
+				}
+				if resp.Usage != tc.want {
+					t.Errorf("usage = %+v, want %+v", resp.Usage, tc.want)
+				}
+			})
+		}
+	}
+}
+
+func TestProviders_NoUsageReportedIsZero(t *testing.T) {
+	original := AnthropicAPIURL()
+	SetAnthropicAPIURL(serveJSON(t, `{"model":"claude","content":[{"type":"text","text":"ok"}]}`))
+	t.Cleanup(func() { SetAnthropicAPIURL(original) })
+
+	resp, err := (&anthropicProvider{model: "claude-test", apiKey: "k"}).Complete(context.Background(), &Request{UserPrompt: "spec"})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if resp.Usage != (Usage{}) {
+		t.Errorf("usage = %+v, want zero", resp.Usage)
+	}
+}

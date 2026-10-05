@@ -626,6 +626,32 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
 
 > **Note:** Model output is validated one finding at a time. A finding that fails validation (an unknown category, evidence outside the spec, and so on) is left out and the rest are kept; `meta.dropped_findings` then reports how many were left out. The field is omitted when nothing was dropped. Issue and question IDs, bookkeeping tags and the evidence `path` are assigned by SpecCritic, not taken from the model.
 
+### Usage
+
+Every review that calls the LLM reports what it used in `meta.usage`, so a caller can see the cost of a run without parsing logs:
+
+```json
+"usage": {
+  "calls": 5,
+  "repair_calls": 0,
+  "continuation_calls": 1,
+  "truncated_responses": 1,
+  "input_tokens": 18240,
+  "output_tokens": 6312,
+  "cache_read_tokens": 9100,
+  "cache_write_tokens": 2300,
+  "call_duration_ms": 96400,
+  "wall_duration_ms": 41800
+}
+```
+
+- `calls` counts every request, including `repair_calls` (a response with nothing usable was regenerated) and `continuation_calls` (the rest of a cut-off response was requested).
+- The three input counts do not overlap: `input_tokens` excludes tokens read from or written to the provider's prompt cache. A `cache_read_tokens` of zero across repeated runs means the cache is not being hit.
+- `call_duration_ms` adds up the time spent inside calls; `wall_duration_ms` is the elapsed time from the first call to the last. Concurrent chunk calls make the first larger than the second.
+- Token counts are zero when the provider does not report usage. The field is omitted when a review makes no LLM call, such as `--preflight-mode only` or an incremental rerun served entirely from reuse.
+
+`--verbose` prints the same totals as one line on stderr, including when the review fails.
+
 ### Patches
 
 When the LLM suggests corrections, they are included in the `patches` array and optionally written to `--patch-out` in diff-match-patch format:

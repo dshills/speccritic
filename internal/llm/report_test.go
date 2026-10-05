@@ -166,6 +166,9 @@ func TestCompleteReport_TruncatedResponseIsContinuedNotRegenerated(t *testing.T)
 	}
 
 	cont := provider.reqs[1]
+	if provider.reqs[0].Attempt != AttemptFirst || cont.Attempt != AttemptContinuation {
+		t.Errorf("attempts = %q, %q, want first then continuation", provider.reqs[0].Attempt, cont.Attempt)
+	}
 	if cont.MaxTokens != 1000 {
 		t.Errorf("continuation max tokens = %d, want unchanged 1000", cont.MaxTokens)
 	}
@@ -263,6 +266,9 @@ func TestCompleteReport_RepairThatIsCutOffIsContinued(t *testing.T) {
 		t.Fatalf("calls=%d issues=%d, want 3 calls and 2 issues", len(provider.reqs), len(report.Issues))
 	}
 	repair, cont := provider.reqs[1], provider.reqs[2]
+	if repair.Attempt != AttemptRepair || cont.Attempt != AttemptContinuation {
+		t.Errorf("attempts = %q, %q, want repair then continuation", repair.Attempt, cont.Attempt)
+	}
 	if repair.MaxTokens <= 1000 || cont.MaxTokens != repair.MaxTokens {
 		t.Errorf("repair max tokens = %d, continuation = %d, want the raised budget kept", repair.MaxTokens, cont.MaxTokens)
 	}

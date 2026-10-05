@@ -8,6 +8,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/completion"
@@ -213,10 +214,15 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	if newProvider == nil {
 		newProvider = llm.NewProvider
 	}
-	provider, err := newProvider(modelStr)
+	rawProvider, err := newProvider(modelStr)
 	if err != nil {
 		return nil, appError(ErrorProvider, fmt.Errorf("creating LLM provider: %w", err))
 	}
+	// Every LLM call below goes through the meter, so the report and the
+	// verbose log can say what the review cost, whether or not it succeeded.
+	meter := llm.NewMeter(rawProvider)
+	var provider llm.Provider = meter
+	defer func() { logUsage(errw, req.Verbose, meter.Totals()) }()
 
 	if (req.IncrementalFrom != "" || req.IncrementalFromText != "" || req.IncrementalMode == "on") && req.IncrementalMode != "off" {
 		result, handled, err := c.checkIncremental(ctx, provider, req, s, originalRaw, preflightIssues, sysPrompt, errw)
@@ -235,6 +241,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 				return nil, appError(ErrorInput, err)
 			}
 			result.PatchDiff = patchDiffForReport(originalRaw, result.Report, redactedSpec, errw)
+			result.Report.Meta.Usage = usageMeta(meter.Totals())
 			return result, nil
 		}
 		logVerbose(errw, req.Verbose, "Incremental review fell back to full review")
@@ -256,6 +263,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 			return nil, appError(ErrorInput, err)
 		}
 		patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
+		report.Meta.Usage = usageMeta(meter.Totals())
 		return &CheckResult{
 			Report:       report,
 			PatchDiff:    patchDiff,
@@ -282,6 +290,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		return nil, appError(ErrorInput, err)
 	}
 	patchDiff := patchDiffForReport(originalRaw, report, redactedSpec, errw)
+	report.Meta.Usage = usageMeta(meter.Totals())
 
 	return &CheckResult{
 		Report:       report,
@@ -290,6 +299,39 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+// usageMeta converts call totals to their report form. It returns nil when no
+// call was made, so a review served entirely from reuse reports no usage.
+func usageMeta(t llm.Totals) *schema.UsageMeta {
+	if t.Calls == 0 {
+		return nil
+	}
+	return &schema.UsageMeta{
+		Calls:              t.Calls,
+		RepairCalls:        t.RepairCalls,
+		ContinuationCalls:  t.ContinuationCalls,
+		TruncatedResponses: t.TruncatedResponses,
+		InputTokens:        t.InputTokens,
+		OutputTokens:       t.OutputTokens,
+		CacheReadTokens:    t.CacheReadTokens,
+		CacheWriteTokens:   t.CacheWriteTokens,
+		CallDurationMS:     t.CallDuration.Milliseconds(),
+		WallDurationMS:     t.WallDuration.Milliseconds(),
+	}
+}
+
+// logUsage prints one line summarizing the LLM calls a review made.
+func logUsage(w io.Writer, verbose bool, t llm.Totals) {
+	if t.Calls == 0 {
+		return
+	}
+	logVerbose(w, verbose,
+		"LLM usage: %d call(s) (%d repair, %d continuation, %d truncated); tokens: %d input, %d cache read, %d cache write, %d output; %s in calls, %s elapsed",
+		t.Calls, t.RepairCalls, t.ContinuationCalls, t.TruncatedResponses,
+		t.InputTokens, t.CacheReadTokens, t.CacheWriteTokens, t.OutputTokens,
+		t.CallDuration.Round(time.Millisecond), t.WallDuration.Round(time.Millisecond),
+	)
 }
 
 func (c *Checker) applyConvergence(req CheckRequest, report *schema.Report, coverage convergence.ReviewCoverage, errw io.Writer) error {

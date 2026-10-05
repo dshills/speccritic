@@ -161,6 +161,8 @@ Top-Level Structure
   }
 }
 
+meta may also carry two optional fields. dropped_findings counts model findings left out by local validation. usage totals the LLM calls behind the report: calls, repair_calls, continuation_calls, truncated_responses, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, call_duration_ms and wall_duration_ms. usage is omitted when the review made no LLM call.
+
 
 ⸻
 

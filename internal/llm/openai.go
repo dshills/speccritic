@@ -54,6 +54,15 @@ type openaiResponse struct {
 		Message      openaiMessage `json:"message"`
 		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
+	// Usage reports prompt_tokens inclusive of cached tokens; the cached share
+	// is broken out in prompt_tokens_details when the provider sends it.
+	Usage struct {
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
@@ -91,7 +100,19 @@ func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		Model:      fmt.Sprintf("openai:%s", oaiResp.Model),
 		StopReason: oaiResp.Choices[0].FinishReason,
 		Truncated:  oaiResp.Choices[0].FinishReason == openaiFinishLength,
+		Usage:      oaiResp.usage(),
 	}, nil
+}
+
+// usage converts the OpenAI-style counts, where cached tokens are part of
+// prompt_tokens, to Usage, where they are counted separately.
+func (r openaiResponse) usage() Usage {
+	cached := r.Usage.PromptTokensDetails.CachedTokens
+	return Usage{
+		InputTokens:     max(r.Usage.PromptTokens-cached, 0),
+		OutputTokens:    r.Usage.CompletionTokens,
+		CacheReadTokens: cached,
+	}
 }
 
 func (p *openaiProvider) completeOnce(ctx context.Context, model string, messages []openaiMessage, req *Request, useCompletionTokens bool) (openaiResponse, bool, error) {

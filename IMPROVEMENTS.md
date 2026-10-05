@@ -15,8 +15,9 @@ calls, or the quality of what comes back.
 
 - Behavior of this codebase was confirmed by reading the cited code. Item 3 was also confirmed by
   running it.
-- Token and latency effects are estimates from prompt sizes. Nothing records real usage yet
-  (item 4), so treat the numbers as directional.
+- Token and latency effects are estimates from prompt sizes, made before usage was recorded.
+  Item 4 now reports real numbers in `meta.usage`; use those to confirm or correct the
+  estimates before acting on the remaining items.
 - Statements about current Claude models come from Anthropic's API reference (cached
   2026-09-25), not from live calls.
 
@@ -25,7 +26,7 @@ calls, or the quality of what comes back.
 | 1 | Stop discarding responses that hit the output cap | Speed, Tokens | Small | Done |
 | 2 | Salvage valid findings; stamp bookkeeping fields locally | Speed, Tokens | Small | Done |
 | 3 | Fix redaction collapsing lines | Accuracy | Small | Done |
-| 4 | Record token usage and latency per call | All (measurement) | Small |  |
+| 4 | Record token usage and latency per call | All (measurement) | Small | Done |
 | 5 | Make requests valid for current models; refresh defaults | Accuracy | Medium |  |
 | 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium |  |
 | 7 | Enforce the output schema at the provider | Speed, Tokens | Medium |  |
@@ -113,7 +114,7 @@ the newline count is unchanged for every pattern.
 
 ## 4. Record token usage and latency per call
 
-**Helps:** Everything else, by making it measurable. **Effort:** Small.
+**Helps:** Everything else, by making it measurable. **Effort:** Small. **Status:** Done.
 
 **Today.** No provider response parses `usage`; `llm.Response` carries only content and model
 (`internal/llm/provider.go:46-49`). Nothing reports how many calls ran, how many were repairs,
