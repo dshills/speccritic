@@ -453,6 +453,7 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 	reuse, err := incremental.ReuseFindings(incremental.ReuseInput{
 		Plan:            plan,
 		Previous:        prev.Report,
+		SpecPath:        s.Path,
 		CurrentRaw:      s.Raw,
 		CurrentRedacted: currentRedacted,
 		Config:          cfg,

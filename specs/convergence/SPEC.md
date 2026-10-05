@@ -132,7 +132,10 @@ The previous report may also contain:
 - `meta.incremental`,
 - `meta.convergence`,
 - `meta.redaction_config_hash`,
-- issue/question tags from preflight, chunking, incremental review, or provider repair.
+- issue/question tags from preflight, chunking, incremental review, or provider repair,
+- preflight findings identified by their rule ID (`PREFLIGHT-<GROUP>-<NNN>`) instead of an `ISSUE-NNNN` ID; one rule ID may appear on several findings.
+
+Every report SpecCritic writes must load as a previous report. Evidence paths and `patches` are not validated when a previous report is loaded: convergence reads neither, and reports written by earlier versions hold absolute evidence paths.
 
 Compatibility checks:
 

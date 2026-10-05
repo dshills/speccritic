@@ -1,5 +1,7 @@
 package schema
 
+import "path/filepath"
+
 // Report is the top-level output structure matching the JSON schema v1.
 type Report struct {
 	Tool      string     `json:"tool"`
@@ -283,6 +285,18 @@ type Evidence struct {
 	LineStart int    `json:"line_start"`
 	LineEnd   int    `json:"line_end"`
 	Quote     string `json:"quote"`
+}
+
+// EvidencePath returns the path recorded on evidence for a spec read from
+// specPath. A local relative path is kept as given; a path that is absolute or
+// climbs out of the working directory is reduced to its base name. Every
+// finding in a report uses this one spelling, because duplicate detection
+// compares evidence paths for equality.
+func EvidencePath(specPath string) string {
+	if specPath == "" || filepath.IsLocal(specPath) {
+		return specPath
+	}
+	return filepath.Base(specPath)
 }
 
 // Patch is the JSON-serializable patch type returned by the LLM.

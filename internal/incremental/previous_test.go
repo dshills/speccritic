@@ -89,6 +89,49 @@ func TestParsePreviousReportRejectsInvalidID(t *testing.T) {
 	}
 }
 
+func TestParsePreviousReportAcceptsPreflightFindings(t *testing.T) {
+	// A single-call review keeps preflight findings under their rule IDs, and
+	// older reports give them the spec path as it was passed on the command line.
+	preflight := `{
+      "id": "PREFLIGHT-STRUCTURE-001",
+      "severity": "CRITICAL",
+      "category": "UNSPECIFIED_CONSTRAINT",
+      "title": "Missing purpose",
+      "description": "desc",
+      "evidence": [{"path": "/work/specs/SPEC.md", "line_start": 1, "line_end": 1, "quote": "q"}],
+      "impact": "impact",
+      "recommendation": "rec",
+      "blocking": true,
+      "tags": ["preflight", "preflight-rule:PREFLIGHT-STRUCTURE-001"]
+    },
+    `
+	raw := strings.Replace(validPreviousReport, `"issues": [`, `"issues": [`+preflight, 1)
+	raw = strings.Replace(raw, `"patches": []`, `"patches": [{"issue_id": "PREFLIGHT-STRUCTURE-001", "before": "q", "after": "r"}]`, 1)
+	prev, err := ParsePreviousReport([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParsePreviousReport: %v", err)
+	}
+	if len(prev.Report.Issues) != 2 {
+		t.Fatalf("issues = %d, want 2", len(prev.Report.Issues))
+	}
+}
+
+func TestValidatePreviousCompatibilityRejectsPreflightOnlyReport(t *testing.T) {
+	raw := strings.Replace(validPreviousReport, `"model": "openai:gpt-5"`, `"model": "preflight"`, 1)
+	prev, err := ParsePreviousReport([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParsePreviousReport: %v", err)
+	}
+	cfg := DefaultConfig()
+	cfg.Profile = "general"
+	cfg.Strict = true
+	cfg.SeverityThreshold = "info"
+	err = ValidatePreviousCompatibility(prev, cfg)
+	if err == nil || !strings.Contains(err.Error(), "no model review to reuse") {
+		t.Fatalf("error = %v, want a preflight-only baseline rejected", err)
+	}
+}
+
 func TestValidatePreviousCompatibility(t *testing.T) {
 	prev, err := ParsePreviousReport([]byte(validPreviousReport))
 	if err != nil {

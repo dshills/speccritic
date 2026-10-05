@@ -95,7 +95,8 @@ func RunRules(s *spec.Spec, cfg Config, rules []Rule) (Result, error) {
 		cfg.Profile = "general"
 	}
 	doc := Document{
-		Path:      s.Path,
+		// Same spelling as model findings, so the two can be matched by path.
+		Path:      schema.EvidencePath(s.Path),
 		Raw:       s.Raw,
 		Lines:     spec.Lines(s.Raw),
 		LineCount: s.LineCount,

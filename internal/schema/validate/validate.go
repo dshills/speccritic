@@ -40,9 +40,9 @@ type Options struct {
 	// LineCount is the number of lines in the spec; evidence must stay inside it.
 	LineCount int
 	// SpecPath, when set, replaces the path on every evidence entry. The caller
-	// knows which file was reviewed, so the model's copy is not used. A path
-	// that is absolute or climbs out of the working directory is reduced to
-	// its base name, so evidence paths always pass the check Parse applies.
+	// knows which file was reviewed, so the model's copy is not used. The path
+	// is spelled by schema.EvidencePath, so evidence paths always pass the
+	// check Parse applies.
 	SpecPath string
 	// CheckIssue and CheckQuestion apply caller-specific rules to a finding
 	// that passed the general checks, and may adjust it. A non-nil error drops
@@ -73,9 +73,7 @@ type Result struct {
 //
 // Parse, by contrast, needs the whole document to be valid.
 func ParseResponse(raw string, opts Options) (Result, error) {
-	if opts.SpecPath != "" && !filepath.IsLocal(opts.SpecPath) {
-		opts.SpecPath = filepath.Base(opts.SpecPath)
-	}
+	opts.SpecPath = schema.EvidencePath(opts.SpecPath)
 	c := &collector{opts: opts, report: &schema.Report{}}
 	incomplete, err := decodeFindings(stripFences(raw), c)
 	if err != nil {
@@ -397,6 +395,20 @@ func validateIssue(issue schema.Issue, idx int, lineCount int) error {
 
 // validateIssueContent checks everything about an issue except its ID.
 func validateIssueContent(issue schema.Issue, prefix string, lineCount int) error {
+	if err := validateIssueFields(issue, prefix); err != nil {
+		return err
+	}
+	for j, ev := range issue.Evidence {
+		if err := validateEvidence(ev, fmt.Sprintf("%s.evidence[%d]", prefix, j), lineCount); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateIssueFields checks an issue's own fields, leaving out its ID and
+// evidence.
+func validateIssueFields(issue schema.Issue, prefix string) error {
 	if err := validateSeverity(issue.Severity, prefix); err != nil {
 		return err
 	}
@@ -405,11 +417,6 @@ func validateIssueContent(issue schema.Issue, prefix string, lineCount int) erro
 	}
 	if issue.Title == "" {
 		return fmt.Errorf("%s: title is required", prefix)
-	}
-	for j, ev := range issue.Evidence {
-		if err := validateEvidence(ev, fmt.Sprintf("%s.evidence[%d]", prefix, j), lineCount); err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -425,16 +432,25 @@ func validateQuestion(q schema.Question, idx int, lineCount int) error {
 
 // validateQuestionContent checks everything about a question except its ID.
 func validateQuestionContent(q schema.Question, prefix string, lineCount int) error {
-	if err := validateSeverity(q.Severity, prefix); err != nil {
+	if err := validateQuestionFields(q, prefix); err != nil {
 		return err
-	}
-	if q.Question == "" {
-		return fmt.Errorf("%s: question text is required", prefix)
 	}
 	for j, ev := range q.Evidence {
 		if err := validateEvidence(ev, fmt.Sprintf("%s.evidence[%d]", prefix, j), lineCount); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateQuestionFields checks a question's own fields, leaving out its ID
+// and evidence.
+func validateQuestionFields(q schema.Question, prefix string) error {
+	if err := validateSeverity(q.Severity, prefix); err != nil {
+		return err
+	}
+	if q.Question == "" {
+		return fmt.Errorf("%s: question text is required", prefix)
 	}
 	return nil
 }
@@ -472,6 +488,18 @@ func validateSeverity(s schema.Severity, prefix string) error {
 }
 
 func validateEvidence(ev schema.Evidence, prefix string, lineCount int) error {
+	if err := validateEvidenceLines(ev, prefix, lineCount); err != nil {
+		return err
+	}
+	if ev.Path != "" && !filepath.IsLocal(ev.Path) {
+		return fmt.Errorf("%s: path %q must be a local relative path", prefix, ev.Path)
+	}
+	return nil
+}
+
+// validateEvidenceLines checks the line range of ev. A lineCount of 0 means
+// the length of the spec is not known.
+func validateEvidenceLines(ev schema.Evidence, prefix string, lineCount int) error {
 	if ev.LineStart < 1 {
 		return fmt.Errorf("%s: line_start %d must be ≥ 1", prefix, ev.LineStart)
 	}
@@ -480,9 +508,6 @@ func validateEvidence(ev schema.Evidence, prefix string, lineCount int) error {
 	}
 	if lineCount > 0 && ev.LineEnd > lineCount {
 		return fmt.Errorf("%s: line_end %d exceeds spec line count %d", prefix, ev.LineEnd, lineCount)
-	}
-	if ev.Path != "" && !filepath.IsLocal(ev.Path) {
-		return fmt.Errorf("%s: path %q must be a local relative path", prefix, ev.Path)
 	}
 	return nil
 }

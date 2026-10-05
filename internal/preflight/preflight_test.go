@@ -1,6 +1,7 @@
 package preflight
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/dshills/speccritic/internal/schema"
@@ -52,6 +53,24 @@ func TestRunRulesEvidenceAndTags(t *testing.T) {
 	}
 	if !hasTag(issue.Tags, TagPreflight) || !hasTag(issue.Tags, "preflight-rule:PREFLIGHT-TEST-001") {
 		t.Fatalf("tags = %#v", issue.Tags)
+	}
+}
+
+func TestRunRulesEvidencePathMatchesModelFindings(t *testing.T) {
+	rules := []Rule{testRule("PREFLIGHT-TEST-001", nil, 1)}
+	for specPath, want := range map[string]string{
+		"specs/api/SPEC.md":                      "specs/api/SPEC.md",
+		filepath.Join(t.TempDir(), "SPEC.md"):    "SPEC.md",
+		filepath.Join("..", "shared", "SPEC.md"): "SPEC.md",
+	} {
+		result, err := RunRules(spec.New(specPath, "first\nsecond"), Config{Enabled: true, Profile: "general"}, rules)
+		if err != nil {
+			t.Fatalf("RunRules(%s): %v", specPath, err)
+		}
+		got := result.Issues[0].Evidence[0].Path
+		if got != want || got != schema.EvidencePath(specPath) {
+			t.Errorf("%s: evidence path = %q, want %q", specPath, got, want)
+		}
 	}
 }
 

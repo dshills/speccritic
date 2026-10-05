@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -799,6 +800,63 @@ func TestCheckerForcedChunkingUsesChunkPath(t *testing.T) {
 	}
 	if len(result.Report.Issues) == 0 || !hasIssueTag(result.Report.Issues[0].Tags, "chunked-review") {
 		t.Fatalf("issues = %#v, want merged chunk finding", result.Report.Issues)
+	}
+}
+
+// placeholderEchoProvider reports, from the chunk that starts at line 1, the
+// same defect the preflight placeholder rule finds on that line.
+type placeholderEchoProvider struct{}
+
+func (placeholderEchoProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	if strings.Contains(req.UserPrompt, chunkIDAttr) && chunkStartLine(chunkIDFromPrompt(req.UserPrompt)) == 1 {
+		return &llm.Response{Content: `{"issues":[{"id":"ISSUE-0001","severity":"CRITICAL","category":"UNSPECIFIED_CONSTRAINT","title":"Placeholder text remains in spec","description":"d","evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"TODO define authentication behavior."}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, Model: "fake:chunk"}, nil
+	}
+	return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, Model: "fake:chunk"}, nil
+}
+
+func TestCheckerChunkedReviewMergesPreflightDuplicateForAbsoluteSpecPath(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	specFile := filepath.Join(t.TempDir(), "SPEC.md")
+	if err := os.WriteFile(specFile, []byte("TODO define authentication behavior.\n"+longSpec(12)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return placeholderEchoProvider{}, nil }}
+	result, err := checker.Check(context.Background(), CheckRequest{
+		Version:           "test",
+		SpecPath:          specFile,
+		Profile:           "general",
+		SeverityThreshold: "info",
+		Temperature:       0.2,
+		MaxTokens:         1000,
+		Preflight:         true,
+		PreflightMode:     "warn",
+		Chunking:          "on",
+		ChunkLines:        4,
+		ChunkConcurrency:  2,
+		Source:            SourceCLI,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	var placeholders []schema.Issue
+	for _, issue := range result.Report.Issues {
+		if issue.Title == "Placeholder text remains in spec" {
+			placeholders = append(placeholders, issue)
+		}
+	}
+	if len(placeholders) != 1 {
+		t.Fatalf("placeholder findings = %d, want the preflight and model findings merged into one: %#v", len(placeholders), placeholders)
+	}
+	merged := placeholders[0]
+	if !hasIssueTag(merged.Tags, "preflight") || !hasIssueTag(merged.Tags, "chunked-review") {
+		t.Fatalf("tags = %v, want both preflight and chunked-review", merged.Tags)
+	}
+	for _, ev := range merged.Evidence {
+		if ev.Path != "SPEC.md" {
+			t.Errorf("evidence path = %q, want SPEC.md", ev.Path)
+		}
 	}
 }
 

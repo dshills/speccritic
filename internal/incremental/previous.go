@@ -15,6 +15,10 @@ const (
 	defaultMaxRemapFailureRatio = 0.25
 	defaultContextLines         = 20
 	defaultChunkTokenThreshold  = 4000
+
+	// preflightOnlyModel is meta.model in a report built from preflight
+	// findings alone, with no model review.
+	preflightOnlyModel = "preflight"
 )
 
 // DefaultConfig returns the spec-defined incremental defaults.
@@ -80,7 +84,7 @@ func LoadPreviousReport(path string) (*PreviousReport, error) {
 
 // ParsePreviousReport validates raw JSON from a previous SpecCritic report.
 func ParsePreviousReport(raw []byte) (*PreviousReport, error) {
-	report, err := validate.Parse(string(raw), 0)
+	report, err := validate.ParseReport(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +153,10 @@ func ValidatePreviousCompatibility(prev *PreviousReport, cfg Config) error {
 		return fmt.Errorf("previous report is required")
 	}
 	report := prev.Report
+	if report.Meta.Model == preflightOnlyModel {
+		// Reusing it would leave every unchanged section without a model review.
+		return fmt.Errorf("previous report holds preflight findings only, so it has no model review to reuse")
+	}
 	if report.Input.Profile != cfg.Profile {
 		return fmt.Errorf("previous report profile %q does not match current profile %q", report.Input.Profile, cfg.Profile)
 	}

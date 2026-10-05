@@ -46,6 +46,21 @@ func TestParsePreviousReportRejectsInvalidFinding(t *testing.T) {
 	}
 }
 
+func TestParsePreviousReportAcceptsPreflightOnlyReport(t *testing.T) {
+	// A preflight-only report: findings keep their rule IDs, and older reports
+	// give them the spec path as it was passed on the command line.
+	raw := strings.Replace(validPreviousReportJSON(), `"id":"ISSUE-0001"`, `"id":"PREFLIGHT-TODO-001"`, 1)
+	raw = strings.Replace(raw, `"tags":[]`, `"tags":["preflight","preflight-rule:PREFLIGHT-TODO-001"]`, 1)
+	raw = strings.Replace(raw, `"path":"SPEC.md"`, `"path":"/work/specs/SPEC.md"`, 1)
+	prev, err := ParsePreviousReport([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParsePreviousReport() error = %v", err)
+	}
+	if prev.Report.Issues[0].ID != "PREFLIGHT-TODO-001" {
+		t.Fatalf("issue ID = %q", prev.Report.Issues[0].ID)
+	}
+}
+
 func TestCheckCompatibilityComplete(t *testing.T) {
 	prev, err := ParsePreviousReport([]byte(validPreviousReportJSON()))
 	if err != nil {

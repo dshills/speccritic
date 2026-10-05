@@ -176,6 +176,75 @@ func TestReuseFindingsPreflightDuplicateRequiresSamePath(t *testing.T) {
 	}
 }
 
+func TestReuseFindingsPointsEvidenceAtCurrentSpec(t *testing.T) {
+	raw := "# Spec\n## Behavior\nThe API must return JSON.\nWhat is the timeout?\n"
+	plan, err := PlanChanges(raw, raw, testPlanConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The previous run was given the spec under another path.
+	report := reportWithIssue(issueAt("ISSUE-0001", 3, "The API must return JSON."))
+	report.Issues[0].Evidence[0].Path = "/work/specs/SPEC.md"
+	report.Questions = []schema.Question{{
+		ID:       "Q-0001",
+		Severity: schema.SeverityWarn,
+		Question: "What is the timeout?",
+		Evidence: []schema.Evidence{{Path: "/work/specs/SPEC.md", LineStart: 4, LineEnd: 4, Quote: "What is the timeout?"}},
+	}}
+	result, err := ReuseFindings(ReuseInput{
+		Plan:            plan,
+		Previous:        report,
+		SpecPath:        "specs/SPEC.md",
+		CurrentRaw:      raw,
+		CurrentRedacted: raw,
+		Config:          Config{SeverityThreshold: "info", MaxRemapFailureRatio: 0.25},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Issues) != 1 || len(result.Questions) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+	if got := result.Issues[0].Evidence[0].Path; got != "specs/SPEC.md" {
+		t.Errorf("issue evidence path = %q, want specs/SPEC.md", got)
+	}
+	if got := result.Questions[0].Evidence[0].Path; got != "specs/SPEC.md" {
+		t.Errorf("question evidence path = %q, want specs/SPEC.md", got)
+	}
+	if got := report.Issues[0].Evidence[0].Path; got != "/work/specs/SPEC.md" {
+		t.Errorf("previous report was modified: evidence path = %q", got)
+	}
+}
+
+func TestReuseFindingsPreflightDuplicateAcrossPathSpellings(t *testing.T) {
+	raw := "# Spec\n## Behavior\nThe API must return JSON.\n"
+	plan, err := PlanChanges(raw, raw, testPlanConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Previous run: relative path. Current run: the same file by absolute path.
+	issue := issueAt("ISSUE-0001", 3, "The API must return JSON.")
+	issue.Evidence[0].Path = "specs/SPEC.md"
+	specPath := "/work/specs/SPEC.md"
+	preflight := issueAt("PREFLIGHT-0001", 3, "The API must return JSON.")
+	preflight.Evidence[0].Path = schema.EvidencePath(specPath)
+	result, err := ReuseFindings(ReuseInput{
+		Plan:            plan,
+		Previous:        reportWithIssue(issue),
+		SpecPath:        specPath,
+		CurrentRaw:      raw,
+		CurrentRedacted: raw,
+		Config:          Config{SeverityThreshold: "info", MaxRemapFailureRatio: 0.25},
+		PreflightIssues: []schema.Issue{preflight},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Issues) != 0 || len(result.Dropped) != 1 || result.Dropped[0].Reason != "preflight_duplicate" {
+		t.Fatalf("result = %#v, want the reused finding dropped as a preflight duplicate", result)
+	}
+}
+
 func TestReuseFindingsPreflightDuplicateUsesRemappedLines(t *testing.T) {
 	previous := "# Spec\n## A\nThe API must return JSON.\n## B\nOther text.\n"
 	current := "# Spec\n## B\nOther text.\n## A\nThe API must return JSON.\n"
