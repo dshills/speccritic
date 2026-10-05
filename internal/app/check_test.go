@@ -52,7 +52,6 @@ func TestCheckerTextBackedCheck(t *testing.T) {
 		SpecText:          "The system must do one thing.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -84,7 +83,6 @@ func TestCheckerKeepsOriginalSpecOutOfLLMRedaction(t *testing.T) {
 		SpecText:          secretSpec,
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -118,7 +116,6 @@ func TestCheckerFiltersUnsafeSingleCallPatches(t *testing.T) {
 		SpecText:          "same\nsame\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -149,7 +146,6 @@ func TestCheckerUsesRequestModelOverride(t *testing.T) {
 		SeverityThreshold: "info",
 		LLMProvider:       "openai",
 		LLMModel:          "gpt-5",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -179,7 +175,6 @@ func TestCheckerDefaultsModelForRequestProvider(t *testing.T) {
 		Profile:           "general",
 		SeverityThreshold: "info",
 		LLMProvider:       "openai",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -209,7 +204,6 @@ func TestCheckerMergesRequestModelWithEnvProvider(t *testing.T) {
 		Profile:           "general",
 		SeverityThreshold: "info",
 		LLMModel:          "gpt-5",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -239,7 +233,6 @@ func TestCheckerInfersProviderFromRequestModel(t *testing.T) {
 		Profile:           "general",
 		SeverityThreshold: "info",
 		LLMModel:          "gpt-5",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -269,7 +262,6 @@ func TestCheckerIncreasesRepairTokensForIncompleteJSON(t *testing.T) {
 		SpecText:          "The system must do one thing.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -304,7 +296,6 @@ func TestCheckerContinuesResponseCutOffAtOutputCap(t *testing.T) {
 		SpecText:          "Requirement one.\nRequirement two.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -350,7 +341,6 @@ func TestCheckerDropsInvalidFindingWithoutRetry(t *testing.T) {
 		SpecText:          "Requirement.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -398,7 +388,6 @@ func TestCheckerReturnsAllIssuesRegardlessOfSeverityThreshold(t *testing.T) {
 		SpecText:          "Requirement.\n",
 		Profile:           "general",
 		SeverityThreshold: "critical",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Source:            SourceWeb,
 	})
@@ -444,7 +433,6 @@ func TestCheckerPreflightOnlySkipsProvider(t *testing.T) {
 		SpecText:          "TODO define authentication behavior.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Preflight:         true,
 		PreflightMode:     "only",
@@ -481,7 +469,6 @@ func TestCheckerPreflightOnlyAddsConvergenceMetadata(t *testing.T) {
 		SpecText:            "TODO define authentication behavior.\n",
 		Profile:             "general",
 		SeverityThreshold:   "info",
-		Temperature:         0.2,
 		MaxTokens:           1000,
 		Preflight:           true,
 		PreflightMode:       "only",
@@ -515,7 +502,6 @@ func TestCheckerPreflightOnlyAddsCompletion(t *testing.T) {
 		SpecText:                "# Spec\n",
 		Profile:                 "general",
 		SeverityThreshold:       "info",
-		Temperature:             0.2,
 		MaxTokens:               1000,
 		Preflight:               true,
 		PreflightMode:           "only",
@@ -610,7 +596,6 @@ func TestCheckerPreflightGateSkipsProviderOnBlockingIssue(t *testing.T) {
 		SpecText:          "TODO define rate limits.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Preflight:         true,
 		PreflightMode:     "gate",
@@ -640,7 +625,6 @@ func TestCheckerPreflightWarnCallsProviderAndMergesIssues(t *testing.T) {
 		SpecText:          "TODO define upload validation.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Preflight:         true,
 		PreflightMode:     "warn",
@@ -669,7 +653,6 @@ func TestCheckerFullReviewAddsCompletion(t *testing.T) {
 		SpecText:                "# Spec\n\n## Purpose\nThe system must work.\n",
 		Profile:                 "general",
 		SeverityThreshold:       "info",
-		Temperature:             0.2,
 		MaxTokens:               1000,
 		CompletionSuggestions:   true,
 		CompletionMode:          "auto",
@@ -702,7 +685,6 @@ func TestCheckerPreflightWarnSendsKnownFindingsToProvider(t *testing.T) {
 		SpecText:          completeSpecWithRequirement("TODO define upload validation."),
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Preflight:         true,
 		PreflightMode:     "warn",
@@ -750,7 +732,6 @@ func TestCheckerPreflightDuplicateTagKeepsLLMIssueCanonical(t *testing.T) {
 		SpecText:          completeSpecWithRequirement("TODO define upload validation."),
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Preflight:         true,
 		PreflightMode:     "warn",
@@ -783,7 +764,6 @@ func TestCheckerForcedChunkingUsesChunkPath(t *testing.T) {
 		SpecText:          completeSpecWithRequirement("The service must upload files."),
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Preflight:         false,
 		Chunking:          "on",
@@ -814,7 +794,6 @@ func TestCheckerAutoChunkingUsesLineThreshold(t *testing.T) {
 		SpecText:               longSpec(130),
 		Profile:                "general",
 		SeverityThreshold:      "info",
-		Temperature:            0.2,
 		MaxTokens:              1000,
 		Preflight:              false,
 		Chunking:               "auto",
@@ -845,7 +824,6 @@ func TestCheckerAutoChunkingUsesTokenThreshold(t *testing.T) {
 		SpecText:            "# Title\n" + strings.Repeat("long ", 2000),
 		Profile:             "general",
 		SeverityThreshold:   "info",
-		Temperature:         0.2,
 		MaxTokens:           1000,
 		Preflight:           false,
 		Chunking:            "auto",
@@ -875,7 +853,6 @@ func TestCheckerChunkingOffUsesSingleCall(t *testing.T) {
 		SpecText:          longSpec(160),
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Preflight:         false,
 		Chunking:          "off",
@@ -908,7 +885,6 @@ func TestCheckerIncrementalUnchangedReusesWithoutLLMCall(t *testing.T) {
 		Profile:                         "general",
 		Strict:                          true,
 		SeverityThreshold:               "info",
-		Temperature:                     0.2,
 		MaxTokens:                       1000,
 		Preflight:                       false,
 		Chunking:                        "off",
@@ -948,7 +924,6 @@ func TestCheckerIncrementalChangedNeedsBaseSpec(t *testing.T) {
 		SpecText:                        current,
 		Profile:                         "general",
 		SeverityThreshold:               "info",
-		Temperature:                     0.2,
 		MaxTokens:                       1000,
 		Preflight:                       false,
 		Chunking:                        "off",
@@ -978,7 +953,6 @@ func TestCheckerIncrementalModelOutputErrorKind(t *testing.T) {
 		SpecText:                        current,
 		Profile:                         "general",
 		SeverityThreshold:               "info",
-		Temperature:                     0.2,
 		MaxTokens:                       1000,
 		Preflight:                       false,
 		Chunking:                        "off",
@@ -1232,7 +1206,6 @@ func usageCheckRequest(errw *strings.Builder) CheckRequest {
 		SpecText:          "The system must do one thing.\n",
 		Profile:           "general",
 		SeverityThreshold: "info",
-		Temperature:       0.2,
 		MaxTokens:         1000,
 		Verbose:           true,
 		Source:            SourceWeb,
@@ -1349,11 +1322,9 @@ func TestCheckerOmitsUsageWithoutLLMCalls(t *testing.T) {
 	}
 }
 
-// settingsProvider records the effort of every request, and can report that
-// the temperature was left out.
+// settingsProvider records the effort of every request.
 type settingsProvider struct {
-	inner              llm.Provider
-	temperatureDropped bool
+	inner llm.Provider
 
 	mu      sync.Mutex
 	efforts []string
@@ -1363,11 +1334,7 @@ func (p *settingsProvider) Complete(ctx context.Context, req *llm.Request) (*llm
 	p.mu.Lock()
 	p.efforts = append(p.efforts, req.Effort)
 	p.mu.Unlock()
-	resp, err := p.inner.Complete(ctx, req)
-	if resp != nil {
-		resp.TemperatureDropped = p.temperatureDropped
-	}
-	return resp, err
+	return p.inner.Complete(ctx, req)
 }
 
 func TestCheckerPassesEffortToEveryCall(t *testing.T) {
@@ -1423,36 +1390,5 @@ func TestCheckerRejectsUnknownEffort(t *testing.T) {
 	var appErr *Error
 	if !errors.As(err, &appErr) || appErr.Kind != ErrorInput || !strings.Contains(err.Error(), `effort "turbo"`) {
 		t.Fatalf("error = %v, want an input error naming the effort", err)
-	}
-}
-
-func TestCheckerReportsTheTemperatureThatReachedTheModel(t *testing.T) {
-	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
-	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
-
-	cases := map[string]struct {
-		dropped bool
-		want    float64
-	}{
-		"sent":    {dropped: false, want: 0.2},
-		"dropped": {dropped: true, want: 0},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			provider := &settingsProvider{inner: &chunkAwareProvider{}, temperatureDropped: tc.dropped}
-			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
-			var errw strings.Builder
-
-			result, err := checker.Check(context.Background(), usageCheckRequest(&errw))
-			if err != nil {
-				t.Fatalf("Check returned error: %v", err)
-			}
-			if result.Report.Meta.Temperature != tc.want {
-				t.Errorf("meta.temperature = %v, want %v", result.Report.Meta.Temperature, tc.want)
-			}
-			if logged := strings.Contains(errw.String(), "Temperature was not sent"); logged != tc.dropped {
-				t.Errorf("temperature notice logged = %v, want %v:\n%s", logged, tc.dropped, errw.String())
-			}
-		})
 	}
 }

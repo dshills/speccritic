@@ -35,9 +35,11 @@ type Summary struct {
 // Meta holds runtime metadata about the LLM call.
 type Meta struct {
 	Model string `json:"model"`
-	// Temperature is the temperature sent to the model. It is 0 when none was
-	// sent because the model does not accept one.
-	Temperature float64 `json:"temperature"`
+	// Temperature appears only in reports written by older versions. Current
+	// models do not accept a sampling temperature, so none is sent or recorded.
+	//
+	// Deprecated: never set.
+	Temperature float64 `json:"temperature,omitempty"`
 	// Effort is the reasoning effort requested with --effort. It is omitted
 	// when the provider's default was used.
 	Effort       string `json:"effort,omitempty"`

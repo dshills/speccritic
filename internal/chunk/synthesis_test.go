@@ -90,7 +90,7 @@ func TestRunSynthesisCallsProviderAndValidatesTags(t *testing.T) {
 	provider := &captureSynthesisProvider{response: synthesisResponse(`["synthesis"]`)}
 	report, model, err := RunSynthesis(context.Background(), provider, s, plan, nil, nil, MergeResult{Issues: []schema.Issue{
 		testIssue("ISSUE-0001", schema.SeverityWarn, schema.CategoryAmbiguousBehavior, "Finding", 1),
-	}}, SynthesisConfig{Enabled: true, LineThreshold: DefaultSynthesisLineThreshold, Temperature: 0.2, MaxTokens: 1000})
+	}}, SynthesisConfig{Enabled: true, LineThreshold: DefaultSynthesisLineThreshold, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("RunSynthesis: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestRunSynthesisRepairsInvalidOutputOnce(t *testing.T) {
 	provider := &captureSynthesisProvider{responses: []string{`{"issues":[`, synthesisResponse(`["synthesis"]`)}}
 	_, _, err := RunSynthesis(context.Background(), provider, s, plan, nil, nil, MergeResult{Issues: []schema.Issue{
 		testIssue("ISSUE-0001", schema.SeverityWarn, schema.CategoryAmbiguousBehavior, "Finding", 1),
-	}}, SynthesisConfig{Enabled: true, Temperature: 0.2, MaxTokens: 1000})
+	}}, SynthesisConfig{Enabled: true, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("RunSynthesis: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestRunSynthesisCountsPreflightFindings(t *testing.T) {
 	provider := &captureSynthesisProvider{response: synthesisResponse(`["synthesis"]`)}
 	_, _, err := RunSynthesis(context.Background(), provider, s, plan, nil, []schema.Issue{
 		testIssue("PREFLIGHT-0001", schema.SeverityWarn, schema.CategoryAmbiguousBehavior, "Preflight", 1),
-	}, MergeResult{}, SynthesisConfig{Enabled: true, Temperature: 0.2, MaxTokens: 1000})
+	}, MergeResult{}, SynthesisConfig{Enabled: true, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("RunSynthesis: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestRunSynthesisAddsMissingSynthesisTag(t *testing.T) {
 	provider := &captureSynthesisProvider{response: synthesisResponse(`[]`)}
 	report, _, err := RunSynthesis(context.Background(), provider, s, plan, nil, nil, MergeResult{Issues: []schema.Issue{
 		testIssue("ISSUE-0001", schema.SeverityWarn, schema.CategoryAmbiguousBehavior, "Finding", 1),
-	}}, SynthesisConfig{Enabled: true, Temperature: 0.2, MaxTokens: 1000})
+	}}, SynthesisConfig{Enabled: true, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("RunSynthesis: %v", err)
 	}

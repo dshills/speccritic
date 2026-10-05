@@ -13,7 +13,6 @@ import (
 
 type ExecutorConfig struct {
 	SystemPrompt string
-	Temperature  float64
 	MaxTokens    int
 	Effort       string
 	Concurrency  int
@@ -105,7 +104,6 @@ func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		SystemPrompt:           cfg.SystemPrompt,
 		UserPromptCachedPrefix: prefix,
 		UserPrompt:             tail,
-		Temperature:            &cfg.Temperature,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
 	}

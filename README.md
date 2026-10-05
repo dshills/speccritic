@@ -197,7 +197,7 @@ export OPENAI_API_KEY=sk-...
 
 The table shows each provider's default model. They are pinned to a model generation, so check them against the provider's current lineup from time to time.
 
-**Temperature.** Recent models reject a temperature other than their default: Claude Opus 4.7 and later, Claude Sonnet 5 and later, and some OpenAI reasoning models. SpecCritic leaves the temperature out for Claude models known to reject it, and for any other model it retries without the temperature if the provider turns it down. The report's `meta.temperature` is the value that reached the model, or `0` when none was sent.
+**Temperature.** SpecCritic does not send a sampling temperature. Current models from every supported provider reject one or accept only their default, so `--temperature` and `SPECCRITIC_LLM_TEMPERATURE` are accepted for compatibility and ignored. Use `--effort` to trade depth against cost.
 
 **Effort.** `--effort` (or `SPECCRITIC_LLM_EFFORT`) is sent as `output_config.effort` to Anthropic and as `reasoning_effort` to OpenAI and Gemini, unchanged. A level the model does not support comes back as a provider error. When set, it is recorded in `meta.effort`.
 
@@ -416,7 +416,6 @@ speccritic check <spec-file> [flags]
 | `--patch-out` | (none) | Write suggested patches to file |
 | `--llm-provider` | env/default | LLM provider override: `anthropic`, `openai`, or `gemini` |
 | `--llm-model` | env/provider default | LLM model override |
-| `--temperature` | `0.2` | LLM temperature (0.0–2.0). Left out of the request for models that do not accept one (see below) |
 | `--effort` | provider default | Reasoning effort passed to the model: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Which levels exist depends on the provider and model |
 | `--max-tokens` | `16384` | Maximum response tokens per call. A response that still hits the cap is continued, not regenerated: the findings already received are kept and only the rest is requested |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
@@ -618,7 +617,6 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
   "patches": [...],
   "meta": {
     "model": "anthropic:claude-opus-5-5",
-    "temperature": 0.2,
     "completion": {
       "enabled": true,
       "mode": "auto",

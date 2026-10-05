@@ -40,11 +40,7 @@ type Request struct {
 	SystemPrompt           string
 	UserPromptCachedPrefix string
 	UserPrompt             string
-	// Temperature is a pointer so callers can distinguish "unset" (nil,
-	// provider default) from an explicit value — including 0.0, which
-	// callers use to request deterministic output.
-	Temperature *float64
-	MaxTokens   int
+	MaxTokens              int
 	// Model overrides the provider's configured model when non-empty.
 	Model string
 	// Effort asks the model for more or less reasoning. Empty leaves the
@@ -111,9 +107,6 @@ type Response struct {
 	// Usage is what the provider reported for this call. It is zero when the
 	// provider reported nothing.
 	Usage Usage
-	// TemperatureDropped reports that the request asked for a temperature and
-	// the provider did not send it, because the model does not accept one.
-	TemperatureDropped bool
 }
 
 // Provider is the interface for LLM completion backends.

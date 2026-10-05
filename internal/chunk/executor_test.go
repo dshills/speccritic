@@ -16,7 +16,7 @@ import (
 func TestReviewChunksPreservesOrder(t *testing.T) {
 	s, plan := executorFixture(t, 3)
 	provider := &delayedProvider{}
-	results, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 3, Temperature: 0.2, MaxTokens: 1000})
+	results, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 3, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("ReviewChunks: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestReviewChunksHonorsConcurrency(t *testing.T) {
 	provider := &blockingProvider{release: make(chan struct{})}
 	done := make(chan error, 1)
 	go func() {
-		_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 2, Temperature: 0.2, MaxTokens: 1000})
+		_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 2, MaxTokens: 1000})
 		done <- err
 	}()
 	provider.waitForCalls(t, 2)
@@ -54,7 +54,7 @@ func TestReviewChunksHonorsConcurrency(t *testing.T) {
 func TestReviewChunksRepairsInvalidOutputOnce(t *testing.T) {
 	s, plan := executorFixture(t, 1)
 	provider := &sequentialProvider{responses: []string{`{"issues":[`, responseForChunk(plan.Chunks[0])}}
-	_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, Temperature: 0.2, MaxTokens: 1000})
+	_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("ReviewChunks: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestReviewChunksRepairsInvalidOutputOnce(t *testing.T) {
 func TestReviewChunksIncreasesRepairTokensForIncompleteJSON(t *testing.T) {
 	s, plan := executorFixture(t, 1)
 	provider := &recordingSequentialProvider{responses: []string{`{"issues":[`, responseForChunk(plan.Chunks[0])}}
-	_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, Temperature: 0.2, MaxTokens: 1000})
+	_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("ReviewChunks: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestReviewChunksContinuesChunkCutOffAtOutputCap(t *testing.T) {
 		`{"issues":[` + issue("First", 1) + `,{"id":"ISSUE-0002","sev`,
 		`{"issues":[` + issue("Second", 2) + `],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`,
 	}}
-	results, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, Temperature: 0.2, MaxTokens: 1000})
+	results, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000})
 	if err != nil {
 		t.Fatalf("ReviewChunks: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestReviewChunksContinuesChunkCutOffAtOutputCap(t *testing.T) {
 func TestReviewChunksFailsWholeReviewOnChunkError(t *testing.T) {
 	s, plan := executorFixture(t, 1)
 	provider := &errorProvider{}
-	_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, Temperature: 0.2, MaxTokens: 1000})
+	_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000})
 	if err == nil {
 		t.Fatal("expected chunk error")
 	}

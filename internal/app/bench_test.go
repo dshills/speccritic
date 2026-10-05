@@ -17,7 +17,6 @@ func BenchmarkCheckerChunkedMock(b *testing.B) {
 		SpecText:               specText,
 		Profile:                "general",
 		SeverityThreshold:      "info",
-		Temperature:            0.2,
 		MaxTokens:              1000,
 		Preflight:              false,
 		Chunking:               "on",

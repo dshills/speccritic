@@ -75,7 +75,7 @@ The request may include:
 - `profile`: one of `general`, `backend-api`, `regulated-system`, or `event-driven`.
 - `strict`: boolean.
 - `severity_threshold`: one of `info`, `warn`, or `critical`.
-- `temperature`: decimal value from `0.0` to `2.0`.
+- `temperature`: accepted and ignored; no sampling temperature is sent to the model.
 - `max_tokens`: integer greater than `0`.
 - `csrf_token`: server-issued form token.
 
@@ -86,7 +86,7 @@ Validation rules:
 - Uploaded files larger than 1 MiB are rejected.
 - The server must wrap request bodies with `http.MaxBytesReader` before parsing multipart forms so upload limits are enforced before buffering.
 - Uploaded file names are displayed only after HTML escaping.
-- Unsupported profile, severity, temperature, or token values are rejected.
+- Unsupported profile, severity, or token values are rejected.
 - Missing or invalid CSRF tokens are rejected.
 
 For the first version, the server may process the check synchronously. If processing exceeds the configured request timeout, the server must return a recoverable error message instead of a partial review.

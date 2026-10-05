@@ -89,7 +89,6 @@ func runCheckFlags() checkFlags {
 		format:                  "json",
 		profileName:             "general",
 		severityThreshold:       "info",
-		temperature:             0.2,
 		maxTokens:               4096,
 		preflight:               false,
 		preflightMode:           "warn",
@@ -696,4 +695,21 @@ func reportHasIssue(issues []schema.Issue, id string) bool {
 		}
 	}
 	return false
+}
+
+// Current models do not accept a sampling temperature. The flag stays so that
+// existing invocations and scripts do not break, but it is deprecated, hidden
+// from help, and has no effect.
+func TestCheckCmdStillAcceptsDeprecatedTemperatureFlag(t *testing.T) {
+	cmd := newCheckCmd()
+	if err := cmd.Flags().Parse([]string{"--temperature", "0.7", "--effort", "high"}); err != nil {
+		t.Fatalf("parsing --temperature: %v", err)
+	}
+	flag := cmd.Flags().Lookup("temperature")
+	if flag == nil || flag.Deprecated == "" || !flag.Hidden {
+		t.Fatalf("temperature flag = %+v, want a hidden, deprecated flag", flag)
+	}
+	if effort, err := cmd.Flags().GetString("effort"); err != nil || effort != "high" {
+		t.Fatalf("effort = %q, %v; want high", effort, err)
+	}
 }

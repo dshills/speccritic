@@ -45,8 +45,13 @@ type CheckOptions struct {
 	SeverityThreshold string
 	LLMProvider       string
 	LLMModel          string
-	Temperature       float64
-	MaxTokens         int
+	// Temperature is ignored. Current models do not accept a sampling
+	// temperature, so none is sent; the field remains so existing callers
+	// compile.
+	//
+	// Deprecated: has no effect.
+	Temperature float64
+	MaxTokens   int
 	// Effort asks the model for more or less reasoning; empty uses the
 	// provider's default.
 	Effort                          string
@@ -107,7 +112,6 @@ func DefaultCheckOptions() CheckOptions {
 		Version:                         "api",
 		Profile:                         "general",
 		SeverityThreshold:               "info",
-		Temperature:                     0.2,
 		MaxTokens:                       llm.DefaultMaxTokens,
 		Preflight:                       true,
 		PreflightMode:                   "warn",
@@ -146,7 +150,6 @@ func Check(ctx context.Context, opts CheckOptions) (*CheckResult, error) {
 		SeverityThreshold:               opts.SeverityThreshold,
 		LLMProvider:                     opts.LLMProvider,
 		LLMModel:                        opts.LLMModel,
-		Temperature:                     opts.Temperature,
 		MaxTokens:                       opts.MaxTokens,
 		Effort:                          opts.Effort,
 		Offline:                         opts.Offline,

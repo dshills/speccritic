@@ -119,8 +119,7 @@ The previous result must be a SpecCritic JSON report containing:
 - `issues`,
 - `questions`,
 - `patches`,
-- `meta.model`,
-- `meta.temperature`.
+- `meta.model`.
 
 When available, the previous report should also contain `meta.redaction_config_hash`. If both reports expose this value and it differs, incremental reuse must fall back to full review in `auto` mode or fail in `on` mode.
 

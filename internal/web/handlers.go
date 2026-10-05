@@ -608,15 +608,6 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		return app.CheckRequest{}, webInputError("model name is too long")
 	}
 
-	temperature := 0.2
-	if raw := r.FormValue("temperature"); raw != "" {
-		v, err := strconv.ParseFloat(raw, 64)
-		if err != nil || v < 0 || v > 2 {
-			return app.CheckRequest{}, fmt.Errorf("invalid temperature")
-		}
-		temperature = v
-	}
-
 	maxTokens := llm.DefaultMaxTokens
 	if raw := r.FormValue("max_tokens"); raw != "" {
 		v, err := strconv.Atoi(raw)
@@ -674,7 +665,6 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		SeverityThreshold:               severity,
 		LLMProvider:                     llmProvider,
 		LLMModel:                        llmModel,
-		Temperature:                     temperature,
 		MaxTokens:                       maxTokens,
 		Preflight:                       preflightEnabled,
 		PreflightMode:                   preflightMode,

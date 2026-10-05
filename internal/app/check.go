@@ -71,7 +71,6 @@ type CheckRequest struct {
 	SeverityThreshold string
 	LLMProvider       string
 	LLMModel          string
-	Temperature       float64
 	MaxTokens         int
 	// Effort asks the model for more or less reasoning. Empty leaves the
 	// provider's default in place.
@@ -203,7 +202,6 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		SystemPrompt:           sysPrompt,
 		UserPromptCachedPrefix: userPrefix,
 		UserPrompt:             userSpec,
-		Temperature:            &req.Temperature,
 		MaxTokens:              req.MaxTokens,
 		Effort:                 req.Effort,
 	}
@@ -305,14 +303,11 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	}, nil
 }
 
-// applyRunMeta records how the LLM was actually called: what the calls used,
-// the effort that was asked for, and the temperature that reached the model.
+// applyRunMeta records how the LLM was called: what the calls used and the
+// effort that was asked for.
 func applyRunMeta(report *schema.Report, req CheckRequest, totals llm.Totals) {
 	report.Meta.Usage = usageMeta(totals)
 	report.Meta.Effort = req.Effort
-	if totals.TemperatureDropped {
-		report.Meta.Temperature = 0
-	}
 }
 
 // usageMeta converts call totals to their report form. It returns nil when no
@@ -346,9 +341,6 @@ func logUsage(w io.Writer, verbose bool, t llm.Totals) {
 		t.InputTokens, t.CacheReadTokens, t.CacheWriteTokens, t.OutputTokens,
 		t.CallDuration.Round(time.Millisecond), t.WallDuration.Round(time.Millisecond),
 	)
-	if t.TemperatureDropped {
-		logVerbose(w, verbose, "Temperature was not sent: the model does not accept one, so its default applies")
-	}
 }
 
 func (c *Checker) applyConvergence(req CheckRequest, report *schema.Report, coverage convergence.ReviewCoverage, errw io.Writer) error {
@@ -491,7 +483,6 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 		logVerbose(errw, req.Verbose, "Incremental review: %d range(s), %d reused issue(s)", len(plan.ReviewRanges), len(reuse.Issues))
 		rangeResults, err = incremental.ReviewRanges(ctx, provider, s, plan, incremental.ExecutorConfig{
 			SystemPrompt: sysPrompt,
-			Temperature:  req.Temperature,
 			MaxTokens:    req.MaxTokens,
 			Effort:       req.Effort,
 			Concurrency:  req.ChunkConcurrency,
@@ -522,7 +513,6 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 		ReusedQuestions:     reuse.Questions,
 		RangeResults:        rangeResults,
 		Model:               model,
-		Temperature:         req.Temperature,
 		Profile:             req.Profile,
 		Strict:              req.Strict,
 		SeverityThreshold:   req.SeverityThreshold,
@@ -682,7 +672,6 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		SystemPrompt:     sysPrompt,
 		ContextFiles:     contextFiles,
 		PreflightContext: preflightContext,
-		Temperature:      req.Temperature,
 		MaxTokens:        req.MaxTokens,
 		Effort:           req.Effort,
 		Concurrency:      cfg.ChunkConcurrency,
@@ -700,7 +689,6 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 	model := firstChunkModel(results)
 	synthesis, synthesisModel, err := chunk.RunSynthesis(ctx, provider, s, plan, results, preflightIssues, merged, chunk.SynthesisConfig{
 		SystemPrompt:  sysPrompt,
-		Temperature:   req.Temperature,
 		MaxTokens:     req.MaxTokens,
 		Effort:        req.Effort,
 		LineThreshold: cfg.SynthesisLineThreshold,
@@ -1021,8 +1009,7 @@ func buildReport(req CheckRequest, s *spec.Spec, issues []schema.Issue, question
 		Questions: questions,
 		Patches:   patches,
 		Meta: schema.Meta{
-			Model:       model,
-			Temperature: req.Temperature,
+			Model: model,
 		},
 	}
 }

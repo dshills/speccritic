@@ -20,7 +20,6 @@ type MergeInput struct {
 	RangeResults        []RangeResult
 	Patches             []schema.Patch
 	Model               string
-	Temperature         float64
 	Profile             string
 	Strict              bool
 	SeverityThreshold   string
@@ -76,7 +75,7 @@ func MergeReport(input MergeInput) (*schema.Report, error) {
 	questions = sortQuestions(questions)
 	patches = validPatches(input.Spec.Raw, patches, issues)
 	critical, warn, info := review.Counts(issues)
-	meta := schema.Meta{Model: input.Model, Temperature: input.Temperature, DroppedFindings: dropped}
+	meta := schema.Meta{Model: input.Model, DroppedFindings: dropped}
 	if input.IncludeMetadata && input.IncrementalMetadata != nil {
 		meta.Incremental = input.IncrementalMetadata
 	}

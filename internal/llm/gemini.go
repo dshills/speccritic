@@ -16,10 +16,9 @@ func SetGeminiAPIURL(u string) { geminiAPIURL = u }
 type geminiProvider struct {
 	model  string
 	apiKey string // unexported; never serialized by encoding/json
-	state  chatState
 }
 
 func (p *geminiProvider) Complete(ctx context.Context, req *Request) (*Response, error) {
 	endpoint := chatEndpoint{name: "gemini", url: geminiAPIURL, apiKey: p.apiKey}
-	return completeChat(ctx, endpoint, &p.state, p.model, req)
+	return completeChat(ctx, endpoint, p.model, req)
 }

@@ -48,7 +48,6 @@ type checkFlags struct {
 	patchOut                        string
 	llmProvider                     string
 	llmModel                        string
-	temperature                     float64
 	effort                          string
 	maxTokens                       int
 	offline                         bool
@@ -93,6 +92,21 @@ func main() {
 		SilenceErrors: true,
 	}
 
+	root.AddCommand(newCheckCmd())
+
+	if err := root.Execute(); err != nil {
+		var ee *exitErr
+		if errors.As(err, &ee) {
+			fmt.Fprintln(os.Stderr, "Error:", ee.msg)
+			os.Exit(ee.code)
+		}
+		// cobra already printed the error
+		os.Exit(1)
+	}
+}
+
+// newCheckCmd builds the check command and its flags.
+func newCheckCmd() *cobra.Command {
 	var flags checkFlags
 	checkCmd := &cobra.Command{
 		Use:   "check <spec-file>",
@@ -115,7 +129,10 @@ func main() {
 	f.StringVar(&flags.patchOut, "patch-out", "", "Write suggested patches in diff-match-patch format to this file")
 	f.StringVar(&flags.llmProvider, "llm-provider", "", "LLM provider override: anthropic, openai, or gemini")
 	f.StringVar(&flags.llmModel, "llm-model", "", "LLM model override")
-	f.Float64Var(&flags.temperature, "temperature", 0.2, "LLM temperature; left out for models that do not accept one")
+	// Current models do not accept a sampling temperature, so none is sent.
+	// The flag is still parsed so existing invocations keep working.
+	f.Float64("temperature", 0, "Ignored")
+	_ = f.MarkDeprecated("temperature", "models no longer accept a temperature; the flag is ignored")
 	f.StringVar(&flags.effort, "effort", "", "Reasoning effort passed to the model: "+strings.Join(llm.EffortLevels(), ", ")+" (which levels exist depends on the provider and model; default: the provider's)")
 	f.IntVar(&flags.maxTokens, "max-tokens", llm.DefaultMaxTokens, "Maximum response tokens")
 	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if LLM provider/model config is not set; use to enforce explicit model config in CI")
@@ -150,17 +167,7 @@ func main() {
 	f.IntVar(&flags.completionMaxPatches, "completion-max-patches", 8, "Maximum completion patches to emit")
 	f.BoolVar(&flags.completionOpenDecisions, "completion-open-decisions", true, "Insert OPEN DECISION placeholders instead of inventing unstated behavior")
 
-	root.AddCommand(checkCmd)
-
-	if err := root.Execute(); err != nil {
-		var ee *exitErr
-		if errors.As(err, &ee) {
-			fmt.Fprintln(os.Stderr, "Error:", ee.msg)
-			os.Exit(ee.code)
-		}
-		// cobra already printed the error
-		os.Exit(1)
-	}
+	return checkCmd
 }
 
 func runCheck(specPath string, flags checkFlags) error {
@@ -178,7 +185,6 @@ func runCheck(specPath string, flags checkFlags) error {
 		SeverityThreshold:               flags.severityThreshold,
 		LLMProvider:                     flags.llmProvider,
 		LLMModel:                        flags.llmModel,
-		Temperature:                     flags.temperature,
 		MaxTokens:                       flags.maxTokens,
 		Effort:                          flags.effort,
 		Offline:                         flags.offline,
@@ -325,10 +331,6 @@ func validateFlags(flags checkFlags) error {
 	case "info", "warn", "critical":
 	default:
 		return fmt.Errorf("--severity-threshold must be info, warn, or critical, got %q", flags.severityThreshold)
-	}
-
-	if flags.temperature < 0 || flags.temperature > 2 {
-		return fmt.Errorf("--temperature must be between 0.0 and 2.0, got %g", flags.temperature)
 	}
 
 	if flags.maxTokens <= 0 {
@@ -510,7 +512,6 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 		envStr("llm-provider", "SPECCRITIC_LLM_PROVIDER", &flags.llmProvider)
 		envStr("llm-model", "SPECCRITIC_LLM_MODEL", &flags.llmModel)
 	}
-	envFloat64("temperature", "SPECCRITIC_LLM_TEMPERATURE", &flags.temperature)
 	envInt("max-tokens", "SPECCRITIC_LLM_MAX_TOKENS", &flags.maxTokens)
 	envStr("effort", "SPECCRITIC_LLM_EFFORT", &flags.effort)
 	envBool("verbose", "SPECCRITIC_VERBOSE", &flags.verbose)

@@ -21,7 +21,6 @@ const TagSynthesis = "synthesis"
 
 type SynthesisConfig struct {
 	SystemPrompt  string
-	Temperature   float64
 	MaxTokens     int
 	Effort        string
 	LineThreshold int
@@ -112,7 +111,6 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 		SystemPrompt:           cfg.SystemPrompt,
 		UserPromptCachedPrefix: prefix,
 		UserPrompt:             tail,
-		Temperature:            &cfg.Temperature,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
 	}

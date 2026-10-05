@@ -36,7 +36,7 @@ func sampleReport() *schema.Report {
 		},
 		Questions: []schema.Question{},
 		Patches:   []schema.Patch{},
-		Meta:      schema.Meta{Model: llm.DefaultProvider + ":" + llm.DefaultModel, Temperature: 0.2},
+		Meta:      schema.Meta{Model: llm.DefaultProvider + ":" + llm.DefaultModel},
 	}
 }
 

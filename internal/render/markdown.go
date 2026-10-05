@@ -98,7 +98,7 @@ After:
 ` + "````" + `
 {{ end }}{{ end }}
 ---
-*Model: {{ .Meta.Model }} | Temperature: {{ .Meta.Temperature }}*
+*Model: {{ .Meta.Model }}*
 {{ define "issue" }}
 #### {{ .ID }} · {{ .Severity }} · {{ .Category }}
 **{{ .Title }}**

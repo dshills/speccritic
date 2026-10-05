@@ -128,13 +128,13 @@ one-line summary under `--verbose`.
 
 **Helps:** Accuracy. **Effort:** Medium. **Status:** Done.
 
-**As built.** Two things differ from the plan below. The temperature is still sent by default
-to models that accept one, because dropping the 0.2 default would have made reviews on those
-models less repeatable; it is left out only where the model rejects it, by rule for known Claude
-models and by retry for anything else. And the provider model lists, checked on 2026-10-05,
-showed the old Anthropic and Gemini defaults were no longer served, so both changed
-(`claude-opus-5-5`, `gemini-3.8-flash`). `gpt-4o` is still served and was left as the OpenAI
-default; whether to move it is a cost decision.
+**As built.** Two things differ from the plan below. No temperature is sent at all: the
+models in daily use reject one (`gpt-6.1-sol` failed every run with the 0.2 default, and current
+Claude models do the same), so the parameter was removed rather than made conditional.
+`--temperature` and `SPECCRITIC_LLM_TEMPERATURE` are still accepted and ignored. And the
+provider model lists, checked on 2026-10-05, showed the old Anthropic and Gemini defaults were
+no longer served, so both changed (`claude-opus-5-5`, `gemini-3.8-flash`). `gpt-4o` is still
+served and was left as the OpenAI default; whether to move it is a cost decision.
 
 **Today.**
 

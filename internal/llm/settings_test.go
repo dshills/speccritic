@@ -46,126 +46,25 @@ func useAnthropicURL(t *testing.T, url string) {
 	t.Cleanup(func() { SetAnthropicAPIURL(original) })
 }
 
-func temperature(v float64) *float64 { return &v }
-
-func TestAnthropicAcceptsTemperature(t *testing.T) {
-	cases := map[string]bool{
-		// Sampling parameters were removed starting with these models.
-		"claude-opus-4-7":   false,
-		"claude-opus-4-8":   false,
-		"claude-opus-5":     false,
-		"claude-opus-5-5":   false,
-		"claude-sonnet-5":   false,
-		"claude-sonnet-5-5": false,
-		"claude-fable-5-1":  false,
-		"claude-mythos-5":   false,
-		"Claude-Opus-5-5":   false,
-		// Earlier models still take one.
-		"claude-opus-4-6":            true,
-		"claude-opus-4-5-20251101":   true,
-		"claude-opus-4-1":            true,
-		"claude-sonnet-4-6":          true,
-		"claude-sonnet-4-5-20250929": true,
-		"claude-sonnet-4-20250514":   true,
-		"claude-haiku-4-5-20251001":  true,
-		"claude-3-5-sonnet-20241022": true,
-		// Unknown names are assumed to; the API has the last word.
-		"claude-test":    true,
-		"claude-nova-9":  true,
-		"something-else": true,
+// Current models reject a sampling temperature, so no provider sends one.
+func TestProviders_NeverSendATemperature(t *testing.T) {
+	anthropicURL, anthropicBodies := recordingServer(t, anthropicOK)
+	useAnthropicURL(t, anthropicURL)
+	if _, err := (&anthropicProvider{model: "claude-sonnet-4-6", apiKey: "k"}).Complete(context.Background(), &Request{SystemPrompt: "sys", UserPrompt: "spec", MaxTokens: 100}); err != nil {
+		t.Fatalf("anthropic Complete: %v", err)
 	}
-	for model, want := range cases {
-		if got := anthropicAcceptsTemperature(model); got != want {
-			t.Errorf("anthropicAcceptsTemperature(%q) = %v, want %v", model, got, want)
+	if _, sent := (*anthropicBodies)[0]["temperature"]; sent {
+		t.Errorf("anthropic request carries a temperature: %v", (*anthropicBodies)[0])
+	}
+
+	for name := range chatProviders(t, "") {
+		url, bodies := recordingServer(t, chatOK)
+		if _, err := chatProviders(t, url)[name].Complete(context.Background(), &Request{SystemPrompt: "sys", UserPrompt: "spec", MaxTokens: 100}); err != nil {
+			t.Fatalf("%s Complete: %v", name, err)
 		}
-	}
-}
-
-func TestAnthropicComplete_TemperatureFollowsTheModel(t *testing.T) {
-	cases := map[string]struct {
-		model       string
-		wantSent    bool
-		wantDropped bool
-	}{
-		"accepted by an earlier model": {"claude-sonnet-4-6", true, false},
-		"left out for a current model": {"claude-opus-5-5", false, true},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			url, bodies := recordingServer(t, anthropicOK)
-			useAnthropicURL(t, url)
-
-			p := &anthropicProvider{model: tc.model, apiKey: "k"}
-			resp, err := p.Complete(context.Background(), &Request{UserPrompt: "spec", Temperature: temperature(0.2)})
-			if err != nil {
-				t.Fatalf("Complete: %v", err)
-			}
-			if len(*bodies) != 1 {
-				t.Fatalf("requests = %d, want 1", len(*bodies))
-			}
-			if _, sent := (*bodies)[0]["temperature"]; sent != tc.wantSent {
-				t.Errorf("temperature sent = %v, want %v", sent, tc.wantSent)
-			}
-			if resp.TemperatureDropped != tc.wantDropped {
-				t.Errorf("TemperatureDropped = %v, want %v", resp.TemperatureDropped, tc.wantDropped)
-			}
-		})
-	}
-}
-
-func TestAnthropicComplete_NoTemperatureRequestedIsNotADrop(t *testing.T) {
-	url, _ := recordingServer(t, anthropicOK)
-	useAnthropicURL(t, url)
-
-	resp, err := (&anthropicProvider{model: "claude-opus-5-5", apiKey: "k"}).Complete(context.Background(), &Request{UserPrompt: "spec"})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if resp.TemperatureDropped {
-		t.Error("TemperatureDropped = true for a request that never asked for a temperature")
-	}
-}
-
-func TestAnthropicComplete_RetriesWithoutTemperatureAnUnknownModelRejects(t *testing.T) {
-	url, bodies := recordingServer(t,
-		`400:{"type":"error","error":{"type":"invalid_request_error","message":"temperature is not supported for this model"}}`,
-		anthropicOK,
-	)
-	useAnthropicURL(t, url)
-
-	p := &anthropicProvider{model: "claude-nova-9", apiKey: "k"}
-	req := &Request{UserPrompt: "spec", Temperature: temperature(0.2)}
-	resp, err := p.Complete(context.Background(), req)
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if !resp.TemperatureDropped {
-		t.Error("TemperatureDropped = false after the API rejected the temperature")
-	}
-	if _, err := p.Complete(context.Background(), req); err != nil {
-		t.Fatalf("second Complete: %v", err)
-	}
-	if len(*bodies) != 3 {
-		t.Fatalf("requests = %d, want rejected + retry, then one for the second call", len(*bodies))
-	}
-	for i, wantSent := range []bool{true, false, false} {
-		if _, sent := (*bodies)[i]["temperature"]; sent != wantSent {
-			t.Errorf("request %d temperature sent = %v, want %v", i, sent, wantSent)
+		if _, sent := (*bodies)[0]["temperature"]; sent {
+			t.Errorf("%s request carries a temperature: %v", name, (*bodies)[0])
 		}
-	}
-}
-
-func TestAnthropicComplete_OtherBadRequestsAreNotRetried(t *testing.T) {
-	url, bodies := recordingServer(t, `400:{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens is too large"}}`)
-	useAnthropicURL(t, url)
-
-	p := &anthropicProvider{model: "claude-nova-9", apiKey: "k"}
-	_, err := p.Complete(context.Background(), &Request{UserPrompt: "spec", Temperature: temperature(0.2)})
-	if err == nil || !strings.Contains(err.Error(), "max_tokens is too large") {
-		t.Fatalf("error = %v, want the API's message", err)
-	}
-	if len(*bodies) != 1 {
-		t.Fatalf("requests = %d, want no retry", len(*bodies))
 	}
 }
 
@@ -238,57 +137,6 @@ func chatProviders(t *testing.T, url string) map[string]Provider {
 	}
 }
 
-func TestChatComplete_RetriesWithoutTemperatureTheModelRejects(t *testing.T) {
-	rejections := map[string]string{
-		"unsupported value":     `400:{"error":{"type":"invalid_request_error","message":"Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported."}}`,
-		"unsupported parameter": `400:{"error":{"type":"invalid_request_error","message":"Unsupported parameter: 'temperature' is not supported with this model."}}`,
-		"error in an array":     `400:[{"error":{"code":400,"message":"Invalid value at 'temperature'","status":"INVALID_ARGUMENT"}}]`,
-	}
-	for rejectionName, rejection := range rejections {
-		for providerName := range chatProviders(t, "") {
-			t.Run(providerName+"/"+rejectionName, func(t *testing.T) {
-				url, bodies := recordingServer(t, rejection, chatOK)
-				provider := chatProviders(t, url)[providerName]
-				req := &Request{UserPrompt: "spec", Temperature: temperature(0.2), MaxTokens: 100}
-
-				resp, err := provider.Complete(context.Background(), req)
-				if err != nil {
-					t.Fatalf("Complete: %v", err)
-				}
-				if !resp.TemperatureDropped {
-					t.Error("TemperatureDropped = false after the API rejected the temperature")
-				}
-				if _, err := provider.Complete(context.Background(), req); err != nil {
-					t.Fatalf("second Complete: %v", err)
-				}
-				if len(*bodies) != 3 {
-					t.Fatalf("requests = %d, want rejected + retry, then one for the second call", len(*bodies))
-				}
-				for i, wantSent := range []bool{true, false, false} {
-					if _, sent := (*bodies)[i]["temperature"]; sent != wantSent {
-						t.Errorf("request %d temperature sent = %v, want %v", i, sent, wantSent)
-					}
-				}
-			})
-		}
-	}
-}
-
-func TestChatComplete_TemperatureIsSentWhenAccepted(t *testing.T) {
-	for name := range chatProviders(t, "") {
-		t.Run(name, func(t *testing.T) {
-			url, bodies := recordingServer(t, chatOK)
-			resp, err := chatProviders(t, url)[name].Complete(context.Background(), &Request{UserPrompt: "spec", Temperature: temperature(0.2)})
-			if err != nil {
-				t.Fatalf("Complete: %v", err)
-			}
-			if (*bodies)[0]["temperature"] != 0.2 || resp.TemperatureDropped {
-				t.Errorf("temperature = %v dropped = %v, want 0.2 sent", (*bodies)[0]["temperature"], resp.TemperatureDropped)
-			}
-		})
-	}
-}
-
 func TestChatComplete_Effort(t *testing.T) {
 	for name := range chatProviders(t, "") {
 		t.Run(name, func(t *testing.T) {
@@ -321,30 +169,6 @@ func TestChatComplete_RefusalIsAnError(t *testing.T) {
 				t.Fatalf("error = %v, want the refusal reported", err)
 			}
 		})
-	}
-}
-
-func TestChatComplete_RejectedTemperatureIsRememberedPerModel(t *testing.T) {
-	url, bodies := recordingServer(t,
-		`400:{"error":{"type":"invalid_request_error","message":"Unsupported parameter: 'temperature' is not supported with this model."}}`,
-		chatOK,
-	)
-	original := OpenAIAPIURL()
-	SetOpenAIAPIURL(url)
-	t.Cleanup(func() { SetOpenAIAPIURL(original) })
-
-	p := &openaiProvider{model: "gpt-6.1-sol", apiKey: "k"}
-	if _, err := p.Complete(context.Background(), &Request{UserPrompt: "spec", Temperature: temperature(0.2)}); err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	// A different model on the same provider has not rejected anything yet.
-	resp, err := p.Complete(context.Background(), &Request{UserPrompt: "spec", Temperature: temperature(0.2), Model: "gpt-4o"})
-	if err != nil {
-		t.Fatalf("Complete with another model: %v", err)
-	}
-	last := (*bodies)[len(*bodies)-1]
-	if last["model"] != "gpt-4o" || last["temperature"] != 0.2 || resp.TemperatureDropped {
-		t.Errorf("request for the other model = %v (dropped=%v), want its temperature sent", last, resp.TemperatureDropped)
 	}
 }
 

@@ -67,7 +67,7 @@ internal/patch/       # Patch diff generation
 speccritic check SPEC.md [flags]
 ```
 
-Key flags: `--format`, `--out`, `--context`, `--profile`, `--strict`, `--fail-on`, `--severity-threshold`, `--patch-out`, `--temperature`, `--max-tokens`, `--offline`, `--verbose`, `--debug`
+Key flags: `--format`, `--out`, `--context`, `--profile`, `--strict`, `--fail-on`, `--severity-threshold`, `--patch-out`, `--effort`, `--max-tokens`, `--offline`, `--verbose`, `--debug`
 
 Exit codes: `0` = acceptable, `2` = invalid per `--fail-on`, `3` = input error, `4` = LLM/provider error, `5` = invalid model output
 

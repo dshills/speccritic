@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -29,9 +27,6 @@ const AnthropicVersion = "2023-06-01"
 type anthropicProvider struct {
 	model  string
 	apiKey string // unexported; never serialized by encoding/json
-	// noTemperature holds the models that turned a temperature down, so later
-	// calls do not repeat a request that is known to fail.
-	noTemperature modelSet
 }
 
 type anthropicRequest struct {
@@ -39,7 +34,6 @@ type anthropicRequest struct {
 	MaxTokens    int                    `json:"max_tokens"`
 	System       []anthropicSystemBlock `json:"system,omitempty"`
 	Messages     []anthropicMessage     `json:"messages"`
-	Temperature  *float64               `json:"temperature,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
 }
 
@@ -144,20 +138,8 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	if req.Effort != "" {
 		body.OutputConfig = &anthropicOutputConfig{Effort: req.Effort}
 	}
-	sendTemperature := req.Temperature != nil && anthropicAcceptsTemperature(model) && !p.noTemperature.has(model)
-	if sendTemperature {
-		body.Temperature = req.Temperature
-	}
 
-	ar, rejectedTemperature, err := p.send(ctx, body)
-	if err != nil && rejectedTemperature && sendTemperature {
-		// A model this code does not know about turned the temperature down.
-		// Send the request again without it and stop offering it.
-		p.noTemperature.add(model)
-		sendTemperature = false
-		body.Temperature = nil
-		ar, _, err = p.send(ctx, body)
-	}
+	ar, err := p.send(ctx, body)
 	if err != nil {
 		return nil, err
 	}
@@ -192,21 +174,19 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			CacheReadTokens:  ar.Usage.CacheReadInputTokens,
 			CacheWriteTokens: ar.Usage.CacheCreationInputTokens,
 		},
-		TemperatureDropped: req.Temperature != nil && !sendTemperature,
 	}, nil
 }
 
-// send makes one request. On an HTTP 400 it also reports whether the API
-// objected to the temperature.
-func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar anthropicResponse, rejectedTemperature bool, err error) {
+// send makes one request and decodes the reply.
+func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar anthropicResponse, err error) {
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		return ar, false, fmt.Errorf("marshaling request: %w", err)
+		return ar, fmt.Errorf("marshaling request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicAPIURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return ar, false, fmt.Errorf("creating HTTP request: %w", err)
+		return ar, fmt.Errorf("creating HTTP request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", p.apiKey)
@@ -214,30 +194,29 @@ func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar
 
 	resp, err := sharedHTTPClient.Do(httpReq)
 	if err != nil {
-		return ar, false, fmt.Errorf("HTTP request failed: %w", err)
+		return ar, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
 	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
-		return ar, false, fmt.Errorf("reading response body: %w", err)
+		return ar, fmt.Errorf("reading response body: %w", err)
 	}
 	respStr := string(respBytes)
-	rejectedTemperature = resp.StatusCode == http.StatusBadRequest && strings.Contains(strings.ToLower(respStr), "temperature")
 
 	if err := json.Unmarshal(respBytes, &ar); err != nil {
-		return ar, rejectedTemperature, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
+		return ar, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
 	}
 
 	// Check status code first, then structured error field.
 	if resp.StatusCode != http.StatusOK {
 		if ar.Error != nil {
-			return ar, rejectedTemperature, fmt.Errorf("anthropic: %s: %s", ar.Error.Type, ar.Error.Message)
+			return ar, fmt.Errorf("anthropic: %s: %s", ar.Error.Type, ar.Error.Message)
 		}
-		return ar, rejectedTemperature, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
+		return ar, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
 	}
-	return ar, false, nil
+	return ar, nil
 }
 
 // anthropicRefusalError explains a request the model's safety classifiers
@@ -256,35 +235,6 @@ func anthropicRefusalError(ar anthropicResponse) error {
 		return errors.New(msg)
 	}
 	return errors.New(msg + ")")
-}
-
-// claudeVersion reads the family and version out of a current-style Claude
-// model ID such as "claude-opus-4-7" or "claude-sonnet-4-5-20250929".
-var claudeVersion = regexp.MustCompile(`^claude-(opus|sonnet|haiku)-(\d{1,2})(?:-(\d{1,2}))?(?:-|@|$)`)
-
-// anthropicAcceptsTemperature reports whether model accepts a temperature.
-// Claude Opus 4.7 and later, Claude Sonnet 5 and later, and the Fable and
-// Mythos models reject sampling parameters with a 400. A model this function
-// does not recognize is assumed to accept one; Complete retries without it if
-// the API says otherwise.
-func anthropicAcceptsTemperature(model string) bool {
-	model = strings.ToLower(model)
-	if strings.HasPrefix(model, "claude-fable") || strings.HasPrefix(model, "claude-mythos") {
-		return false
-	}
-	m := claudeVersion.FindStringSubmatch(model)
-	if m == nil {
-		return true
-	}
-	major, _ := strconv.Atoi(m[2])
-	minor, _ := strconv.Atoi(m[3])
-	switch m[1] {
-	case "opus":
-		return major < 4 || (major == 4 && minor < 7)
-	case "sonnet":
-		return major < 5
-	}
-	return true
 }
 
 // buildAnthropicUserContent returns the user message content in the minimal
