@@ -257,7 +257,7 @@ func TestAssets(t *testing.T) {
 func TestModelsEndpoint(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"data":[{"id":"gpt-5"},{"id":"text-embedding-3-large"}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-5"},{"id":"text-embedding-3-large"}]}`))
 	}))
 	defer modelServer.Close()
 	old := llm.OpenAIModelsAPIURLForTest()
@@ -402,9 +402,15 @@ func TestCheckStubAcceptsIncrementalUploads(t *testing.T) {
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	writer.WriteField("csrf_token", "same")
-	writer.WriteField("incremental_mode", "on")
-	writer.WriteField("convergence_mode", "on")
+	if err := writer.WriteField("csrf_token", "same"); err != nil {
+		t.Fatalf("write csrf field: %v", err)
+	}
+	if err := writer.WriteField("incremental_mode", "on"); err != nil {
+		t.Fatalf("write incremental_mode field: %v", err)
+	}
+	if err := writer.WriteField("convergence_mode", "on"); err != nil {
+		t.Fatalf("write convergence_mode field: %v", err)
+	}
 	writeMultipartFile(t, writer, "spec_file", "SPEC.md", "# Spec\n")
 	writeMultipartFile(t, writer, "previous_result", "previous.json", `{"tool":"speccritic"}`)
 	writeMultipartFile(t, writer, "incremental_base_file", "old.md", "# Old\n")
