@@ -172,14 +172,15 @@ Some defects require more than one section:
 The first version must handle cross-section issues in two ways:
 
 1. Each chunk reviewer sees the whole spec.
-2. After chunk reviews complete, SpecCritic runs one synthesis LLM call over the shared prefix (the whole spec and the preflight findings) and the merged chunk findings.
+2. After chunk reviews complete, SpecCritic runs one synthesis LLM call over the shared prefix (the whole spec and the preflight findings) and the merged chunk findings, listed one line each with ID, severity, category, lines, source and a shortened description.
 
-The synthesis call must not re-review the whole spec. It may:
+The synthesis call must not re-review the whole spec. It returns:
 
-- identify duplicates,
-- identify contradictions between findings,
-- add cross-section issues with valid evidence lines,
-- ask clarification questions.
+- `merge`: groups of chunk findings that report the same defect. Each group is folded into its most severe finding, whose evidence absorbs the others'.
+- `retract`: chunk findings or questions the spec already answers, each with the answering lines and an exact quote. A retraction is applied only when the quote is found in the spec, and never to a preflight finding. Applied retractions are listed in `meta.synthesis.retracted` with the answering evidence; the rest are counted in `meta.synthesis.ignored_retractions`.
+- new cross-section issues with valid evidence lines, and clarification questions.
+
+When the spec was too large to share with every call, synthesis cannot see it and is asked for no retractions.
 
 The synthesis call is skipped when chunking produces no findings and the redacted spec has fewer than `--synthesis-line-threshold` lines. With the default threshold of `240`, a 239-line chunked review with no findings skips synthesis, while a 240-line chunked review may run synthesis. If any chunk produces findings, synthesis runs unless chunking is disabled or a later explicit synthesis-disable option is added.
 

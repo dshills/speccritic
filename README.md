@@ -292,6 +292,7 @@ Implementation details:
 - Chunk calls run with bounded concurrency.
 - If one chunk fails permanently after the built-in repair attempt, the check fails with model-output/provider error rather than returning partial results.
 - Synthesis runs when chunked review has findings or when the spec is at least `--synthesis-line-threshold` lines. A no-finding chunked review below that threshold skips synthesis.
+- Synthesis can fold chunk findings that report the same defect into one, so a gap seen by several chunk reviewers costs one deduction, and can retract a chunk finding the spec answers in another section. A retraction must quote the answering text, and is applied only if that text is in the spec; preflight findings are never retracted. `meta.synthesis` reports how many findings were merged and lists each retracted finding with the text that answers it.
 
 ### Incremental Rerun
 

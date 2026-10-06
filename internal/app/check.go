@@ -747,19 +747,17 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 	if err != nil {
 		return nil, "", err
 	}
+	var synthesisMeta *schema.SynthesisMeta
 	if synthesis != nil {
-		merged = chunk.MergeReports(chunk.MergeInput{
-			ChunkResults: results,
-			Synthesis:    synthesis,
-			Preflight:    preflightIssues,
-			OriginalSpec: s.Raw,
-		})
+		merged, synthesisMeta = chunk.ApplySynthesis(merged, synthesis, s.Raw, schema.EvidencePath(s.Path))
+		logVerbose(errw, req.Verbose, "Synthesis: %d finding(s) merged, %d retracted, %d retraction(s) ignored", synthesisMeta.MergedFindings, len(synthesisMeta.Retracted), synthesisMeta.IgnoredRetractions)
 		if synthesisModel != "" {
 			model = synthesisModel
 		}
 	}
 	report := buildReport(req, s, merged.Issues, merged.Questions, merged.Patches, model)
 	report.Meta.DroppedFindings = merged.DroppedFindings
+	report.Meta.Synthesis = synthesisMeta
 	return report, model, nil
 }
 

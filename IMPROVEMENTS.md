@@ -33,7 +33,7 @@ calls, or the quality of what comes back.
 | 8 | Verify and re-anchor evidence locally | Accuracy | Medium | Done |
 | 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small | Done |
 | 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large | Done |
-| 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium |  |
+| 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium | Done |
 | 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium |  |
 | 13 | Retry transient provider errors; keep completed chunks | Throughput | Small |  |
 | 14 | Cache results by content hash | Speed, Tokens | Medium |  |
@@ -322,7 +322,12 @@ Chunk summaries and most of what synthesis does become unnecessary.
 
 ## 11. Fix cross-chunk dedupe; let synthesis merge and retract
 
-**Helps:** Accuracy, Tokens. **Effort:** Medium.
+**Helps:** Accuracy, Tokens. **Effort:** Medium. **Status:** Done.
+
+**As built.** Deterministic dedupe is unchanged; synthesis does the cross-chunk merging, since only
+it can tell one defect from two similar ones. A retraction is applied only if its quoted answer
+is found in the spec (item 8's lookup), never to a preflight finding, and every applied retraction
+is listed in `meta.synthesis` with its evidence. Findings reach synthesis one line each.
 
 **Today.**
 

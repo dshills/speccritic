@@ -196,9 +196,12 @@ func TestMergeReportsSumsDroppedFindings(t *testing.T) {
 			{Chunk: Chunk{ID: "CHUNK-0002-L3-L4"}},
 			{Chunk: Chunk{ID: "CHUNK-0003-L5-L6"}, Report: &schema.Report{Meta: schema.Meta{DroppedFindings: 1}}},
 		},
-		Synthesis: &schema.Report{Meta: schema.Meta{DroppedFindings: 4}},
 	})
-	if result.DroppedFindings != 7 {
-		t.Fatalf("dropped = %d, want 7", result.DroppedFindings)
+	if result.DroppedFindings != 3 {
+		t.Fatalf("dropped = %d, want 3", result.DroppedFindings)
+	}
+	applied, _ := ApplySynthesis(result, &SynthesisResult{Report: &schema.Report{Meta: schema.Meta{DroppedFindings: 4}}}, "", "SPEC.md")
+	if applied.DroppedFindings != 7 {
+		t.Fatalf("dropped after synthesis = %d, want 7", applied.DroppedFindings)
 	}
 }

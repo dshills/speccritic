@@ -406,3 +406,32 @@ func TestAnthropicComplete_CacheLifetime(t *testing.T) {
 		})
 	}
 }
+
+func TestSynthesisSchema(t *testing.T) {
+	out := SynthesisSchema(true)
+	var root schemaNode
+	if err := json.Unmarshal(out.JSON, &root); err != nil {
+		t.Fatalf("schema is not valid JSON: %v", err)
+	}
+	checkStrict(t, "$", &root)
+	top := slices.Clone(root.Required)
+	slices.Sort(top)
+	if want := []string{"issues", "merge", "patches", "questions", "retract"}; !slices.Equal(top, want) {
+		t.Errorf("top-level fields = %v, want %v", top, want)
+	}
+	if root.Properties["merge"].Items.Properties["issue_ids"].Type != "array" {
+		t.Error("merge groups must list issue ids")
+	}
+	for _, field := range []string{"id", "line_start", "line_end", "quote", "reason"} {
+		if root.Properties["retract"].Items.Properties[field] == nil {
+			t.Errorf("retract entries must have %s", field)
+		}
+	}
+	example := out.PromptFallback[strings.Index(out.PromptFallback, "{"):]
+	if !json.Valid([]byte(example)) || !strings.Contains(example, `"retract"`) {
+		t.Errorf("the example is not valid JSON with the synthesis fields:\n%s", example)
+	}
+	if strings.Contains(ReviewSchema(true).PromptFallback, `"retract"`) || strings.Contains(string(ReviewSchema(true).JSON), `"merge"`) {
+		t.Error("the plain review schema must not carry the synthesis fields")
+	}
+}

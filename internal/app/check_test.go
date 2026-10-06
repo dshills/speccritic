@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -1784,5 +1785,54 @@ func TestCheckerChunksAnOversizedSpecWithoutSharingIt(t *testing.T) {
 	}
 	if !strings.Contains(errw.String(), "too large to send whole") {
 		t.Errorf("verbose log does not say why the spec was not shared:\n%s", errw.String())
+	}
+}
+
+// One defect reported by every chunk reviewer becomes one finding once
+// synthesis merges them, so the score does not depend on how the spec was
+// split.
+func TestCheckerAppliesSynthesisMerges(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	idPattern := regexp.MustCompile(`(?m)^- (ISSUE-\d{4}) `)
+	inner := &chunkAwareProvider{}
+	provider := &recordingProvider{fn: func(req *llm.Request) string {
+		if isSynthesisTask(req.UserPrompt) {
+			var ids []string
+			for _, m := range idPattern.FindAllStringSubmatch(req.UserPrompt, -1) {
+				ids = append(ids, fmt.Sprintf("%q", m[1]))
+			}
+			return `{"issues":[],"questions":[],"patches":[],"merge":[{"issue_ids":[` + strings.Join(ids, ",") + `],"reason":"one defect"}],"retract":[]}`
+		}
+		resp, _ := inner.Complete(context.Background(), req)
+		return resp.Content
+	}}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	var errw strings.Builder
+	req := usageCheckRequest(&errw)
+	req.SpecText = longSpec(200)
+	req.Chunking = "on"
+	req.ChunkLines = 40
+
+	result, err := checker.Check(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if inner.chunkCalls < 3 {
+		t.Fatalf("chunk calls = %d, want several", inner.chunkCalls)
+	}
+	if len(result.Report.Issues) != 1 {
+		t.Fatalf("issues = %d, want the chunk findings merged into one", len(result.Report.Issues))
+	}
+	meta := result.Report.Meta.Synthesis
+	if meta == nil || meta.MergedFindings != inner.chunkCalls-1 {
+		t.Fatalf("meta.synthesis = %+v, want %d merged", meta, inner.chunkCalls-1)
+	}
+	if result.Report.Summary.Score != 93 {
+		t.Errorf("score = %d, want one WARN deduction", result.Report.Summary.Score)
+	}
+	if !strings.Contains(errw.String(), "finding(s) merged") {
+		t.Errorf("verbose log does not report the merge:\n%s", errw.String())
 	}
 }

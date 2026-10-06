@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/dshills/speccritic/internal/evidence"
@@ -57,6 +58,9 @@ type Options struct {
 	// error drops the finding.
 	CheckIssue    func(*schema.Issue) error
 	CheckQuestion func(*schema.Question) error
+	// ExtraFields names top-level fields beyond issues, questions and patches
+	// that the caller wants. Each one found whole is returned in Result.Extra.
+	ExtraFields []string
 }
 
 // Result is the usable part of a model response.
@@ -67,6 +71,8 @@ type Result struct {
 	Incomplete error
 	// Dropped explains each finding that failed validation and was left out.
 	Dropped []string
+	// Extra holds the fields named in Options.ExtraFields that were read whole.
+	Extra map[string]json.RawMessage
 }
 
 // ParseResponse reads a model response one finding at a time. A finding that
@@ -94,7 +100,7 @@ func ParseResponse(raw string, opts Options) (Result, error) {
 	if len(c.dropped) > 0 && len(c.report.Issues)+len(c.report.Questions) == 0 {
 		return Result{}, fmt.Errorf("no usable findings, %d dropped: %s", len(c.dropped), c.dropped[0])
 	}
-	return Result{Report: c.report, Incomplete: incomplete, Dropped: c.dropped}, nil
+	return Result{Report: c.report, Incomplete: incomplete, Dropped: c.dropped, Extra: c.extra}, nil
 }
 
 // collector gathers the findings of one response that pass validation.
@@ -102,6 +108,7 @@ type collector struct {
 	opts Options
 	// index is set when evidence is to be checked against the spec.
 	index   *evidence.Index
+	extra   map[string]json.RawMessage
 	report  *schema.Report
 	dropped []string
 }
@@ -229,8 +236,14 @@ func decodeFindings(cleaned string, c *collector) (incomplete, err error) {
 				return nil
 			})
 		default:
-			var skipped json.RawMessage
-			err = dec.Decode(&skipped)
+			var raw json.RawMessage
+			err = dec.Decode(&raw)
+			if err == nil && slices.Contains(c.opts.ExtraFields, key) {
+				if c.extra == nil {
+					c.extra = map[string]json.RawMessage{}
+				}
+				c.extra[key] = raw
+			}
 		}
 		if err != nil {
 			return classifyDecodeError(err)

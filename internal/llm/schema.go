@@ -45,12 +45,13 @@ const evidenceSchema = `{
 
 // reviewSchemaTemplate is the schema of a review. Properties are listed in
 // the order a careful reviewer works: say what is wrong and where before
-// judging how severe it is. Its verbs are, in order: the category enum and
-// the evidence schema (twice).
+// judging how severe it is. Its verbs are, in order: extra required
+// top-level names, the category enum, the evidence schema (twice) and extra
+// top-level properties.
 const reviewSchemaTemplate = `{
   "type": "object",
   "additionalProperties": false,
-  "required": ["issues", "questions", "patches"],
+  "required": ["issues", "questions", "patches"%s],
   "properties": {
     "issues": {
       "type": "array",
@@ -111,7 +112,7 @@ const reviewSchemaTemplate = `{
           "after": {"type": "string", "description": "The replacement text."}
         }
       }
-    }
+    }%s
   }
 }`
 
@@ -148,18 +149,60 @@ const schemaExample = `{
       "before": "exact text from spec to be replaced",
       "after": "corrected minimal replacement text"
     }
-  ]
+  ]%s
 }`
 
-var reviewSchemaJSON = buildReviewSchema()
+// synthesisProperties are the fields the cross-section pass returns besides
+// new findings: which chunk findings to fold together and which the spec
+// answers.
+const synthesisProperties = `,
+    "merge": {
+      "type": "array",
+      "description": "Groups of findings listed in the task that report the same defect. Empty when there are none.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_ids", "reason"],
+        "properties": {
+          "issue_ids": {"type": "array", "items": {"type": "string"}, "description": "Two or more ISSUE ids from the task."},
+          "reason": {"type": "string", "description": "Why these are one defect."}
+        }
+      }
+    },
+    "retract": {
+      "type": "array",
+      "description": "Findings listed in the task that the specification already answers. Empty when there are none.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "line_start", "line_end", "quote", "reason"],
+        "properties": {
+          "id": {"type": "string", "description": "The ISSUE or Q id from the task."},
+          "line_start": {"type": "integer", "description": "First line of the text that answers it."},
+          "line_end": {"type": "integer", "description": "Last line of the text that answers it."},
+          "quote": {"type": "string", "description": "The answering text, copied exactly from those lines."},
+          "reason": {"type": "string", "description": "How that text answers the finding."}
+        }
+      }
+    }`
 
-func buildReviewSchema() json.RawMessage {
+// synthesisExample adds the synthesis fields to the prompt example.
+const synthesisExample = `,
+  "merge": [{"issue_ids": ["ISSUE-0002", "ISSUE-0007"], "reason": "Both report the undefined retry limit"}],
+  "retract": [{"id": "ISSUE-0004", "line_start": 31, "line_end": 31, "quote": "exact answering text from spec", "reason": "Line 31 defines the term"}]`
+
+var (
+	reviewSchemaJSON    = buildReviewSchema("", "")
+	synthesisSchemaJSON = buildReviewSchema(`, "merge", "retract"`, synthesisProperties)
+)
+
+func buildReviewSchema(extraRequired, extraProperties string) json.RawMessage {
 	categories := schema.Categories()
 	quoted := make([]string, len(categories))
 	for i, category := range categories {
 		quoted[i] = fmt.Sprintf("%q", category)
 	}
-	pretty := fmt.Sprintf(reviewSchemaTemplate, strings.Join(quoted, ", "), evidenceSchema, evidenceSchema)
+	pretty := fmt.Sprintf(reviewSchemaTemplate, extraRequired, strings.Join(quoted, ", "), evidenceSchema, evidenceSchema, extraProperties)
 	return compactJSON(pretty)
 }
 
@@ -180,7 +223,18 @@ func ReviewSchema(enforce bool) *OutputSchema {
 		Name:           "spec_review",
 		JSON:           reviewSchemaJSON,
 		Enforce:        enforce,
-		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + schemaExample,
+		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + fmt.Sprintf(schemaExample, ""),
+	}
+}
+
+// SynthesisSchema returns the schema of a cross-section synthesis response: a
+// review plus the merge and retract lists.
+func SynthesisSchema(enforce bool) *OutputSchema {
+	return &OutputSchema{
+		Name:           "spec_synthesis",
+		JSON:           synthesisSchemaJSON,
+		Enforce:        enforce,
+		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + fmt.Sprintf(schemaExample, synthesisExample),
 	}
 }
 

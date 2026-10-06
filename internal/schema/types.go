@@ -53,7 +53,10 @@ type Meta struct {
 	DroppedFindings int `json:"dropped_findings,omitempty"`
 	// Usage totals the LLM calls behind this report. It is omitted when the
 	// review made none.
-	Usage       *UsageMeta       `json:"usage,omitempty"`
+	Usage *UsageMeta `json:"usage,omitempty"`
+	// Synthesis records what the cross-section pass of a chunked review did
+	// to the chunk findings. It is omitted when no synthesis ran.
+	Synthesis   *SynthesisMeta   `json:"synthesis,omitempty"`
 	Incremental *IncrementalMeta `json:"incremental,omitempty"`
 	Convergence *ConvergenceMeta `json:"convergence,omitempty"`
 	Completion  *CompletionMeta  `json:"completion,omitempty"`
@@ -81,6 +84,32 @@ type UsageMeta struct {
 	// first call to the end of the last.
 	CallDurationMS int64 `json:"call_duration_ms"`
 	WallDurationMS int64 `json:"wall_duration_ms"`
+}
+
+// SynthesisMeta records what the cross-section pass changed.
+type SynthesisMeta struct {
+	// MergedFindings counts chunk findings folded into another finding that
+	// reports the same defect.
+	MergedFindings int `json:"merged_findings"`
+	// Retracted lists findings removed because the spec answers them.
+	Retracted []RemovedFinding `json:"retracted,omitempty"`
+	// IgnoredRetractions counts retractions that were not applied: the
+	// finding was unknown or came from preflight, or the quoted answer is not
+	// in the spec.
+	IgnoredRetractions int `json:"ignored_retractions,omitempty"`
+}
+
+// RemovedFinding describes an issue or question taken out of a report, and
+// the spec text that justified taking it out.
+type RemovedFinding struct {
+	Title    string   `json:"title"`
+	Severity Severity `json:"severity"`
+	// Category is empty for a question.
+	Category Category `json:"category,omitempty"`
+	Reason   string   `json:"reason"`
+	// AnsweredBy is the spec text that answers the finding. Its quote was
+	// found in the spec before the finding was removed.
+	AnsweredBy Evidence `json:"answered_by"`
 }
 
 // CompletionMeta describes optional profile-specific completion generation.

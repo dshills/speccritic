@@ -5,12 +5,16 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dshills/speccritic/internal/evidence"
 	"github.com/dshills/speccritic/internal/schema"
 )
 
+// tagPreflight marks a finding from the deterministic preflight rules. It
+// matches preflight.TagPreflight.
+const tagPreflight = "preflight"
+
 type MergeInput struct {
 	ChunkResults []ChunkResult
-	Synthesis    *schema.Report
 	Preflight    []schema.Issue
 	OriginalSpec string
 }
@@ -36,12 +40,6 @@ func MergeReports(input MergeInput) MergeResult {
 			issues = append(issues, issue)
 		}
 	}
-	if input.Synthesis != nil {
-		for _, issue := range input.Synthesis.Issues {
-			issue.Tags = appendUniqueStrings(copyStrings(issue.Tags), "synthesis")
-			issues = append(issues, issue)
-		}
-	}
 	issues, issueIDMap := renumberIssues(sortIssues(dedupeChunkIssues(issues)))
 
 	var questions []schema.Question
@@ -49,9 +47,6 @@ func MergeReports(input MergeInput) MergeResult {
 		if result.Report != nil {
 			questions = append(questions, result.Report.Questions...)
 		}
-	}
-	if input.Synthesis != nil {
-		questions = append(questions, input.Synthesis.Questions...)
 	}
 	questions = renumberQuestions(sortQuestions(questions))
 
@@ -61,9 +56,6 @@ func MergeReports(input MergeInput) MergeResult {
 			patches = appendValidPatches(patches, input.OriginalSpec, issueIDMap, result.Report.Patches...)
 		}
 	}
-	if input.Synthesis != nil {
-		patches = appendValidPatches(patches, input.OriginalSpec, issueIDMap, input.Synthesis.Patches...)
-	}
 
 	dropped := 0
 	for _, result := range input.ChunkResults {
@@ -71,11 +63,154 @@ func MergeReports(input MergeInput) MergeResult {
 			dropped += result.Report.Meta.DroppedFindings
 		}
 	}
-	if input.Synthesis != nil {
-		dropped += input.Synthesis.Meta.DroppedFindings
-	}
 
 	return MergeResult{Issues: issues, Questions: questions, Patches: patches, DroppedFindings: dropped}
+}
+
+// synthesisIDPrefix renames the new findings from synthesis while they are
+// merged, so their IDs cannot collide with the chunk findings' IDs.
+const synthesisIDPrefix = "SYNTHESIS-"
+
+// ApplySynthesis folds the result of the cross-section pass into merged:
+//
+//   - A retraction removes a chunk finding when its quote is found in the
+//     spec. Preflight findings are never retracted. Every retraction applied
+//     is recorded with the spec text that justified it.
+//   - Each merge group keeps the first of its findings, which is the most
+//     severe, and folds the others into it.
+//   - New findings are added, deduplicated against the rest.
+//
+// Findings are then renumbered and patches re-pointed at the new numbers; a
+// patch for a removed finding is dropped. specText is the spec the model was
+// shown and specPath its evidence path.
+func ApplySynthesis(merged MergeResult, synthesis *SynthesisResult, specText, specPath string) (MergeResult, *schema.SynthesisMeta) {
+	if synthesis == nil {
+		return merged, nil
+	}
+	meta := &schema.SynthesisMeta{}
+	removedIssues := map[int]bool{}
+	removedQuestions := map[int]bool{}
+	issueAt := map[string]int{}
+	for i, issue := range merged.Issues {
+		issueAt[issue.ID] = i
+	}
+	questionAt := map[string]int{}
+	for i, question := range merged.Questions {
+		questionAt[question.ID] = i
+	}
+
+	index := evidence.NewIndex(specText)
+	for _, r := range synthesis.Retractions {
+		answer, outcome := index.Anchor(schema.Evidence{Path: specPath, LineStart: r.LineStart, LineEnd: r.LineEnd, Quote: r.Quote})
+		found := outcome == evidence.Verified || outcome == evidence.Moved
+		if i, ok := issueAt[r.ID]; ok && found && !removedIssues[i] && !hasTag(merged.Issues[i].Tags, tagPreflight) {
+			issue := merged.Issues[i]
+			removedIssues[i] = true
+			meta.Retracted = append(meta.Retracted, schema.RemovedFinding{Title: issue.Title, Severity: issue.Severity, Category: issue.Category, Reason: r.Reason, AnsweredBy: answer})
+			continue
+		}
+		if i, ok := questionAt[r.ID]; ok && found && !removedQuestions[i] {
+			question := merged.Questions[i]
+			removedQuestions[i] = true
+			meta.Retracted = append(meta.Retracted, schema.RemovedFinding{Title: question.Question, Severity: question.Severity, Reason: r.Reason, AnsweredBy: answer})
+			continue
+		}
+		meta.IgnoredRetractions++
+	}
+
+	// Union the merge groups, so findings named in two overlapping groups end
+	// up in one.
+	parent := make([]int, len(merged.Issues))
+	for i := range parent {
+		parent[i] = i
+	}
+	find := func(i int) int {
+		for parent[i] != i {
+			parent[i] = parent[parent[i]]
+			i = parent[i]
+		}
+		return i
+	}
+	for _, group := range synthesis.Merges {
+		first := -1
+		for _, id := range group.IssueIDs {
+			i, ok := issueAt[id]
+			if !ok || removedIssues[i] {
+				continue
+			}
+			if first < 0 {
+				first = i
+				continue
+			}
+			a, b := find(first), find(i)
+			if a != b {
+				// Issues are sorted most severe first, so the lower index is the
+				// one to keep.
+				parent[max(a, b)] = min(a, b)
+			}
+		}
+	}
+
+	issues := make([]schema.Issue, 0, len(merged.Issues))
+	keptAt := map[int]int{}
+	for i, issue := range merged.Issues {
+		if removedIssues[i] {
+			continue
+		}
+		root := find(i)
+		if root == i {
+			keptAt[i] = len(issues)
+			issue.Tags = copyStrings(issue.Tags)
+			issues = append(issues, issue)
+		}
+	}
+	for i, issue := range merged.Issues {
+		if removedIssues[i] || find(i) == i {
+			continue
+		}
+		k := keptAt[find(i)]
+		issues[k] = mergeDuplicateIssue(issues[k], issue)
+		meta.MergedFindings++
+	}
+
+	var newPatches []schema.Patch
+	if synthesis.Report != nil {
+		renamed := map[string]string{}
+		for _, issue := range synthesis.Report.Issues {
+			id := synthesisIDPrefix + issue.ID
+			renamed[issue.ID] = id
+			issue.ID = id
+			issue.Tags = appendUniqueStrings(copyStrings(issue.Tags), TagSynthesis)
+			issues = append(issues, issue)
+		}
+		for _, patch := range synthesis.Report.Patches {
+			if id, ok := renamed[patch.IssueID]; ok {
+				patch.IssueID = id
+				newPatches = append(newPatches, patch)
+			}
+		}
+	}
+	issues, issueIDMap := renumberIssues(sortIssues(dedupeChunkIssues(issues)))
+
+	var questions []schema.Question
+	for i, question := range merged.Questions {
+		if !removedQuestions[i] {
+			questions = append(questions, question)
+		}
+	}
+	if synthesis.Report != nil {
+		questions = append(questions, synthesis.Report.Questions...)
+	}
+	questions = renumberQuestions(sortQuestions(questions))
+
+	patches := appendValidPatches(nil, specText, issueIDMap, merged.Patches...)
+	patches = appendValidPatches(patches, specText, issueIDMap, newPatches...)
+
+	dropped := merged.DroppedFindings
+	if synthesis.Report != nil {
+		dropped += synthesis.Report.Meta.DroppedFindings
+	}
+	return MergeResult{Issues: issues, Questions: questions, Patches: patches, DroppedFindings: dropped}, meta
 }
 
 func appendIssues(dst []schema.Issue, src ...schema.Issue) []schema.Issue {

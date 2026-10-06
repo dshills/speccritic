@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/dshills/speccritic/internal/llm"
@@ -13,8 +12,14 @@ import (
 	"github.com/dshills/speccritic/internal/spec"
 )
 
-const maxSynthesisFindings = 80
-const maxSynthesisQuestions = 80
+// The synthesis task lists findings one line each, so these caps are far
+// above what a spec produces in practice.
+const maxSynthesisFindings = 200
+const maxSynthesisQuestions = 100
+
+// maxSynthesisDescription bounds the description shown for each finding.
+const maxSynthesisDescription = 160
+
 const TagSynthesis = "synthesis"
 
 type SynthesisConfig struct {
@@ -57,35 +62,95 @@ func ShouldRunSynthesis(chunkingEnabled bool, lineCount int, findingCount int, t
 
 // BuildSynthesisTask returns the task for the cross-section pass. It follows
 // the shared prefix, so synthesis reads the whole spec and the preflight
-// findings there; the task adds what the chunk reviews found.
+// findings there; the task lists what the chunk reviews found, one line each.
 func BuildSynthesisTask(input SynthesisInput) (string, error) {
-	var tail strings.Builder
+	var b strings.Builder
 	if input.SpecShown {
-		tail.WriteString("\nThe specification above was reviewed in chunks, each reviewer reporting only on its own lines. Their findings follow.\n")
+		b.WriteString("\nThe specification above was reviewed in chunks, each reviewer reporting only on its own lines. Their findings follow.\n")
 	} else {
-		tail.WriteString("\nA specification too large to show in full was reviewed in chunks, each reviewer seeing only its own lines. Their findings follow; they are all you have of the specification.\n")
+		b.WriteString("\nA specification too large to show in full was reviewed in chunks, each reviewer seeing only its own lines. Their findings follow; they are all you have of the specification.\n")
 	}
-	tail.WriteString("Look for defects that span sections and so could not be seen from one chunk: contradictions between sections, interfaces used in one section and never defined, terms used inconsistently, ordering that depends on several sections, and blocking questions.\n")
-	tail.WriteString("Do not repeat the findings below. Cite specification line numbers. Do not emit score or verdict.\n")
-	for _, block := range []struct {
-		name  string
-		value any
-	}{
-		{name: "merged_chunk_findings", value: limitIssues(input.Merged.Issues, maxSynthesisFindings)},
-		{name: "merged_chunk_questions", value: limitQuestions(input.Merged.Questions, maxSynthesisQuestions)},
-	} {
-		if emptyBlock(block.value) {
-			continue
+	b.WriteString("\n<chunk_findings>\n")
+	for _, issue := range limitIssues(input.Merged.Issues, maxSynthesisFindings) {
+		source := "chunk"
+		if hasTag(issue.Tags, tagPreflight) {
+			source = "preflight"
 		}
-		if err := writeJSONBlock(&tail, block.name, block.value); err != nil {
-			return "", err
+		fmt.Fprintf(&b, "- %s %s %s %s [%s]: %s", issue.ID, issue.Severity, issue.Category, lineLabel(issue.Evidence), source, oneLine(issue.Title, 0))
+		if issue.Description != "" {
+			fmt.Fprintf(&b, " - %s", oneLine(issue.Description, maxSynthesisDescription))
 		}
+		b.WriteString("\n")
 	}
-	tail.WriteString("\nIf there are no additional cross-section findings or questions, return empty issues, questions, and patches arrays.\n")
-	return tail.String(), nil
+	for _, question := range limitQuestions(input.Merged.Questions, maxSynthesisQuestions) {
+		fmt.Fprintf(&b, "- %s %s %s: %s\n", question.ID, question.Severity, lineLabel(question.Evidence), oneLine(question.Question, 0))
+	}
+	if omitted := max(0, len(input.Merged.Issues)-maxSynthesisFindings) + max(0, len(input.Merged.Questions)-maxSynthesisQuestions); omitted > 0 {
+		fmt.Fprintf(&b, "- (%d more not listed)\n", omitted)
+	}
+	b.WriteString("</chunk_findings>\n\n")
+
+	b.WriteString("Do three things.\n")
+	b.WriteString("1. merge: group findings above that report the same defect, such as one gap reported by several chunk reviewers. List each group's ISSUE ids. Do not group findings that are merely related.\n")
+	if input.SpecShown {
+		b.WriteString("2. retract: list findings above that the specification already answers, typically a term or rule a chunk reviewer reported as missing because it is defined in another section. Give the lines that answer it and copy their text exactly in quote; a retraction whose quote is not in the specification is ignored. Do not retract a finding because it seems minor, and never retract a [preflight] finding.\n")
+	} else {
+		b.WriteString("2. retract: return an empty list, since you cannot see the specification to quote what answers a finding.\n")
+	}
+	b.WriteString("3. issues and questions: report new defects that span sections and so could not be seen from one chunk: contradictions between sections, interfaces used in one section and never defined, terms used inconsistently, ordering that depends on several sections, and blocking questions. Do not repeat findings above. Cite specification line numbers. Do not emit score or verdict.\n")
+	b.WriteString("Return empty lists for anything you have nothing to report.\n")
+	return b.String(), nil
 }
 
-func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, preflight []schema.Issue, merged MergeResult, cfg SynthesisConfig) (*schema.Report, string, error) {
+// oneLine collapses whitespace so a text fits on one line of the task, and
+// shortens it to limit runes when limit is positive.
+func oneLine(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if limit > 0 {
+		if runes := []rune(text); len(runes) > limit {
+			return string(runes[:limit]) + "..."
+		}
+	}
+	return text
+}
+
+func lineLabel(evidence []schema.Evidence) string {
+	if len(evidence) == 0 {
+		return "L?"
+	}
+	if evidence[0].LineEnd > evidence[0].LineStart {
+		return fmt.Sprintf("L%d-L%d", evidence[0].LineStart, evidence[0].LineEnd)
+	}
+	return fmt.Sprintf("L%d", evidence[0].LineStart)
+}
+
+// SynthesisResult is what the cross-section pass returned.
+type SynthesisResult struct {
+	// Report holds the new cross-section findings.
+	Report *schema.Report
+	// Merges are groups of chunk findings that report one defect.
+	Merges []MergeGroup
+	// Retractions are chunk findings the spec answers.
+	Retractions []Retraction
+}
+
+// MergeGroup names chunk findings that report the same defect.
+type MergeGroup struct {
+	IssueIDs []string `json:"issue_ids"`
+	Reason   string   `json:"reason"`
+}
+
+// Retraction names a chunk finding the spec answers, and the text that
+// answers it.
+type Retraction struct {
+	ID        string `json:"id"`
+	LineStart int    `json:"line_start"`
+	LineEnd   int    `json:"line_end"`
+	Quote     string `json:"quote"`
+	Reason    string `json:"reason"`
+}
+
+func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, preflight []schema.Issue, merged MergeResult, cfg SynthesisConfig) (*SynthesisResult, string, error) {
 	if provider == nil {
 		return nil, "", fmt.Errorf("provider is required")
 	}
@@ -110,28 +175,65 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, pref
 		LongCache:              cfg.LongCache,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
-		Schema:                 llm.ReviewSchema(cfg.EnforceSchema),
+		Schema:                 llm.SynthesisSchema(cfg.EnforceSchema),
 	}
-	return llm.CompleteReport(ctx, provider, llm.ReportCall{
+	// A response that is cut off and continued arrives in parts. Each part's
+	// merge and retract lists are kept, since they refer to the chunk findings
+	// in the task, not to the new findings the parts number.
+	var extras synthesisExtras
+	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,
 		Label:   "synthesis ",
 		Parse: func(raw string) (llm.Parsed, error) {
-			return parseSynthesisResponse(raw, s.Path, s.Raw, s.LineCount)
+			parsed, extra, err := parseSynthesisResponse(raw, s.Path, s.Raw, s.LineCount)
+			if err == nil {
+				extras.add(extra)
+			}
+			return parsed, err
 		},
 		RepairPrompt: func(reason error, failedOutput string) string {
 			return fmt.Sprintf("\n\nYour previous response failed synthesis validation.\n\nValidation error: %s\n\n<failed_output>\n%s\n</failed_output>\n\nReturn only valid JSON matching the schema and cite valid original line numbers.", reason, truncate(failedOutput, 4000))
 		},
 	})
+	if err != nil {
+		return nil, "", err
+	}
+	return &SynthesisResult{Report: report, Merges: extras.merges, Retractions: extras.retractions}, model, nil
+}
+
+// synthesisExtras collects the merge and retract lists across the parts of a
+// response, ignoring repeats.
+type synthesisExtras struct {
+	merges      []MergeGroup
+	retractions []Retraction
+	retracted   map[string]bool
+}
+
+func (e *synthesisExtras) add(part synthesisExtras) {
+	e.merges = append(e.merges, part.merges...)
+	for _, r := range part.retractions {
+		if e.retracted == nil {
+			e.retracted = map[string]bool{}
+		}
+		if e.retracted[r.ID] {
+			continue
+		}
+		e.retracted[r.ID] = true
+		e.retractions = append(e.retractions, r)
+	}
 }
 
 // parseSynthesisResponse reads a synthesis response that may have been cut
 // off. Synthesis may cite any line of the spec. The synthesis tag and the
-// evidence path are set here rather than asked of the model.
-func parseSynthesisResponse(raw, specPath, specText string, lineCount int) (llm.Parsed, error) {
+// evidence path are set here rather than asked of the model. The merge and
+// retract lists are returned when they were read whole; one that is malformed
+// is ignored rather than failing the response, since it only removes findings.
+func parseSynthesisResponse(raw, specPath, specText string, lineCount int) (llm.Parsed, synthesisExtras, error) {
 	res, err := validate.ParseResponse(raw, validate.Options{
-		LineCount: lineCount,
-		SpecPath:  specPath,
-		SpecText:  specText,
+		LineCount:   lineCount,
+		SpecPath:    specPath,
+		SpecText:    specText,
+		ExtraFields: []string{"merge", "retract"},
 		CheckIssue: func(issue *schema.Issue) error {
 			if !hasTag(issue.Tags, TagSynthesis) {
 				issue.Tags = appendUniqueStrings(copyStrings(issue.Tags), TagSynthesis)
@@ -140,14 +242,27 @@ func parseSynthesisResponse(raw, specPath, specText string, lineCount int) (llm.
 		},
 	})
 	if err != nil {
-		return llm.Parsed{}, err
+		return llm.Parsed{}, synthesisExtras{}, err
 	}
-	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, nil
+	var extras synthesisExtras
+	if raw, ok := res.Extra["merge"]; ok {
+		var merges []MergeGroup
+		if json.Unmarshal(raw, &merges) == nil {
+			extras.merges = merges
+		}
+	}
+	if raw, ok := res.Extra["retract"]; ok {
+		var retractions []Retraction
+		if json.Unmarshal(raw, &retractions) == nil {
+			extras.retractions = retractions
+		}
+	}
+	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, extras, nil
 }
 
 // ParseSynthesisResponse reads a complete synthesis response.
 func ParseSynthesisResponse(raw string, lineCount int) (*schema.Report, error) {
-	parsed, err := parseSynthesisResponse(raw, "", "", lineCount)
+	parsed, _, err := parseSynthesisResponse(raw, "", "", lineCount)
 	if err != nil {
 		return nil, err
 	}
@@ -169,32 +284,4 @@ func limitQuestions(questions []schema.Question, limit int) []schema.Question {
 		return questions
 	}
 	return questions[:limit]
-}
-
-func writeJSONBlock(b *strings.Builder, name string, value any) error {
-	b.WriteString("\n<")
-	b.WriteString(name)
-	b.WriteString(">\n")
-	data, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("marshal synthesis prompt block %s: %w", name, err)
-	}
-	b.Write(data)
-	b.WriteString("\n</")
-	b.WriteString(name)
-	b.WriteString(">\n")
-	return nil
-}
-
-func emptyBlock(value any) bool {
-	if value == nil {
-		return true
-	}
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Array, reflect.Chan, reflect.Map, reflect.Slice, reflect.String:
-		return v.Len() == 0
-	default:
-		return false
-	}
 }
