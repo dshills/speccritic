@@ -45,6 +45,33 @@ func TestTrackIssuesFingerprintIgnoresCompletionSuggestedTag(t *testing.T) {
 	}
 }
 
+// A finding produced by an incremental range review carries incremental-review
+// in that run's report only: a reuse swaps the tag for incremental-reused and a
+// full review never sets it.
+func TestTrackIssuesFingerprintIgnoresIncrementalReviewTag(t *testing.T) {
+	reviewed := schema.Issue{
+		ID:       "ISSUE-0001",
+		Severity: schema.SeverityCritical,
+		Category: schema.CategoryContradiction,
+		Title:    "Authentication requirement contradicts itself",
+		Evidence: []schema.Evidence{{Quote: "Users must be authenticated."}},
+		Tags:     []string{"auth", "incremental-review", "range:SEC-003"},
+	}
+	want := ComputeFingerprints(TrackIssues([]schema.Issue{reviewed}))[0].Fingerprint
+	for name, tags := range map[string][]string{
+		"full review": {"auth"},
+		"reused":      {"auth", "incremental-reused"},
+		// A reused finding the range review produced again keeps both tags.
+		"reused and reviewed": {"auth", "incremental-reused", "incremental-review", "range:SEC-003"},
+	} {
+		other := reviewed
+		other.Tags = tags
+		if got := ComputeFingerprints(TrackIssues([]schema.Issue{other}))[0].Fingerprint; got != want {
+			t.Errorf("%s: fingerprint = %s, want %s", name, got, want)
+		}
+	}
+}
+
 func TestTrackQuestionsFingerprint(t *testing.T) {
 	q := schema.Question{
 		ID:       "Q-0001",

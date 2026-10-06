@@ -368,6 +368,94 @@ func TestRunCheck_ReportWithCompletionPatchRoundTrips(t *testing.T) {
 	}
 }
 
+// An incremental run tags each finding it produces from a changed range with
+// incremental-review. No other run tags that finding the same way: a full
+// review never sets the tag and a reuse replaces it with incremental-reused.
+// The two findings here quote the same line, so when their fingerprints stop
+// matching, the evidence fallback cannot tell them apart.
+func TestRunCheck_IncrementalReviewReportRoundTrips(t *testing.T) {
+	setTestEnv(t)
+	setupMockAnthropicServer(t, anthropicResponse(t, `{"issues":[
+		{"id":"ISSUE-0001","severity":"CRITICAL","category":"CONTRADICTION","title":"Authentication requirement contradicts itself","evidence":[{"path":"bad_spec.md","line_start":10,"line_end":10,"quote":"Users must be authenticated. The system also allows unauthenticated access."}],"blocking":true,"tags":[]},
+		{"id":"ISSUE-0002","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Scope of unauthenticated access is not stated","evidence":[{"path":"bad_spec.md","line_start":10,"line_end":10,"quote":"Users must be authenticated. The system also allows unauthenticated access."}],"blocking":false,"tags":[]}
+	],"questions":[],"patches":[]}`))
+	spec := badSpecCopy(t, true)
+
+	full := previousReportFlags(t)
+	if err := runCheck(spec, full); err != nil {
+		t.Fatalf("full review: %v", err)
+	}
+
+	// Change the section both findings cite, leaving the quoted line as it is,
+	// so the incremental run reviews that section again.
+	base, err := os.ReadFile(spec)
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	basePath := filepath.Join(t.TempDir(), "base.md")
+	if err := os.WriteFile(basePath, base, 0o644); err != nil {
+		t.Fatalf("write base spec: %v", err)
+	}
+	edited := strings.Replace(string(base), "All data shall be processed.", "All uploaded records shall be processed.", 1)
+	if edited == string(base) {
+		t.Fatal("spec edit changed nothing")
+	}
+	if err := os.WriteFile(spec, []byte(edited), 0o644); err != nil {
+		t.Fatalf("write edited spec: %v", err)
+	}
+
+	incr := previousReportFlags(t)
+	incr.incrementalFrom = full.out
+	incr.incrementalBase = basePath
+	incr.incrementalMode = "on"
+	incr.incrementalReport = true
+	incr.convergenceFrom = full.out
+	incr.convergenceMode = "on"
+	if err := runCheck(spec, incr); err != nil {
+		t.Fatalf("incremental review: %v", err)
+	}
+	prev := readJSONReport(t, incr.out)
+	if meta := prev.Meta.Incremental; meta == nil || meta.ReviewedSections != 1 || meta.ReusedIssues != 0 || len(prev.Issues) != 2 {
+		t.Fatalf("incremental = %+v issues = %v, want both findings produced by one range review", meta, issueIDs(prev.Issues))
+	}
+	for _, issue := range prev.Issues {
+		if !slices.Contains(issue.Tags, "incremental-review") {
+			t.Fatalf("%s tags = %v, want incremental-review", issue.ID, issue.Tags)
+		}
+	}
+
+	t.Run("compared with the full review", func(t *testing.T) {
+		wantAllStillOpen(t, prev)
+	})
+
+	t.Run("convergence-from", func(t *testing.T) {
+		flags := previousReportFlags(t)
+		flags.convergenceFrom = incr.out
+		flags.convergenceMode = "on"
+		if err := runCheck(spec, flags); err != nil {
+			t.Fatalf("runCheck: %v", err)
+		}
+		wantAllStillOpen(t, readJSONReport(t, flags.out))
+	})
+
+	t.Run("incremental-from", func(t *testing.T) {
+		flags := previousReportFlags(t)
+		flags.incrementalFrom = incr.out
+		flags.incrementalMode = "on"
+		flags.incrementalReport = true
+		flags.convergenceFrom = incr.out
+		flags.convergenceMode = "on"
+		if err := runCheck(spec, flags); err != nil {
+			t.Fatalf("runCheck: %v", err)
+		}
+		report := readJSONReport(t, flags.out)
+		if meta := report.Meta.Incremental; report.Meta.Usage != nil || meta == nil || meta.ReusedIssues != 2 {
+			t.Fatalf("usage = %+v incremental = %+v, want both findings reused without a model call", report.Meta.Usage, meta)
+		}
+		wantAllStillOpen(t, report)
+	})
+}
+
 // The severity threshold filters the issues a report lists but not its
 // patches, so a report can hold a patch whose issue is not listed.
 func TestRunCheck_SeverityFilteredReportLoads(t *testing.T) {
