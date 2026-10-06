@@ -439,7 +439,14 @@ Output tokens cost about five times input tokens and set the latency of every ca
 
 ## 16. Add a severity rubric and worked examples to the prompt
 
-**Helps:** Accuracy. **Effort:** Small (after item 6).
+**Helps:** Accuracy. **Effort:** Small (after item 6). **Status:** Done.
+
+**As built.** The rubric gives a rule, typical causes and two or three examples for CRITICAL and
+WARN, one line for INFO, and a tie-breaker: could a team write the code and its tests from the
+spec alone? The examples come from domains outside the eval corpus so the eval still measures
+generalization. The search rule names where definitions hide and turns a conflicting
+definition into a CONTRADICTION. Strict mode states that it overrides the rubric. The text sits
+in the system prompt ahead of the profile rules, so it is cached with the rest.
 
 **Today.** Each severity is defined in one line (`internal/llm/prompt.go:27-30`). There are no
 examples of what is and is not CRITICAL, and no instruction to check the rest of the spec before

@@ -327,7 +327,8 @@ Prompt Must Include
 	•	Context files (clearly delimited)
 	•	Profile rules
 	•	Explicit anti-hallucination rules
-	•	Severity definitions
+	•	Severity rubric: a rule, typical causes and examples for CRITICAL and WARN, a rule for INFO, and a tie-breaker (could a team write the code and its tests from the spec alone?); strict mode overrides it
+	•	Search rule: before reporting a term, interface, state, limit or failure behavior as undefined or missing, search the whole spec and the context documents; a conflicting second definition is a CONTRADICTION
 
 Validation
 	•	Strict JSON parse

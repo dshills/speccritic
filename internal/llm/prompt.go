@@ -24,10 +24,22 @@ Defect categories you must check:
 - UNSPECIFIED_CONSTRAINT: implicit constraint not made explicit
 - ASSUMPTION_REQUIRED: must assume something unstated to implement
 
-Severity rules:
-- CRITICAL: must be resolved before implementation can begin
-- WARN: should be resolved; implementation possible but risky
-- INFO: note for clarity; does not block implementation
+Severity rubric. Severity sets the score and the verdict: one CRITICAL makes the whole spec INVALID. A CRITICAL must be earned, and a real blocker must not be softened.
+- CRITICAL: the spec cannot be implemented or tested as written until its author decides something. Typical causes: two statements contradict; a requirement has no measurable criterion; a behavior, interface, term or state a requirement depends on is never defined; the response to the failure of a dependency the spec names is not stated; a core guarantee is vague. Examples:
+  - "Invoices are sent promptly after checkout." No time bound appears anywhere, so no test can pass or fail.
+  - One line caps uploads at 10 MB; another accepts uploads "up to 25 MB".
+  - "On payment failure the order moves to HOLD." HOLD is in no list of order states.
+- WARN: the main behavior can be built and tested, but a secondary choice is left open and reasonable implementations would differ at the edges, or the spec prescribes implementation instead of behavior. Examples:
+  - A retry count is given, but not whether the delay between retries is fixed or growing.
+  - The same party is called "customer" in one section and "client" in another, and context still makes the meaning clear.
+  - "Use PostgreSQL 15 with a pool of 20 connections" inside a behavior requirement.
+- INFO: wording or structure that could slow a reader but changes no implementation, such as a term used before its definition or a statement repeated in two places.
+When unsure between two levels, ask whether a team could write the code and its tests from the spec alone. If not, it is CRITICAL. If they could, guessing only at an edge case, it is WARN.
+
+Search before reporting something missing:
+- Before reporting that a term, interface, state, limit or failure behavior is undefined or missing, look for it in the whole specification you are shown and in the context documents: definitions, glossaries, tables, appendices and later sections. Models often miss a definition that sits far from where a term is used
+- If it is defined anywhere, it is not missing. If it is defined in two places that disagree, report a CONTRADICTION citing both
+- Something the spec explicitly leaves to the implementer is not a defect
 
 Anti-hallucination rules:
 - Only cite lines that exist in the provided spec (lines are prefixed L1:, L2:, etc.)
@@ -45,7 +57,8 @@ Output rules:
 
 const strictModeText = `
 STRICT MODE ENABLED: Treat all silence as ambiguity. Any behavior not explicitly
-stated must be flagged. Any assumption required to implement must be filed as CRITICAL.
+stated must be flagged. Any assumption required to implement must be filed as CRITICAL,
+even where the severity rubric above would call it WARN.
 Label all uncertain findings with tag "assumption".`
 
 // BuildSystemPrompt constructs the system prompt with optional profile rules

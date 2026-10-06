@@ -717,3 +717,28 @@ func TestProviders_NoUsageReportedIsZero(t *testing.T) {
 		t.Errorf("usage = %+v, want zero", resp.Usage)
 	}
 }
+
+// The system prompt carries a severity rubric with examples at each level and
+// the rule to search the whole spec before calling something missing. Both
+// come before the profile rules, so every profile shares the cached text.
+func TestBuildSystemPrompt_SeverityRubricAndSearchRule(t *testing.T) {
+	p, err := profile.Get("backend-api")
+	if err != nil {
+		t.Fatalf("profile.Get: %v", err)
+	}
+	sys := BuildSystemPrompt(p, false)
+	for _, want := range []string{"- CRITICAL:", "- WARN:", "- INFO:", "Examples:", "Search before reporting something missing", "report a CONTRADICTION citing both"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
+	}
+	if strings.Count(sys, "Examples:") < 2 {
+		t.Error("the rubric should give examples for CRITICAL and WARN")
+	}
+	if rubric, rules := strings.Index(sys, "Severity rubric"), strings.Index(sys, p.FormatRulesForPrompt()); rubric < 0 || rules < rubric {
+		t.Error("the rubric must precede the profile rules")
+	}
+	if strict := BuildSystemPrompt(p, true); !strings.Contains(strict, "even where the severity rubric above would call it WARN") {
+		t.Error("strict mode must say it overrides the rubric")
+	}
+}
