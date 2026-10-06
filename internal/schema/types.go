@@ -57,6 +57,9 @@ type Meta struct {
 	// Synthesis records what the cross-section pass of a chunked review did
 	// to the chunk findings. It is omitted when no synthesis ran.
 	Synthesis *SynthesisMeta `json:"synthesis,omitempty"`
+	// Cache says whether this review came from the review cache. It is
+	// omitted when the cache was not used.
+	Cache *CacheMeta `json:"cache,omitempty"`
 	// Verification records the second look given to CRITICAL findings. It is
 	// omitted when there was nothing to check or verification was off.
 	Verification *VerificationMeta `json:"verification,omitempty"`
@@ -103,6 +106,17 @@ type SynthesisMeta struct {
 	// finding was unknown or came from preflight, or the quoted answer is not
 	// in the spec.
 	IgnoredRetractions int `json:"ignored_retractions,omitempty"`
+}
+
+// CacheMeta records the review cache's part in a report.
+type CacheMeta struct {
+	// Hit is true when the review was read from the cache and no model was
+	// called; false when it was produced now and stored.
+	Hit bool `json:"hit"`
+	// Key identifies the stored review.
+	Key string `json:"key"`
+	// StoredAt is when a cached review was produced.
+	StoredAt string `json:"stored_at,omitempty"`
 }
 
 // Values of VerificationMeta.Status.

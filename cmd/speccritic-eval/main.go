@@ -134,6 +134,9 @@ func (o options) checkOptions() speccritic.CheckOptions {
 	opts.Effort = o.effort
 	opts.StructuredOutput = o.structuredOutput
 	opts.Verify = o.verify
+	// Repeated runs of a case must each call the model, or the eval would
+	// measure the cache.
+	opts.UseCache = false
 	if o.maxTokens > 0 {
 		opts.MaxTokens = o.maxTokens
 	}

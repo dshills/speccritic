@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dshills/speccritic/internal/cache"
 	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/completion"
 	ctxpkg "github.com/dshills/speccritic/internal/context"
@@ -121,6 +122,9 @@ type CheckRequest struct {
 	// finding the model produced a second look before it decides the
 	// verdict, or "off" to skip it.
 	Verify string
+	// NoCache skips the review cache: the review is neither read from it nor
+	// stored in it.
+	NoCache bool
 	// StructuredOutput is "auto" (the default when empty) to have the
 	// provider constrain responses to the review schema where the model
 	// allows it, or "off" to describe the schema in the prompt only.
@@ -175,10 +179,16 @@ type ProviderFactory func(providerModel string) (llm.Provider, error)
 
 type Checker struct {
 	NewProvider ProviderFactory
+	// Cache, when set, stores finished reviews and serves an unchanged
+	// request from them without calling a model.
+	Cache *cache.Store
 }
 
+// NewChecker returns a checker using the real providers and the default
+// review cache. If the cache directory cannot be found, it runs without one.
 func NewChecker() *Checker {
-	return &Checker{NewProvider: llm.NewProvider}
+	store, _ := cache.Default()
+	return &Checker{NewProvider: llm.NewProvider, Cache: store}
 }
 
 func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, error) {
@@ -264,6 +274,26 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		_, _ = fmt.Fprintf(errw, "=== END DEBUG ===\n")
 	}
 
+	incremental := (req.IncrementalFrom != "" || req.IncrementalFromText != "" || req.IncrementalMode == "on") && req.IncrementalMode != "off"
+	cacheKey := c.cacheKey(req, s, modelStr, sysPrompt, specPrefix, incremental, errw)
+	if cached := c.cachedReview(req, cacheKey, errw); cached != nil {
+		if err := c.applyConvergence(req, cached, convergence.CoverageFull, errw); err != nil {
+			return nil, appError(ErrorInput, err)
+		}
+		if err := c.applyCompletion(req, s, cached); err != nil {
+			return nil, appError(ErrorInput, err)
+		}
+		patchDiff := patchDiffForReport(originalRaw, cached, redactedSpec, errw)
+		applyRunMeta(cached, req, llm.Totals{})
+		return &CheckResult{
+			Report:       cached,
+			PatchDiff:    patchDiff,
+			OriginalSpec: originalRaw,
+			LineCount:    s.LineCount,
+			Model:        cached.Meta.Model,
+		}, nil
+	}
+
 	newProvider := c.NewProvider
 	if newProvider == nil {
 		newProvider = llm.NewProvider
@@ -278,7 +308,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	var provider llm.Provider = meter
 	defer func() { logUsage(errw, req.Verbose, meter.Totals()) }()
 
-	if (req.IncrementalFrom != "" || req.IncrementalFromText != "" || req.IncrementalMode == "on") && req.IncrementalMode != "off" {
+	if incremental {
 		result, handled, err := c.checkIncremental(ctx, provider, req, s, originalRaw, preflightIssues, sysPrompt, errw)
 		if err != nil {
 			var appErr *Error
@@ -312,6 +342,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 			return nil, appError(ErrorModelOutput, err)
 		}
 		c.verifyCriticals(ctx, provider, req, s, report, sysPrompt, specPrefix, longCache, errw)
+		c.storeReview(req, cacheKey, report, errw)
 		if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
 			return nil, appError(ErrorInput, err)
 		}
@@ -340,6 +371,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
 	report.Meta.DroppedFindings = dropped
 	c.verifyCriticals(ctx, provider, req, s, report, sysPrompt, specPrefix, longCache, errw)
+	c.storeReview(req, cacheKey, report, errw)
 	if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
 		return nil, appError(ErrorInput, err)
 	}
@@ -356,6 +388,105 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+// cacheMaterial is everything that can change a review, hashed into its cache
+// key. The system prompt and prefix cover the spec, context files, profile,
+// strict mode and preflight findings as the model sees them; the rest covers
+// settings that change how the model is called or what the report records.
+type cacheMaterial struct {
+	Version           string
+	Model             string
+	Effort            string
+	MaxTokens         int
+	StructuredOutput  bool
+	Verify            bool
+	SystemPrompt      string
+	Prefix            string
+	SpecPath          string
+	ContextPaths      []string
+	Profile           string
+	Strict            bool
+	SeverityThreshold string
+	Preflight         bool
+	PreflightMode     string
+	PreflightProfile  string
+	PreflightIgnore   []string
+	Chunk             chunk.Config
+	OriginalSpec      string
+}
+
+// cacheKey returns the key for this review, or "" when the cache is not to
+// be used: no store, --no-cache, or an incremental run, which already reuses
+// a previous report its own way.
+func (c *Checker) cacheKey(req CheckRequest, s *spec.Spec, model, sysPrompt, specPrefix string, incremental bool, errw io.Writer) string {
+	if c.Cache == nil || req.NoCache || incremental {
+		return ""
+	}
+	cfg := chunkConfigFromRequest(req)
+	cfg.ChunkConcurrency = 0 // how many calls run at once does not change the review
+	key, err := cache.Key(cacheMaterial{
+		Version:           req.Version,
+		Model:             model,
+		Effort:            req.Effort,
+		MaxTokens:         req.MaxTokens,
+		StructuredOutput:  enforceSchema(req),
+		Verify:            req.Verify != VerifyOff,
+		SystemPrompt:      sysPrompt,
+		Prefix:            specPrefix,
+		SpecPath:          s.Path,
+		ContextPaths:      req.ContextPaths,
+		Profile:           req.Profile,
+		Strict:            req.Strict,
+		SeverityThreshold: req.SeverityThreshold,
+		Preflight:         req.Preflight,
+		PreflightMode:     req.PreflightMode,
+		PreflightProfile:  req.PreflightProfile,
+		PreflightIgnore:   req.PreflightIgnore,
+		Chunk:             cfg,
+		// Patches are checked against the text before redaction, so a
+		// change to a redacted secret changes the report.
+		OriginalSpec: s.Hash,
+	})
+	if err != nil {
+		logVerbose(errw, req.Verbose, "Review cache unavailable: %s", err)
+		return ""
+	}
+	return key
+}
+
+// cachedReview returns the review stored under key, marked as a cache hit,
+// or nil.
+func (c *Checker) cachedReview(req CheckRequest, key string, errw io.Writer) *schema.Report {
+	if key == "" {
+		return nil
+	}
+	report, storedAt, ok := c.Cache.Get(key)
+	if !ok {
+		return nil
+	}
+	logVerbose(errw, req.Verbose, "Review cache hit (stored %s); no model call", storedAt.Format(time.RFC3339))
+	report.Meta.Cache = &schema.CacheMeta{Hit: true, Key: key, StoredAt: storedAt.Format(time.RFC3339)}
+	return report
+}
+
+// storeReview stores a finished review under key, before convergence and
+// completion, which are applied afresh to every run. A review whose CRITICAL
+// verification failed is not stored, so a later run can complete it. A
+// failure to store is logged and otherwise ignored.
+func (c *Checker) storeReview(req CheckRequest, key string, report *schema.Report, errw io.Writer) {
+	if key == "" {
+		return
+	}
+	if v := report.Meta.Verification; v != nil && v.Status == schema.VerificationFailed {
+		logVerbose(errw, req.Verbose, "Review not cached: CRITICAL verification failed")
+		return
+	}
+	if err := c.Cache.Put(key, report); err != nil {
+		logVerbose(errw, req.Verbose, "Review not cached: %s", err)
+		return
+	}
+	report.Meta.Cache = &schema.CacheMeta{Hit: false, Key: key}
 }
 
 // verifyCriticals gives the CRITICAL findings in report a second look and

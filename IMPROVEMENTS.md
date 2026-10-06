@@ -393,7 +393,12 @@ an alternative; they retry these errors by default.
 
 ## 14. Cache results by content hash
 
-**Helps:** Speed, Tokens. **Effort:** Medium.
+**Helps:** Speed, Tokens. **Effort:** Medium. **Status:** Done.
+
+**As built.** The key hashes the exact system prompt and spec prefix sent, so no prompt version
+needs bumping by hand, plus a hash of the running executable, so a new build never serves an old
+review. Reviews whose CRITICAL verification failed and incremental reruns are not cached. The
+accuracy eval turns the cache off. Entries expire after 30 days.
 
 **Today.** Every invocation calls the LLM, even when nothing changed. That is common in CI,
 pre-commit hooks, and agent loops that re-run the gate.

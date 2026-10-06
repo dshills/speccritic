@@ -38,6 +38,26 @@ func setupMockAnthropicServer(t *testing.T, responseBody []byte) *httptest.Serve
 	return srv
 }
 
+// setupMockAnthropicServerCounting starts a server that always returns
+// responseBody and counts the requests it serves.
+func setupMockAnthropicServerCounting(t *testing.T, responseBody []byte) *int {
+	t.Helper()
+	calls := new(int)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(responseBody) //nolint:errcheck
+	}))
+	original := llmpkg.AnthropicAPIURL()
+	llmpkg.SetAnthropicAPIURL(srv.URL)
+	t.Cleanup(func() {
+		srv.Close()
+		llmpkg.SetAnthropicAPIURL(original)
+	})
+	return calls
+}
+
 // setupMockAnthropicServerSequence starts a server that returns responses
 // in sequence; after the last one it repeats the last entry.
 func setupMockAnthropicServerSequence(t *testing.T, responses [][]byte) {
@@ -84,12 +104,26 @@ func setTestEnv(t *testing.T) {
 }
 
 // runCheckFlags returns a checkFlags populated with safe defaults for testing.
+// TestMain points the review cache at a temporary directory, so no test reads
+// a review another test or a real run stored, or writes to the user's cache.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "speccritic-cache-*")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("SPECCRITIC_CACHE_DIR", dir)
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 // runCheckFlags returns the flags most CLI tests run with. Verification of
-// CRITICAL findings is off: these tests script exact model responses and
-// count calls, and verification is covered by the checker's own tests.
+// CRITICAL findings and the review cache are off: these tests script exact
+// model responses and count calls. Both are covered by their own tests.
 func runCheckFlags() checkFlags {
 	return checkFlags{
 		verify:                  "off",
+		noCache:                 true,
 		format:                  "json",
 		profileName:             "general",
 		severityThreshold:       "info",
@@ -728,5 +762,54 @@ func TestCheckCmdStructuredOutputDefaultsToAuto(t *testing.T) {
 	}
 	if got, _ := cmd.Flags().GetString("structured-output"); got != "off" {
 		t.Fatalf("structured-output = %q, want off", got)
+	}
+}
+
+// A second run of an unchanged spec with unchanged settings is served from
+// the review cache: same verdict, no model call.
+func TestRunCheck_ServesAnUnchangedReviewFromTheCache(t *testing.T) {
+	setTestEnv(t)
+	t.Setenv("SPECCRITIC_CACHE_DIR", t.TempDir())
+	calls := setupMockAnthropicServerCounting(t, readFixture(t, "anthropic_response_bad.json"))
+	specFile := specPath("bad_spec.md")
+
+	flags := runCheckFlags()
+	flags.noCache = false
+	run := func() schema.Report {
+		t.Helper()
+		flags.out = filepath.Join(t.TempDir(), "out.json")
+		if err := runCheck(specFile, flags); err != nil {
+			var ee *exitErr
+			if !asExitErr(err, &ee) || ee.code != 0 {
+				t.Fatalf("runCheck: %v", err)
+			}
+		}
+		return readJSONReport(t, flags.out)
+	}
+
+	first := run()
+	if *calls != 1 || first.Meta.Cache == nil || first.Meta.Cache.Hit {
+		t.Fatalf("first run: calls = %d cache = %+v, want one call and a stored review", *calls, first.Meta.Cache)
+	}
+	second := run()
+	if *calls != 1 {
+		t.Fatalf("calls = %d after the second run, want it served from the cache", *calls)
+	}
+	if second.Meta.Cache == nil || !second.Meta.Cache.Hit || second.Meta.Cache.Key != first.Meta.Cache.Key || second.Meta.Usage != nil {
+		t.Fatalf("second run meta = %+v, want a cache hit with no usage", second.Meta)
+	}
+	if second.Summary != first.Summary || len(second.Issues) != len(first.Issues) {
+		t.Fatalf("cached review differs: %+v vs %+v", second.Summary, first.Summary)
+	}
+
+	// Any setting that changes the review misses the cache.
+	flags.strict = true
+	if third := run(); *calls != 2 || third.Meta.Cache == nil || third.Meta.Cache.Hit {
+		t.Fatalf("calls = %d cache = %+v, want a fresh review for a changed setting", *calls, third.Meta.Cache)
+	}
+	flags.strict = false
+	flags.noCache = true
+	if fourth := run(); *calls != 3 || fourth.Meta.Cache != nil {
+		t.Fatalf("calls = %d cache = %+v, want --no-cache to call the model and leave the cache alone", *calls, fourth.Meta.Cache)
 	}
 }

@@ -61,7 +61,12 @@ type CheckOptions struct {
 	StructuredOutput string
 	// Verify is "auto" (the default when empty) to give each CRITICAL finding
 	// a second look before it decides the verdict, or "off".
-	Verify                          string
+	Verify string
+	// UseCache stores the finished review in the review cache (the user
+	// cache directory, or SPECCRITIC_CACHE_DIR) and serves an unchanged
+	// request from it without calling a model. DefaultCheckOptions turns it
+	// on, as the CLI does; the zero value leaves the disk alone.
+	UseCache                        bool
 	Offline                         bool
 	Debug                           bool
 	Verbose                         bool
@@ -120,6 +125,7 @@ func DefaultCheckOptions() CheckOptions {
 		Profile:                         "general",
 		SeverityThreshold:               "info",
 		MaxTokens:                       llm.DefaultMaxTokens,
+		UseCache:                        true,
 		Preflight:                       true,
 		PreflightMode:                   "warn",
 		Chunking:                        string(chunk.ModeAuto),
@@ -161,6 +167,7 @@ func Check(ctx context.Context, opts CheckOptions) (*CheckResult, error) {
 		Effort:                          opts.Effort,
 		StructuredOutput:                opts.StructuredOutput,
 		Verify:                          opts.Verify,
+		NoCache:                         !opts.UseCache,
 		Offline:                         opts.Offline,
 		Debug:                           opts.Debug,
 		Verbose:                         opts.Verbose,

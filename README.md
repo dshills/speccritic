@@ -209,6 +209,8 @@ The table shows each provider's default model. They are pinned to a model genera
 
 **Transient errors.** A rate limit, an overloaded or failing provider (HTTP 408, 429, 5xx, 529) or a dropped connection is retried, up to four attempts in all, with jittered exponential backoff starting at one second. A `Retry-After` header is honored; if a provider asks to wait more than a minute, the call fails instead. `meta.usage.retried_requests` counts requests that were resent.
 
+**Review cache.** A finished review is stored on disk, keyed by a hash of everything that shapes it: the redacted spec and context files, the original spec text, the prompts, the provider and model, `--effort`, `--max-tokens`, `--structured-output`, `--verify`, the profile, `--strict`, `--severity-threshold`, the preflight and chunking settings, and the speccritic build itself. Running the same spec again with the same settings returns the stored review with no model call, so it costs nothing and gets the same verdict. A model asked the same question twice may answer differently; the cache keeps a re-run gate stable until the spec or the settings change. The cached report carries `meta.cache.hit: true` and no `meta.usage`. Entries older than 30 days are ignored and removed. Reviews whose CRITICAL verification failed, and incremental reruns, are not cached. `--chunk-concurrency` is not part of the key. Reviews are stored under the user cache directory (`~/Library/Caches/speccritic/reviews` on macOS, `~/.cache/speccritic/reviews` on Linux); `SPECCRITIC_CACHE_DIR` moves them. `--no-cache` (or `SPECCRITIC_NO_CACHE=true`) neither reads nor writes the cache. Use it to get a fresh opinion on an unchanged spec.
+
 **Refusals.** If a model declines to review a spec, SpecCritic reports that as an error naming the provider's reason rather than treating the reply as a review.
 
 ### Preflight
@@ -428,6 +430,7 @@ speccritic check <spec-file> [flags]
 | `--effort` | provider default | Reasoning effort passed to the model: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Which levels exist depends on the provider and model |
 | `--structured-output` | `auto` | `auto` has the provider enforce the review JSON schema where the model allows it; `off` only describes the schema in the prompt |
 | `--verify` | `auto` | Give each CRITICAL finding from the model a second look before it decides the verdict: `auto` or `off` |
+| `--no-cache` | `false` | Neither read the review from the [review cache](#model-selection) nor store it there |
 | `--max-tokens` | `16384` | Maximum response tokens per call. A response that still hits the cap is continued, not regenerated: the findings already received are kept and only the rest is requested |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
 | `--verbose` | `false` | Print processing steps to stderr |
@@ -679,7 +682,7 @@ Every review that calls the LLM reports what it used in `meta.usage`, so a calle
 - `calls` counts every request, including `repair_calls` (a response with nothing usable was regenerated) and `continuation_calls` (the rest of a cut-off response was requested).
 - The three input counts do not overlap: `input_tokens` excludes tokens read from or written to the provider's prompt cache. A `cache_read_tokens` of zero across repeated runs means the cache is not being hit.
 - `call_duration_ms` adds up the time spent inside calls; `wall_duration_ms` is the elapsed time from the first call to the last. Concurrent chunk calls make the first larger than the second.
-- Token counts are zero when the provider does not report usage. The field is omitted when a review makes no LLM call, such as `--preflight-mode only` or an incremental rerun served entirely from reuse.
+- Token counts are zero when the provider does not report usage. The field is omitted when a review makes no LLM call, such as `--preflight-mode only`, an incremental rerun served entirely from reuse, or a review served from the cache.
 
 `--verbose` prints the same totals as one line on stderr, including when the review fails.
 

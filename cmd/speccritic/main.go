@@ -51,6 +51,7 @@ type checkFlags struct {
 	effort                          string
 	structuredOutput                string
 	verify                          string
+	noCache                         bool
 	maxTokens                       int
 	offline                         bool
 	verbose                         bool
@@ -138,6 +139,7 @@ func newCheckCmd() *cobra.Command {
 	f.StringVar(&flags.effort, "effort", "", "Reasoning effort passed to the model: "+strings.Join(llm.EffortLevels(), ", ")+" (which levels exist depends on the provider and model; default: the provider's)")
 	f.StringVar(&flags.structuredOutput, "structured-output", app.StructuredOutputAuto, "Have the provider enforce the review JSON schema: auto (where the model allows it) or off")
 	f.StringVar(&flags.verify, "verify", app.VerifyAuto, "Give each CRITICAL finding a second look before it decides the verdict: auto or off")
+	f.BoolVar(&flags.noCache, "no-cache", false, "Neither read the review from the cache nor store it there")
 	f.IntVar(&flags.maxTokens, "max-tokens", llm.DefaultMaxTokens, "Maximum response tokens")
 	f.BoolVar(&flags.offline, "offline", false, "Exit 3 if LLM provider/model config is not set; use to enforce explicit model config in CI")
 	f.BoolVar(&flags.verbose, "verbose", false, "Print processing steps to stderr")
@@ -194,6 +196,7 @@ func runCheck(specPath string, flags checkFlags) error {
 		Effort:                          flags.effort,
 		StructuredOutput:                flags.structuredOutput,
 		Verify:                          flags.verify,
+		NoCache:                         flags.noCache,
 		Offline:                         flags.offline,
 		Debug:                           flags.debug,
 		Verbose:                         flags.verbose,
@@ -521,6 +524,7 @@ func applyEnvDefaults(cmd *cobra.Command, flags *checkFlags) {
 	envStr("structured-output", "SPECCRITIC_STRUCTURED_OUTPUT", &flags.structuredOutput)
 	envStr("verify", "SPECCRITIC_VERIFY", &flags.verify)
 	envBool("verbose", "SPECCRITIC_VERBOSE", &flags.verbose)
+	envBool("no-cache", "SPECCRITIC_NO_CACHE", &flags.noCache)
 	envBool("debug", "SPECCRITIC_DEBUG", &flags.debug)
 	envBool("preflight", "SPECCRITIC_PREFLIGHT", &flags.preflight)
 	envStr("preflight-mode", "SPECCRITIC_PREFLIGHT_MODE", &flags.preflightMode)
