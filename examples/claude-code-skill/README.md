@@ -9,6 +9,7 @@ The skill in [`SKILL.md`](./SKILL.md) is what the author uses day-to-day. Treat 
 When active, Claude Code will:
 
 - Invoke `speccritic check` on a spec file when you ask it to (`run speccritic`, `gate the spec`, `check SPEC.md`, etc.).
+- Run fast deterministic preflight while you iterate, then the full review; use incremental reruns, convergence tracking and completion suggestions on longer loops.
 - Parse `.speccritic-review.json` and decide on `summary.verdict` — not on issue counts.
 - Apply CRITICAL `issue.recommendation` edits to the cited line ranges in `SPEC.md`.
 - Surface CRITICAL `question` entries to you verbatim rather than guessing answers.
@@ -24,9 +25,9 @@ When active, Claude Code will:
    ```
 3. **Model + API key** exported in the shell that runs Claude Code:
    ```sh
-   export SPECCRITIC_LLM_PROVIDER=anthropic   # or openai, gemini
-   export SPECCRITIC_LLM_MODEL=claude-opus-5-5
-   export ANTHROPIC_API_KEY=...               # or OPENAI_API_KEY / GEMINI_API_KEY
+   export SPECCRITIC_LLM_PROVIDER=openai      # the skill's default; or anthropic, gemini
+   export SPECCRITIC_LLM_MODEL=gpt-6.1-sol
+   export OPENAI_API_KEY=...                  # or ANTHROPIC_API_KEY / GEMINI_API_KEY
    ```
 
 ## Install
@@ -64,6 +65,7 @@ Claude Code should invoke `speccritic check`, write `.speccritic-review.json`, r
 Common edits:
 
 - **Trigger phrases** — the `description` field in the frontmatter is what Claude Code matches against. Add phrases your team actually uses.
+- **Default model** — the skill tells Claude Code to use OpenAI `gpt-6.1-sol` unless you ask for another. Change the Provider Configuration section to your provider and model.
 - **Default profile** — the shipped skill defaults to `--profile regulated-system` for clinical-trial work. Change this to `general`, `backend-api`, or `event-driven` to match your domain.
 - **Pipeline handoff** — the final section names the next gate (`plancritic`). Remove or rename if your pipeline differs.
 
