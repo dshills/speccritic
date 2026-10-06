@@ -569,11 +569,11 @@ The model is given a short rubric with examples at each level:
 
 | Severity | Rule of thumb |
 |----------|---------------|
-| `CRITICAL` | The spec cannot be implemented or tested as written until its author decides something: a contradiction, a requirement with no measurable criterion, an undefined term, state or interface that a requirement depends on, an unstated response to a named dependency failing, a vague core guarantee |
-| `WARN` | The main behavior can be built and tested, but a secondary choice is open and reasonable implementations would differ at the edges, or the spec prescribes implementation instead of behavior |
+| `CRITICAL` | The main behavior cannot be implemented or tested as written until its author decides something: a contradiction, a requirement with no measurable criterion, an undefined term, state or interface that a requirement depends on, a named dependency whose failure has no stated response at all, a vague core guarantee |
+| `WARN` | The main behavior can be built and tested, but an edge is open: two error conditions with no stated precedence, a rare failure with no stated response, a missing detail of a stated failure response, an open payload shape. Also a spec that prescribes implementation instead of behavior |
 | `INFO` | Wording or structure that could slow a reader but changes no implementation |
 
-When it is unsure, the model asks whether a team could write the code and its tests from the spec alone. Before reporting a term, interface, state, limit or failure behavior as missing, it is told to search the whole spec and the context files for it; a definition anywhere means it is not missing, and two that disagree are a `CONTRADICTION`. `--strict` overrides the rubric: any required assumption is CRITICAL.
+When it is unsure, the model asks whether a team could write the code and its tests for the main behavior from the spec alone. It is told that a carefully written spec usually has no CRITICAL findings. Before reporting a term, interface, state, limit or failure behavior as missing, it is told to search the whole spec and the context files for it; a definition anywhere means it is not missing, and two that disagree are a `CONTRADICTION`. `--strict` overrides the rubric: any required assumption is CRITICAL.
 
 ## Verdicts and Scoring
 

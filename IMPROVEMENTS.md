@@ -448,6 +448,18 @@ generalization. The search rule names where definitions hide and turns a conflic
 definition into a CONTRADICTION. Strict mode states that it overrides the rubric. The text sits
 in the system prompt ahead of the profile rules, so it is cached with the rest.
 
+The first version listed typical CRITICAL causes without bounding them, and the model filed edge
+cases as CRITICAL: every clean eval spec came back INVALID. The rubric now limits CRITICAL to the
+main behavior, lists edge-case causes under WARN, and says a careful spec usually has no
+CRITICAL findings. Eval on gpt-6.1-sol, 24 reviews each:
+
+| Measure | No rubric | First rubric | Final rubric |
+|---|---|---|---|
+| Seeded defects found | 94% | 92% | 92% |
+| CRITICAL defects reported as CRITICAL | 48% | 88% | 82% |
+| Clean-spec runs with a CRITICAL | 50% | 100% | 17% |
+| Runs with the expected verdict | 75% | 50% | 92% |
+
 **Today.** Each severity is defined in one line (`internal/llm/prompt.go:27-30`). There are no
 examples of what is and is not CRITICAL, and no instruction to check the rest of the spec before
 calling something undefined. Severity drives both score and verdict.

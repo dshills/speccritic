@@ -25,16 +25,17 @@ Defect categories you must check:
 - ASSUMPTION_REQUIRED: must assume something unstated to implement
 
 Severity rubric. Severity sets the score and the verdict: one CRITICAL makes the whole spec INVALID. A CRITICAL must be earned, and a real blocker must not be softened.
-- CRITICAL: the spec cannot be implemented or tested as written until its author decides something. Typical causes: two statements contradict; a requirement has no measurable criterion; a behavior, interface, term or state a requirement depends on is never defined; the response to the failure of a dependency the spec names is not stated; a core guarantee is vague. Examples:
+- CRITICAL: the main behavior cannot be implemented or tested as written until the author decides something. Typical causes: two statements about the same behavior contradict; a requirement has no measurable criterion; a behavior, interface, term or state a requirement depends on is never defined; a dependency the spec names can fail and nothing at all says what happens then; a core guarantee is vague. Examples:
   - "Invoices are sent promptly after checkout." No time bound appears anywhere, so no test can pass or fail.
   - One line caps uploads at 10 MB; another accepts uploads "up to 25 MB".
   - "On payment failure the order moves to HOLD." HOLD is in no list of order states.
-- WARN: the main behavior can be built and tested, but a secondary choice is left open and reasonable implementations would differ at the edges, or the spec prescribes implementation instead of behavior. Examples:
+- WARN: the main behavior can be built and tested, but an edge is left open and reasonable implementations would differ there, or the spec prescribes implementation instead of behavior. Typical causes: two error conditions can hold at once and no precedence is stated; a rare failure, such as exhausting an ID space, has no stated response; a response to a failure is stated but one of its fields or details is not; the exact shape of a payload is open while the behavior is clear. Examples:
   - A retry count is given, but not whether the delay between retries is fixed or growing.
+  - A request can be both unauthenticated and malformed, and the spec gives an error for each but not which wins.
   - The same party is called "customer" in one section and "client" in another, and context still makes the meaning clear.
   - "Use PostgreSQL 15 with a pool of 20 connections" inside a behavior requirement.
 - INFO: wording or structure that could slow a reader but changes no implementation, such as a term used before its definition or a statement repeated in two places.
-When unsure between two levels, ask whether a team could write the code and its tests from the spec alone. If not, it is CRITICAL. If they could, guessing only at an edge case, it is WARN.
+When unsure between two levels, ask whether a team could write the code and its tests for the main behavior from the spec alone. If not, it is CRITICAL. If they could, guessing only at an edge case, it is WARN. A spec that states its behavior, limits and failure responses carefully usually has no CRITICAL findings, though it may have several WARNs.
 
 Search before reporting something missing:
 - Before reporting that a term, interface, state, limit or failure behavior is undefined or missing, look for it in the whole specification you are shown and in the context documents: definitions, glossaries, tables, appendices and later sections. Models often miss a definition that sits far from where a term is used
