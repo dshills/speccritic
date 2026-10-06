@@ -203,6 +203,8 @@ The table shows each provider's default model. They are pinned to a model genera
 
 **Structured output.** By default SpecCritic sends the review's JSON Schema to the provider, which then constrains the response: severities and categories can only be valid values and no field can be missing. If a model rejects the schema, SpecCritic sends the request again with the shape described in the prompt instead, and does not ask that model again during the run. `--structured-output off` (or `SPECCRITIC_STRUCTURED_OUTPUT=off`) skips enforcement altogether. `meta.usage.schema_enforced_calls` shows how many calls were constrained. The schema counts as input on OpenAI and Anthropic, a few hundred to about 1,500 tokens per call, most of it cached on Anthropic; what it saves is the repair call a malformed response would otherwise need.
 
+**Prompt caching.** Every call about one spec starts with the same system prompt, context files and numbered spec, and ends with the task for that call. Providers that cache prompts bill the shared start in full once per run and at a discount afterwards. On Anthropic it is marked for caching explicitly, with a one-hour lifetime when the context files are larger than about 8,000 tokens, so a rerun after a pause still finds them cached. On OpenAI requests carry a `prompt_cache_key` so calls sharing the start reach the same cache, but `gpt-6.1-sol` was measured to cache across differing requests only what sits in the system message. The spec is deliberately kept out of the system message, where its text would carry the weight of instructions, so on OpenAI most of a multi-call run is billed at the full input rate. The system prompt tells the model that text in the spec or context files that reads like an instruction is material to audit, not an instruction.
+
 **Refusals.** If a model declines to review a spec, SpecCritic reports that as an error naming the provider's reason rather than treating the reply as a review.
 
 ### Preflight
@@ -278,14 +280,14 @@ speccritic check SPEC.md --chunking off --debug
 speccritic check SPEC.md --chunk-concurrency 1 --chunk-lines 400
 ```
 
-Chunking is a latency tool for very large specs. A single call sees the whole spec and costs one request, so `auto` leaves specs of a few hundred lines to the single-call path. Chunking may reduce wall-clock time for a large spec, but it increases the total number of provider calls. Provider rate limits, low concurrency, and cross-section synthesis can reduce the speedup. Cross-section defects are still hard: chunk prompts receive a table of contents and summaries, and synthesis can catch contradictions across sections, but no chunking strategy is a substitute for a well-structured spec.
+Chunking is a latency tool for very large specs. A single call sees the whole spec and costs one request, so `auto` leaves specs of a few hundred lines to the single-call path. Chunking may reduce wall-clock time for a large spec, but it increases the total number of provider calls. Provider rate limits, low concurrency, and cross-section synthesis can reduce the speedup. Every chunk reviewer sees the whole spec and reports only on its own lines, and a synthesis pass looks for defects that span sections.
 
 Implementation details:
 
 - Chunking happens after spec loading, redaction, and preflight.
 - `auto` mode uses a deterministic local estimate of one token per four UTF-8 bytes. This is a rough heuristic; code-heavy specs and non-English specs may need a lower `--chunk-token-threshold` or forced `--chunking on`.
-- Chunk reviews cite only their primary line range; overlap lines are context only.
-- Chunk responses carry a `meta.chunk_summary`; summaries are used for synthesis and are not shown as user-facing output. A missing summary does not fail the chunk.
+- Chunk reviews read the whole spec but cite only their primary line range.
+- Every call in a run (chunk reviews, synthesis, repairs) starts with the same system prompt and the same prefix holding the context files and the numbered spec, and only the task after it differs. The first chunk is sent alone so the others can read that prefix from the provider's prompt cache. `meta.usage.cache_read_tokens` shows the effect.
 - A chunk finding whose evidence falls outside the chunk's primary range is dropped; the rest of the chunk's findings are kept.
 - Chunk calls run with bounded concurrency.
 - If one chunk fails permanently after the built-in repair attempt, the check fails with model-output/provider error rather than returning partial results.
@@ -430,7 +432,7 @@ speccritic check <spec-file> [flags]
 | `--preflight-ignore` | (none) | Suppress a preflight rule ID; can be repeated |
 | `--chunking` | `auto` | Chunking mode: `auto`, `on`, or `off` |
 | `--chunk-lines` | `600` | Target maximum source lines per chunk |
-| `--chunk-overlap` | `20` | Neighboring lines included before and after each chunk for context |
+| `--chunk-overlap` | `20` | Deprecated, no effect: every chunk review sees the whole spec |
 | `--chunk-min-lines` | `1500` | Spec line count at which `auto` chunks the review |
 | `--chunk-token-threshold` | `30000` | Estimated spec size, in tokens, at which `auto` chunks the review. Context files are not counted |
 | `--chunk-concurrency` | `3` | Maximum concurrent chunk LLM calls |
@@ -485,7 +487,7 @@ Chunking, incremental, convergence, and completion environment defaults are also
 Validation rules:
 
 - `--chunk-lines` must be greater than `0`.
-- `--chunk-overlap` must be `>= 0` and less than `--chunk-lines`.
+- `--chunk-overlap` must be `>= 0`.
 - `--chunk-min-lines` must be `>= 0`.
 - `--chunk-token-threshold` must be greater than `0`.
 - `--chunk-concurrency` must be between `1` and `16`.

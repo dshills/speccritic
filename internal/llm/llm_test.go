@@ -379,45 +379,41 @@ func writeTempSpec(t *testing.T, content string) *spec.Spec {
 	return s
 }
 
-func TestBuildUserPrompt_SpecGoesInVariableTail(t *testing.T) {
+func TestBuildSpecPrefix(t *testing.T) {
 	s := writeTempSpec(t, "line one\nline two\n")
-	prefix, tail := BuildUserPrompt(s, nil)
+	files := []ctx.ContextFile{{Path: "glossary.md", Content: "term: definition\n"}}
+	const preflight = "<known_preflight_findings>\n- PREFLIGHT-X\n</known_preflight_findings>\n"
 
-	if !strings.Contains(tail, "L1: line one") {
-		t.Errorf("tail missing line-numbered spec content: %q", tail)
+	prefix := BuildSpecPrefix(s, files, preflight)
+	order := []string{`<context file="glossary.md">`, "term: definition", "<spec file=", "L1: line one", "L2: line two", "</spec>", "<known_preflight_findings>"}
+	at := -1
+	for _, want := range order {
+		i := strings.Index(prefix, want)
+		if i < 0 {
+			t.Fatalf("prefix is missing %q:\n%s", want, prefix)
+		}
+		if i < at {
+			t.Fatalf("%q is out of order in the prefix:\n%s", want, prefix)
+		}
+		at = i
 	}
-	if !strings.Contains(tail, "L2: line two") {
-		t.Errorf("tail missing L2: %q", tail)
+	// The prefix is shared by every call, so it must not carry any one task.
+	if strings.Contains(prefix, "Analyze") || strings.Contains(prefix, "Review ") {
+		t.Errorf("prefix carries a task:\n%s", prefix)
 	}
-	if strings.Contains(prefix, "L1:") {
-		t.Errorf("spec content leaked into cacheable prefix: %q", prefix)
+	if again := BuildSpecPrefix(s, files, preflight); again != prefix {
+		t.Error("the prefix must be byte-identical for the same inputs")
 	}
 }
 
-func TestBuildUserPrompt_ContextFilesGoInCachedPrefix(t *testing.T) {
+func TestBuildSpecPrefix_NoContextNoPreflight(t *testing.T) {
 	s := writeTempSpec(t, "spec content\n")
-	files := []ctx.ContextFile{
-		{Path: "glossary.md", Content: "term: definition\n"},
+	prefix := BuildSpecPrefix(s, nil, "")
+	if strings.Contains(prefix, "<context") || strings.Contains(prefix, "preflight") {
+		t.Errorf("prefix = %q, want only the spec", prefix)
 	}
-	prefix, tail := BuildUserPrompt(s, files)
-
-	if !strings.Contains(prefix, `<context file="glossary.md">`) {
-		t.Errorf("prefix missing context XML tag: %q", prefix)
-	}
-	if !strings.Contains(prefix, "term: definition") {
-		t.Errorf("prefix missing context content: %q", prefix)
-	}
-	if strings.Contains(tail, "<context") {
-		t.Errorf("context leaked into variable tail: %q", tail)
-	}
-}
-
-func TestBuildUserPrompt_NoContextFiles_NoXMLTags(t *testing.T) {
-	s := writeTempSpec(t, "spec content\n")
-	prefix, tail := BuildUserPrompt(s, nil)
-
-	if strings.Contains(prefix, "<context") || strings.Contains(tail, "<context") {
-		t.Errorf("should not contain context tags when no context files: prefix=%q tail=%q", prefix, tail)
+	if !strings.HasPrefix(prefix, "<spec file=") || !strings.HasSuffix(prefix, "</spec>\n") {
+		t.Errorf("prefix = %q, want the spec block alone", prefix)
 	}
 }
 

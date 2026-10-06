@@ -54,6 +54,29 @@ const (
 	maxPreflightPromptFindings = 20
 )
 
+// maxSharedRequestTokens bounds, in estimated tokens, a chunk call that sends
+// the whole spec: the shared prefix (context files and spec) plus the output
+// allowance. It leaves a margin for the system prompt and task within a
+// 128,000-token context window, the smallest among the default models. Above
+// it, each chunk call sees only its own lines.
+const maxSharedRequestTokens = 110000
+
+// longCacheContextTokens is the estimated size of the context files above
+// which the cached prefix is kept for an hour. Writing the long cache costs
+// more, so it is worth it only when a large, unchanging context would
+// otherwise be billed in full on every run more than a few minutes apart.
+const longCacheContextTokens = 8000
+
+// useLongCache reports whether this run's cached prefix should live for an
+// hour rather than a few minutes.
+func useLongCache(contextFiles []ctxpkg.ContextFile) bool {
+	tokens := 0
+	for _, f := range contextFiles {
+		tokens += chunk.EstimateTokens(f.Content)
+	}
+	return tokens >= longCacheContextTokens
+}
+
 // Values of CheckRequest.StructuredOutput.
 const (
 	StructuredOutputAuto = "auto"
@@ -208,24 +231,25 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	}
 
 	sysPrompt := llm.BuildSystemPrompt(prof, req.Strict)
-	userPrefix, userSpec := llm.BuildUserPrompt(s, contextFiles)
 	preflightContext, knownPreflightIDs := buildPreflightPromptContext(preflightIssues)
-	if preflightContext != "" {
-		userSpec = preflightContext + "\n" + userSpec
-	}
+	// Every call in this run starts with the same system prompt and this
+	// prefix, so after the first call the spec is read from the prompt cache.
+	specPrefix := llm.BuildSpecPrefix(s, contextFiles, preflightContext)
+	longCache := useLongCache(contextFiles)
 
 	llmReq := &llm.Request{
 		SystemPrompt:           sysPrompt,
-		UserPromptCachedPrefix: userPrefix,
-		UserPrompt:             userSpec,
+		UserPromptCachedPrefix: specPrefix,
+		UserPrompt:             llm.ReviewTask,
+		LongCache:              longCache,
 		MaxTokens:              req.MaxTokens,
 		Effort:                 req.Effort,
-		Schema:                 llm.ReviewSchema(false, enforceSchema(req)),
+		Schema:                 llm.ReviewSchema(enforceSchema(req)),
 	}
 
 	if req.Debug {
 		_, _ = fmt.Fprintf(errw, "=== DEBUG: redacted prompt ===\n")
-		_, _ = fmt.Fprintf(errw, "[SYSTEM]\n%s\n\n[USER PREFIX]\n%s\n[USER SPEC]\n%s\n", sysPrompt, userPrefix, userSpec)
+		_, _ = fmt.Fprintf(errw, "[SYSTEM]\n%s\n\n[USER PREFIX]\n%s\n[USER TASK]\n%s\n", sysPrompt, specPrefix, llm.ReviewTask)
 		_, _ = fmt.Fprintf(errw, "=== END DEBUG ===\n")
 	}
 
@@ -271,7 +295,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	estimatedSpecTokens := chunk.EstimateTokens(s.Numbered)
 	if chunk.ShouldChunk(s.LineCount, estimatedSpecTokens, chunkCfg) {
 		logVerbose(errw, req.Verbose, "Using chunked review: %d lines, estimated spec tokens %d", s.LineCount, estimatedSpecTokens)
-		report, responseModel, err := c.checkChunked(ctx, provider, req, s, contextFiles, preflightIssues, sysPrompt, preflightContext, chunkCfg, errw)
+		report, responseModel, err := c.checkChunked(ctx, provider, req, s, contextFiles, preflightIssues, sysPrompt, specPrefix, preflightContext, longCache, chunkCfg, errw)
 		if err != nil {
 			return nil, appError(ErrorModelOutput, err)
 		}
@@ -662,7 +686,7 @@ func overlapsPatchRange(rng patchRange, existing []patchRange) bool {
 	return false
 }
 
-func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, contextFiles []ctxpkg.ContextFile, preflightIssues []schema.Issue, sysPrompt, preflightContext string, cfg chunk.Config, errw io.Writer) (*schema.Report, string, error) {
+func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, contextFiles []ctxpkg.ContextFile, preflightIssues []schema.Issue, sysPrompt, specPrefix, preflightContext string, longCache bool, cfg chunk.Config, errw io.Writer) (*schema.Report, string, error) {
 	if errw == nil {
 		errw = io.Discard
 	}
@@ -670,34 +694,35 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 	if err != nil {
 		return nil, "", err
 	}
+	withLines := chunk.EstimateTokens(specPrefix)+req.MaxTokens > maxSharedRequestTokens
+	if withLines {
+		logVerbose(errw, req.Verbose, "Spec is too large to send whole with every chunk call; each chunk call gets only its own lines")
+		specPrefix = llm.BuildSpecPrefix(nil, contextFiles, preflightContext)
+	}
 	if req.Debug {
 		_, _ = fmt.Fprintf(errw, "=== DEBUG: chunk prompt components ===\n")
+		_, _ = fmt.Fprintf(errw, "[SYSTEM]\n%s\n\n[SHARED USER PREFIX]\n%s\n", sysPrompt, specPrefix)
 		for _, ch := range plan.Chunks {
-			prefix, tail, err := chunk.BuildUserPrompt(chunk.PromptInput{
-				Spec:             s,
-				Plan:             plan,
-				Chunk:            ch,
-				ContextFiles:     contextFiles,
-				PreflightContext: preflightContext,
-			})
+			task, err := chunk.BuildChunkTask(ch, s.LineCount, withLines)
 			if err != nil {
 				_, _ = fmt.Fprintf(errw, "WARN: building debug prompt for chunk %s failed: %s\n", ch.ID, err)
 				continue
 			}
-			_, _ = fmt.Fprintf(errw, "[CHUNK %s USER PREFIX]\n%s\n[CHUNK %s USER SPEC]\n%s\n", ch.ID, prefix, ch.ID, tail)
+			_, _ = fmt.Fprintf(errw, "[CHUNK %s TASK]\n%s\n", ch.ID, task)
 		}
 		_, _ = fmt.Fprintf(errw, "=== END DEBUG ===\n")
 	}
 	results, err := chunk.ReviewChunks(ctx, provider, s, plan, chunk.ExecutorConfig{
-		SystemPrompt:     sysPrompt,
-		ContextFiles:     contextFiles,
-		PreflightContext: preflightContext,
-		MaxTokens:        req.MaxTokens,
-		Effort:           req.Effort,
-		EnforceSchema:    enforceSchema(req),
-		Concurrency:      cfg.ChunkConcurrency,
-		Verbose:          req.Verbose,
-		ErrWriter:        errw,
+		SystemPrompt:  sysPrompt,
+		Prefix:        specPrefix,
+		LongCache:     longCache,
+		WithLines:     withLines,
+		MaxTokens:     req.MaxTokens,
+		Effort:        req.Effort,
+		EnforceSchema: enforceSchema(req),
+		Concurrency:   cfg.ChunkConcurrency,
+		Verbose:       req.Verbose,
+		ErrWriter:     errw,
 	})
 	if err != nil {
 		return nil, "", err
@@ -708,8 +733,11 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		OriginalSpec: s.Raw,
 	})
 	model := firstChunkModel(results)
-	synthesis, synthesisModel, err := chunk.RunSynthesis(ctx, provider, s, plan, results, preflightIssues, merged, chunk.SynthesisConfig{
+	synthesis, synthesisModel, err := chunk.RunSynthesis(ctx, provider, s, preflightIssues, merged, chunk.SynthesisConfig{
 		SystemPrompt:  sysPrompt,
+		SpecShown:     !withLines,
+		Prefix:        specPrefix,
+		LongCache:     longCache,
 		MaxTokens:     req.MaxTokens,
 		Effort:        req.Effort,
 		EnforceSchema: enforceSchema(req),

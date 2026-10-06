@@ -99,8 +99,10 @@ func ValidateConfig(cfg Config) error {
 	if cfg.ChunkLines <= 0 {
 		return fmt.Errorf("--chunk-lines must be > 0, got %d", cfg.ChunkLines)
 	}
-	if cfg.ChunkOverlap < 0 || cfg.ChunkOverlap >= cfg.ChunkLines {
-		return fmt.Errorf("--chunk-overlap must be >= 0 and less than --chunk-lines, got %d", cfg.ChunkOverlap)
+	// The overlap no longer reaches a prompt, since every chunk call sees the
+	// whole spec. It is still checked so a bad value is reported, not ignored.
+	if cfg.ChunkOverlap < 0 {
+		return fmt.Errorf("--chunk-overlap must be >= 0, got %d", cfg.ChunkOverlap)
 	}
 	if cfg.ChunkMinLines < 0 {
 		return fmt.Errorf("--chunk-min-lines must be >= 0, got %d", cfg.ChunkMinLines)

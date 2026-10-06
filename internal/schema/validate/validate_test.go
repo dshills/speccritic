@@ -414,7 +414,7 @@ func TestParseResponse_UnusablePatchesAndMetaAreSkippedQuietly(t *testing.T) {
 	if len(res.Report.Patches) != 2 || res.Report.Patches[1].IssueID != "ISSUE-0404" {
 		t.Fatalf("patches = %#v, want the two well-formed patches", res.Report.Patches)
 	}
-	if res.Report.Meta.ChunkSummary != "" || res.Report.Meta.Model != "" {
+	if res.Report.Meta.Model != "" {
 		t.Fatalf("meta = %#v, want model-supplied meta ignored", res.Report.Meta)
 	}
 }

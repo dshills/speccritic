@@ -366,13 +366,3 @@ func TestAppendPart_SkipsRepeatedPatches(t *testing.T) {
 		t.Fatalf("patches = %#v, want the repeated edit skipped and the new one kept", acc.Patches)
 	}
 }
-
-func TestAppendPart_KeepsFirstChunkSummary(t *testing.T) {
-	acc := &schema.Report{}
-	appendPart(acc, &schema.Report{})
-	appendPart(acc, &schema.Report{Meta: schema.Meta{ChunkSummary: "first"}})
-	appendPart(acc, &schema.Report{Meta: schema.Meta{ChunkSummary: "second"}})
-	if acc.Meta.ChunkSummary != "first" {
-		t.Fatalf("chunk summary = %q, want first", acc.Meta.ChunkSummary)
-	}
-}

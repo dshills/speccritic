@@ -54,61 +54,57 @@ func checkStrict(t *testing.T, path string, n *schemaNode) {
 }
 
 func TestReviewSchema(t *testing.T) {
-	for name, chunk := range map[string]bool{"review": false, "chunk review": true} {
-		t.Run(name, func(t *testing.T) {
-			out := ReviewSchema(chunk, true)
-			if !out.Enforce || out.Name == "" {
-				t.Fatalf("schema = %+v, want a named schema with Enforce set", out)
-			}
-			var root schemaNode
-			if err := json.Unmarshal(out.JSON, &root); err != nil {
-				t.Fatalf("schema is not valid JSON: %v\n%s", err, out.JSON)
-			}
-			checkStrict(t, "$", &root)
-
-			wantTop := []string{"issues", "patches", "questions"}
-			if chunk {
-				wantTop = []string{"issues", "meta", "patches", "questions"}
-			}
-			top := slices.Clone(root.Required)
-			slices.Sort(top)
-			if !slices.Equal(top, wantTop) {
-				t.Errorf("top-level fields = %v, want %v", top, wantTop)
-			}
-
-			issue := root.Properties["issues"].Items
-			var categories []string
-			for _, category := range schema.Categories() {
-				categories = append(categories, string(category))
-			}
-			if !slices.Equal(issue.Properties["category"].Enum, categories) {
-				t.Errorf("category enum = %v, want the defined categories %v", issue.Properties["category"].Enum, categories)
-			}
-			severities := []string{"CRITICAL", "WARN", "INFO"}
-			if !slices.Equal(issue.Properties["severity"].Enum, severities) || !slices.Equal(root.Properties["questions"].Items.Properties["severity"].Enum, severities) {
-				t.Error("severity must be an enum of CRITICAL, WARN and INFO on issues and questions")
-			}
-			// The path is set locally, so the model is not asked for it.
-			if _, ok := issue.Properties["evidence"].Items.Properties["path"]; ok {
-				t.Error("evidence must not ask for a path")
-			}
-
-			// A reviewer says what is wrong and where before judging severity.
-			raw := string(out.JSON)
-			issues := raw[strings.Index(raw, `"issues"`):strings.Index(raw, `"questions"`)]
-			if strings.Index(issues, `"evidence"`) > strings.Index(issues, `"severity": {`) {
-				t.Error("in an issue, evidence must come before severity")
-			}
-
-			if !strings.Contains(out.PromptFallback, `"issues"`) || strings.Contains(out.PromptFallback, "chunk_summary") != chunk {
-				t.Errorf("prompt fallback does not show the right shape:\n%s", out.PromptFallback)
-			}
-			if !json.Valid([]byte(out.PromptFallback[strings.Index(out.PromptFallback, "{"):])) {
-				t.Errorf("the example in the prompt fallback is not valid JSON:\n%s", out.PromptFallback)
-			}
-		})
+	out := ReviewSchema(true)
+	if !out.Enforce || out.Name == "" {
+		t.Fatalf("schema = %+v, want a named schema with Enforce set", out)
 	}
-	if ReviewSchema(false, false).Enforce {
+	var root schemaNode
+	if err := json.Unmarshal(out.JSON, &root); err != nil {
+		t.Fatalf("schema is not valid JSON: %v\n%s", err, out.JSON)
+	}
+	checkStrict(t, "$", &root)
+
+	top := slices.Clone(root.Required)
+	slices.Sort(top)
+	if want := []string{"issues", "patches", "questions"}; !slices.Equal(top, want) {
+		t.Errorf("top-level fields = %v, want %v", top, want)
+	}
+
+	issue := root.Properties["issues"].Items
+	var categories []string
+	for _, category := range schema.Categories() {
+		categories = append(categories, string(category))
+	}
+	if !slices.Equal(issue.Properties["category"].Enum, categories) {
+		t.Errorf("category enum = %v, want the defined categories %v", issue.Properties["category"].Enum, categories)
+	}
+	severities := []string{"CRITICAL", "WARN", "INFO"}
+	if !slices.Equal(issue.Properties["severity"].Enum, severities) || !slices.Equal(root.Properties["questions"].Items.Properties["severity"].Enum, severities) {
+		t.Error("severity must be an enum of CRITICAL, WARN and INFO on issues and questions")
+	}
+	// The path is set locally, so the model is not asked for it.
+	if _, ok := issue.Properties["evidence"].Items.Properties["path"]; ok {
+		t.Error("evidence must not ask for a path")
+	}
+
+	// A reviewer says what is wrong and where before judging severity.
+	raw := string(out.JSON)
+	issues := raw[strings.Index(raw, `"issues":{`):strings.Index(raw, `"questions":{`)]
+	evidenceAt, severityAt := strings.Index(issues, `"evidence":`), strings.Index(issues, `"severity":`)
+	if evidenceAt < 0 || severityAt < 0 || evidenceAt > severityAt {
+		t.Error("in an issue, evidence must come before severity")
+	}
+	if strings.Contains(raw, "\n") || strings.Contains(raw, "  ") {
+		t.Error("the schema sent with every request should be compact")
+	}
+
+	if !strings.Contains(out.PromptFallback, `"issues"`) {
+		t.Errorf("prompt fallback does not show the shape:\n%s", out.PromptFallback)
+	}
+	if !json.Valid([]byte(out.PromptFallback[strings.Index(out.PromptFallback, "{"):])) {
+		t.Errorf("the example in the prompt fallback is not valid JSON:\n%s", out.PromptFallback)
+	}
+	if ReviewSchema(false).Enforce {
 		t.Error("Enforce must follow the argument")
 	}
 }
@@ -151,8 +147,8 @@ func systemText(t *testing.T, body map[string]any) string {
 }
 
 func TestAnthropicComplete_Schema(t *testing.T) {
-	review := ReviewSchema(false, true)
-	described := ReviewSchema(false, false)
+	review := ReviewSchema(true)
+	described := ReviewSchema(false)
 
 	t.Run("enforced", func(t *testing.T) {
 		url, bodies := recordingServer(t, anthropicOK)
@@ -184,8 +180,11 @@ func TestAnthropicComplete_Schema(t *testing.T) {
 		if _, ok := (*bodies)[0]["output_config"]; ok {
 			t.Errorf("output_config sent although enforcement is off: %v", (*bodies)[0]["output_config"])
 		}
-		if got := systemText(t, (*bodies)[0]); got != "sys"+described.PromptFallback {
-			t.Errorf("system prompt = %q, want the example appended", got)
+		if got := systemText(t, (*bodies)[0]); got != "sys" {
+			t.Errorf("system prompt = %q, want it unchanged", got)
+		}
+		if got := userText((*bodies)[0]); got != "spec"+described.PromptFallback {
+			t.Errorf("user message = %q, want the example after the task", got)
 		}
 		if resp.SchemaEnforced {
 			t.Error("SchemaEnforced = true")
@@ -218,7 +217,7 @@ func TestAnthropicComplete_Schema(t *testing.T) {
 			if sent != wantSchema {
 				t.Errorf("request %d sent a schema = %v, want %v", i, sent, wantSchema)
 			}
-			if hasExample := strings.Contains(systemText(t, (*bodies)[i]), "with this structure"); hasExample == wantSchema {
+			if hasExample := strings.Contains(userText((*bodies)[i]), "with this structure"); hasExample == wantSchema {
 				t.Errorf("request %d has the example in its prompt = %v, want %v", i, hasExample, !wantSchema)
 			}
 		}
@@ -236,6 +235,40 @@ func TestAnthropicComplete_Schema(t *testing.T) {
 	})
 }
 
+// userText returns the user message of an Anthropic request body, joining
+// its content blocks.
+func userText(body map[string]any) string {
+	messages, _ := body["messages"].([]any)
+	if len(messages) == 0 {
+		return ""
+	}
+	message, _ := messages[0].(map[string]any)
+	switch content := message["content"].(type) {
+	case string:
+		return content
+	case []any:
+		var b strings.Builder
+		for _, block := range content {
+			text, _ := block.(map[string]any)["text"].(string)
+			b.WriteString(text)
+		}
+		return b.String()
+	}
+	return ""
+}
+
+func chatUserText(body map[string]any) string {
+	messages, _ := body["messages"].([]any)
+	for _, m := range messages {
+		message, _ := m.(map[string]any)
+		if message["role"] == "user" {
+			text, _ := message["content"].(string)
+			return text
+		}
+	}
+	return ""
+}
+
 func chatSystemText(body map[string]any) string {
 	messages, _ := body["messages"].([]any)
 	for _, m := range messages {
@@ -249,8 +282,8 @@ func chatSystemText(body map[string]any) string {
 }
 
 func TestChatComplete_Schema(t *testing.T) {
-	review := ReviewSchema(true, true)
-	described := ReviewSchema(true, false)
+	review := ReviewSchema(true)
+	described := ReviewSchema(false)
 
 	for name := range chatProviders(t, "") {
 		t.Run(name+"/enforced", func(t *testing.T) {
@@ -261,7 +294,7 @@ func TestChatComplete_Schema(t *testing.T) {
 			}
 			format, _ := (*bodies)[0]["response_format"].(map[string]any)
 			jsonSchema, _ := format["json_schema"].(map[string]any)
-			if format["type"] != "json_schema" || jsonSchema["name"] != "spec_chunk_review" || jsonSchema["strict"] != true || jsonSchema["schema"] == nil {
+			if format["type"] != "json_schema" || jsonSchema["name"] != "spec_review" || jsonSchema["strict"] != true || jsonSchema["schema"] == nil {
 				t.Errorf("response_format = %v, want a strict, named json_schema", format)
 			}
 			if got := chatSystemText((*bodies)[0]); got != "sys" || !resp.SchemaEnforced {
@@ -279,8 +312,11 @@ func TestChatComplete_Schema(t *testing.T) {
 			if format["type"] != "json_object" || format["json_schema"] != nil {
 				t.Errorf("response_format = %v, want json_object", format)
 			}
-			if got := chatSystemText((*bodies)[0]); got != "sys"+described.PromptFallback || resp.SchemaEnforced {
-				t.Errorf("system = %q enforced = %v, want the example appended and no enforcement", got, resp.SchemaEnforced)
+			if got := chatSystemText((*bodies)[0]); got != "sys" || resp.SchemaEnforced {
+				t.Errorf("system = %q enforced = %v, want the system prompt unchanged and no enforcement", got, resp.SchemaEnforced)
+			}
+			if got := chatUserText((*bodies)[0]); got != "spec"+described.PromptFallback {
+				t.Errorf("user message = %q, want the example after the task", got)
 			}
 		})
 
@@ -309,7 +345,7 @@ func TestChatComplete_Schema(t *testing.T) {
 				if format["type"] != wantType {
 					t.Errorf("request %d response_format type = %v, want %s", i, format["type"], wantType)
 				}
-				if hasExample := strings.Contains(chatSystemText((*bodies)[i]), "with this structure"); hasExample != (wantType == "json_object") {
+				if hasExample := strings.Contains(chatUserText((*bodies)[i]), "with this structure"); hasExample != (wantType == "json_object") {
 					t.Errorf("request %d has the example in its prompt = %v", i, hasExample)
 				}
 			}
@@ -329,7 +365,7 @@ func TestOpenAIComplete_AdjustsTokenParameterAndSchemaInOneCall(t *testing.T) {
 	SetOpenAIAPIURL(url)
 	t.Cleanup(func() { SetOpenAIAPIURL(original) })
 
-	resp, err := (&openaiProvider{model: "some-model", apiKey: "k"}).Complete(context.Background(), &Request{UserPrompt: "spec", MaxTokens: 100, Schema: ReviewSchema(false, true)})
+	resp, err := (&openaiProvider{model: "some-model", apiKey: "k"}).Complete(context.Background(), &Request{UserPrompt: "spec", MaxTokens: 100, Schema: ReviewSchema(true)})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -340,5 +376,33 @@ func TestOpenAIComplete_AdjustsTokenParameterAndSchemaInOneCall(t *testing.T) {
 	format, _ := last["response_format"].(map[string]any)
 	if last["max_tokens"] != float64(100) || last["max_completion_tokens"] != nil || format["type"] != "json_object" {
 		t.Errorf("final request = %v, want max_tokens and json_object", last)
+	}
+}
+
+func TestAnthropicComplete_CacheLifetime(t *testing.T) {
+	for name, long := range map[string]bool{"default": false, "long": true} {
+		t.Run(name, func(t *testing.T) {
+			url, bodies := recordingServer(t, anthropicOK)
+			useAnthropicURL(t, url)
+			req := &Request{SystemPrompt: "sys", UserPromptCachedPrefix: "<spec>...</spec>", UserPrompt: "task", LongCache: long}
+			if _, err := (&anthropicProvider{model: "claude-opus-5-5", apiKey: "k"}).Complete(context.Background(), req); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			body := (*bodies)[0]
+			system, _ := body["system"].([]any)
+			messages, _ := body["messages"].([]any)
+			content, _ := messages[0].(map[string]any)["content"].([]any)
+			breakpoints := []any{system[0].(map[string]any)["cache_control"], content[0].(map[string]any)["cache_control"]}
+			for i, bp := range breakpoints {
+				control, _ := bp.(map[string]any)
+				ttl, hasTTL := control["ttl"]
+				if control["type"] != "ephemeral" || hasTTL != long || (long && ttl != "1h") {
+					t.Errorf("breakpoint %d = %v, want ephemeral with ttl 1h only for the long cache", i, control)
+				}
+			}
+			if _, cached := content[1].(map[string]any)["cache_control"]; cached {
+				t.Error("the task must not be cached")
+			}
+		})
 	}
 }

@@ -52,7 +52,7 @@ New flags:
 |------|---------|-------------|
 | `--chunking` | `auto` | Chunking mode: `auto`, `on`, or `off`. |
 | `--chunk-lines` | `600` | Target maximum source lines per chunk. |
-| `--chunk-overlap` | `20` | Number of neighboring lines included before and after each chunk for context. |
+| `--chunk-overlap` | `20` | Deprecated, no effect: every chunk review sees the whole spec. |
 | `--chunk-min-lines` | `1500` | Spec line count at which `auto` uses chunking. |
 | `--chunk-token-threshold` | `30000` | Estimated size of the spec alone, in tokens, at which `auto` uses chunking. |
 | `--chunk-concurrency` | `3` | Maximum number of concurrent chunk LLM calls. |
@@ -74,7 +74,7 @@ Token estimation:
 Validation:
 
 - `--chunk-lines` must be greater than `0`.
-- `--chunk-overlap` must be `>= 0` and less than `--chunk-lines`.
+- `--chunk-overlap` must be `>= 0`.
 - `--chunk-min-lines` must be `>= 0`.
 - `--chunk-token-threshold` must be greater than `0`.
 - `--chunk-concurrency` must be between `1` and `16`.
@@ -113,9 +113,8 @@ type Chunk struct {
 Definitions:
 
 - `LineStart` and `LineEnd` are the primary review range.
-- `ContextFrom` and `ContextTo` include overlap lines that may be read for context.
 - Findings may cite only lines inside `LineStart..LineEnd`.
-- Overlap lines are context-only and must not be cited unless they are inside the primary range for that chunk.
+- Lines outside the primary range must not be cited.
 - `HeadingPath` records the containing Markdown heading hierarchy.
 - `ID` is stable for a given spec version and uses source line bounds, for example `CHUNK-0004-L121-L188`.
 
@@ -138,43 +137,27 @@ Chunks should target `--chunk-lines` primary lines, but Markdown section integri
 
 ## 9. Global Context
 
-Each chunk prompt must include:
+Every chunk call, and the synthesis call, sends the same system prompt and the same shared prefix:
 
-- the normal system prompt,
-- selected profile rules,
-- strict-mode instructions when enabled,
-- preflight known findings context when present,
-- a generated table of contents for the full spec,
-- global definitions/glossary sections when detected,
-- the chunk's heading path,
-- the chunk's numbered primary lines,
-- overlap lines marked as context-only.
+- the normal system prompt, with selected profile rules and strict-mode instructions when enabled,
+- context files when present,
+- the full numbered spec,
+- preflight known findings context when present.
 
-The table of contents must include heading text and line ranges only. It must not include full text for every section.
-
-Glossary and definitions sections may be included in full when they are below the configured context budget. If too large, include only their headings and line ranges.
+Only the task that follows the prefix differs between calls. It names the chunk's primary line range and heading path. Because the prefix is byte-identical, a provider with prompt caching bills it in full once and serves it from cache for every later call in the run. The first chunk is sent alone and the remaining chunks are sent in parallel once it completes, so that they can read the cached prefix.
 
 ## 10. Prompt Contract
 
 Each chunk LLM call must be told:
 
 - Review only the primary range for defects.
-- Use overlap and global context only to interpret the primary range.
+- Read the rest of the spec so that something stated elsewhere is not reported as missing.
 - Cite only primary-range line numbers.
 - Return JSON matching the existing schema.
 - Use normal issue IDs, but IDs are temporary before merge.
 - Do not emit score or verdict.
-- Emit a brief chunk summary in `meta.chunk_summary`.
 - Add tag `cross-section` when the issue depends on another section outside the primary range.
 - Add clarification questions only when the question blocks implementing the primary range.
-
-Chunk summary requirements:
-
-- `meta.chunk_summary` must be a string of at most 600 characters.
-- It must describe the reviewed primary range, important local concepts, and referenced external sections.
-- It must not include findings, score, verdict, or implementation advice.
-- A summary longer than 600 characters is shortened locally. A missing summary is accepted: the chunk's findings are kept and synthesis runs without that summary.
-- Summaries are used only as synthesis input and are not rendered in normal JSON, Markdown, or web output.
 
 ## 11. Cross-Section Checks
 
@@ -188,12 +171,8 @@ Some defects require more than one section:
 
 The first version must handle cross-section issues in two ways:
 
-1. Each chunk receives the table of contents and glossary context.
-2. After chunk reviews complete, SpecCritic runs one synthesis LLM call over:
-   - merged chunk findings,
-   - table of contents,
-   - preflight findings,
-   - a bounded list of high-risk section summaries from `meta.chunk_summary`.
+1. Each chunk reviewer sees the whole spec.
+2. After chunk reviews complete, SpecCritic runs one synthesis LLM call over the shared prefix (the whole spec and the preflight findings) and the merged chunk findings.
 
 The synthesis call must not re-review the whole spec. It may:
 
@@ -368,7 +347,7 @@ Benchmarks:
 - Small specs continue to use the existing single-call path by default.
 - Large specs in `auto` mode use bounded parallel chunk calls.
 - Final output remains compatible with existing JSON, Markdown, and web consumers.
-- Findings cite original spec lines and never cite context-only overlap lines.
+- Chunk findings cite original spec lines inside their primary range.
 - Duplicate chunk findings are merged deterministically.
 - `go test ./...` passes.
 - Chunk planning and merge benchmarks meet the targets.

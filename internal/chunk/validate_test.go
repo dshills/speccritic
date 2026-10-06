@@ -73,27 +73,6 @@ func TestParseChunkResponseSetsChunkTag(t *testing.T) {
 	}
 }
 
-func TestParseChunkResponseAllowsMissingSummary(t *testing.T) {
-	report, err := ParseChunkResponse(chunkJSON(2, 2, nil, ""), 4, testChunk())
-	if err != nil {
-		t.Fatalf("ParseChunkResponse: %v", err)
-	}
-	if report.Meta.ChunkSummary != "" || len(report.Issues) != 1 {
-		t.Fatalf("summary = %q issues = %d", report.Meta.ChunkSummary, len(report.Issues))
-	}
-}
-
-func TestParseChunkResponseShortensLongSummary(t *testing.T) {
-	long := strings.Repeat("é", maxChunkSummaryRunes+50)
-	report, err := ParseChunkResponse(chunkJSON(2, 2, nil, long), 4, testChunk())
-	if err != nil {
-		t.Fatalf("ParseChunkResponse: %v", err)
-	}
-	if got := len([]rune(report.Meta.ChunkSummary)); got != maxChunkSummaryRunes {
-		t.Fatalf("summary length = %d runes, want %d", got, maxChunkSummaryRunes)
-	}
-}
-
 func TestParseChunkResponseSetsEvidencePath(t *testing.T) {
 	ch := testChunk()
 	ch.Path = "specs/api/SPEC.md"

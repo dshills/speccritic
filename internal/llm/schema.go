@@ -14,8 +14,8 @@ import (
 //
 // A provider that can constrain a model's output enforces JSON, which rules
 // out malformed documents, unknown enum values and missing fields. A provider
-// that cannot, for the model in use, appends PromptFallback to the system
-// prompt so the model is at least shown the shape.
+// that cannot, for the model in use, appends PromptFallback to the user
+// message so the model is at least shown the shape.
 type OutputSchema struct {
 	// Name identifies the schema to providers that ask for a name.
 	Name string
@@ -45,13 +45,12 @@ const evidenceSchema = `{
 
 // reviewSchemaTemplate is the schema of a review. Properties are listed in
 // the order a careful reviewer works: say what is wrong and where before
-// judging how severe it is. Its verbs are, in order: the extra required
-// top-level names, the category enum, the evidence schema (twice) and the
-// extra top-level properties.
+// judging how severe it is. Its verbs are, in order: the category enum and
+// the evidence schema (twice).
 const reviewSchemaTemplate = `{
   "type": "object",
   "additionalProperties": false,
-  "required": ["issues", "questions", "patches"%s],
+  "required": ["issues", "questions", "patches"],
   "properties": {
     "issues": {
       "type": "array",
@@ -112,20 +111,9 @@ const reviewSchemaTemplate = `{
           "after": {"type": "string", "description": "The replacement text."}
         }
       }
-    }%s
+    }
   }
 }`
-
-// chunkSummarySchema is the extra top-level property a chunk review returns.
-const chunkSummarySchema = `,
-    "meta": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["chunk_summary"],
-      "properties": {
-        "chunk_summary": {"type": "string", "description": "What the primary range covers, in at most 600 characters. No findings."}
-      }
-    }`
 
 // schemaExample shows the shape of a review to a model whose output cannot be
 // constrained.
@@ -160,48 +148,40 @@ const schemaExample = `{
       "before": "exact text from spec to be replaced",
       "after": "corrected minimal replacement text"
     }
-  ]%s
+  ]
 }`
 
-var (
-	reviewSchemaJSON      = buildReviewSchema(false)
-	chunkReviewSchemaJSON = buildReviewSchema(true)
-)
+var reviewSchemaJSON = buildReviewSchema()
 
-func buildReviewSchema(chunkSummary bool) json.RawMessage {
+func buildReviewSchema() json.RawMessage {
 	categories := schema.Categories()
 	quoted := make([]string, len(categories))
 	for i, category := range categories {
 		quoted[i] = fmt.Sprintf("%q", category)
 	}
-	required, properties := "", ""
-	if chunkSummary {
-		required, properties = `, "meta"`, chunkSummarySchema
-	}
-	pretty := fmt.Sprintf(reviewSchemaTemplate, required, strings.Join(quoted, ", "), evidenceSchema, evidenceSchema, properties)
-	// The schema is sent with every request, so the indentation that makes
-	// the template readable is stripped before use.
+	pretty := fmt.Sprintf(reviewSchemaTemplate, strings.Join(quoted, ", "), evidenceSchema, evidenceSchema)
+	return compactJSON(pretty)
+}
+
+// compactJSON strips the indentation that makes a schema template readable;
+// the schema is sent with every request.
+func compactJSON(pretty string) json.RawMessage {
 	var compact bytes.Buffer
 	if err := json.Compact(&compact, []byte(pretty)); err != nil {
-		panic(fmt.Sprintf("review schema template is not valid JSON: %v", err))
+		panic(fmt.Sprintf("schema template is not valid JSON: %v", err))
 	}
 	return compact.Bytes()
 }
 
-// ReviewSchema returns the schema of a review response. A chunk review also
-// returns a summary of its range, so it has its own variant. enforce is passed
+// ReviewSchema returns the schema of a review response. enforce is passed
 // through to OutputSchema.Enforce.
-func ReviewSchema(chunkSummary, enforce bool) *OutputSchema {
-	out := &OutputSchema{Name: "spec_review", JSON: reviewSchemaJSON, Enforce: enforce}
-	exampleMeta := ""
-	if chunkSummary {
-		out.Name = "spec_chunk_review"
-		out.JSON = chunkReviewSchemaJSON
-		exampleMeta = `,
-  "meta": {"chunk_summary": "What the primary range covers, in at most 600 characters"}`
+func ReviewSchema(enforce bool) *OutputSchema {
+	return &OutputSchema{
+		Name:           "spec_review",
+		JSON:           reviewSchemaJSON,
+		Enforce:        enforce,
+		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + schemaExample,
 	}
-	out.PromptFallback = "\n\nReturn your findings as JSON with this structure:\n" + fmt.Sprintf(schemaExample, exampleMeta)
-	return out
 }
 
 // schemaRejected reports whether an error body says the API will not take the

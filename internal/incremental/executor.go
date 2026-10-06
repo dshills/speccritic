@@ -109,7 +109,7 @@ func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		UserPrompt:             tail,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
-		Schema:                 llm.ReviewSchema(false, cfg.EnforceSchema),
+		Schema:                 llm.ReviewSchema(cfg.EnforceSchema),
 	}
 	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,

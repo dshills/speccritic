@@ -228,15 +228,6 @@ func decodeFindings(cleaned string, c *collector) (incomplete, err error) {
 				c.patch(patch)
 				return nil
 			})
-		case "meta":
-			// The chunk summary is the only meta field a model supplies.
-			var meta struct {
-				ChunkSummary string `json:"chunk_summary"`
-			}
-			if err = dec.Decode(&meta); err != nil {
-				err = c.wrongType("", err)
-			}
-			c.report.Meta.ChunkSummary = meta.ChunkSummary
 		default:
 			var skipped json.RawMessage
 			err = dec.Decode(&skipped)

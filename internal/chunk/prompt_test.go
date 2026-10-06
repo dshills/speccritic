@@ -4,72 +4,39 @@ import (
 	"strings"
 	"testing"
 
-	ctxpkg "github.com/dshills/speccritic/internal/context"
 	"github.com/dshills/speccritic/internal/spec"
 )
 
-func TestBuildUserPromptIncludesChunkContract(t *testing.T) {
-	s, plan, ch := promptFixture(t)
-	prefix, tail, err := BuildUserPrompt(PromptInput{Spec: s, Plan: plan, Chunk: ch})
+func TestBuildChunkTask(t *testing.T) {
+	s, _, ch := promptFixture(t)
+	task, err := BuildChunkTask(ch, s.LineCount, false)
 	if err != nil {
-		t.Fatalf("BuildUserPrompt: %v", err)
+		t.Fatalf("BuildChunkTask: %v", err)
 	}
 	for _, want := range []string{
-		"Review only the primary range",
-		"meta.chunk_summary",
-		"<spec_table_of_contents>",
-		"L1-L12 #Spec",
+		"Review lines L6-L9 (Spec > Requirements) of the specification above",
+		"report only defects in these lines",
+		"Cite only lines L6-L9",
+		`"cross-section"`,
 	} {
-		if !strings.Contains(prefix, want) {
-			t.Fatalf("prefix missing %q:\n%s", want, prefix)
+		if !strings.Contains(task, want) {
+			t.Fatalf("task missing %q:\n%s", want, task)
 		}
 	}
-	for _, want := range []string{
-		`<chunk id="` + ch.ID + `"`,
-		"<context_only_before>",
-		"L5: ",
-		"<primary_lines>",
-		"L6: ## Requirements",
-		"<context_only_after>",
-		"L9: ",
-	} {
-		if !strings.Contains(tail, want) {
-			t.Fatalf("tail missing %q:\n%s", want, tail)
-		}
-	}
-	// The chunk tag is added locally, so the model is not asked for it.
-	if strings.Contains(prefix+tail, "chunk:") {
-		t.Fatalf("prompt still asks for a chunk tag:\n%s%s", prefix, tail)
-	}
-}
-
-func TestBuildUserPromptIncludesContextPreflightAndGlossary(t *testing.T) {
-	s, plan, ch := promptFixture(t)
-	prefix, _, err := BuildUserPrompt(PromptInput{
-		Spec:  s,
-		Plan:  plan,
-		Chunk: ch,
-		ContextFiles: []ctxpkg.ContextFile{{
-			Path:    "glossary.md",
-			Content: "external context",
-		}},
-		PreflightContext: "<known_preflight_findings>\n- PREFLIGHT-TODO-001\n</known_preflight_findings>\n",
-	})
-	if err != nil {
-		t.Fatalf("BuildUserPrompt: %v", err)
-	}
-	for _, want := range []string{"external context", "PREFLIGHT-TODO-001", "<global_definitions_context>", "UAS means upload service"} {
-		if !strings.Contains(prefix, want) {
-			t.Fatalf("prefix missing %q:\n%s", want, prefix)
+	// The spec lives in the shared prefix, so the task must not repeat it,
+	// and the chunk tag is added locally, so the model is not asked for it.
+	for _, unwanted := range []string{"L6: ", "UAS SHALL", "chunk:", "chunk_summary"} {
+		if strings.Contains(task, unwanted) {
+			t.Fatalf("task contains %q:\n%s", unwanted, task)
 		}
 	}
 }
 
-func TestBuildUserPromptRejectsInvalidChunk(t *testing.T) {
-	s := spec.New("SPEC.md", "# Spec\n")
-	_, _, err := BuildUserPrompt(PromptInput{Spec: s, Chunk: Chunk{ID: "bad", LineStart: 3, LineEnd: 3}})
-	if err == nil {
-		t.Fatal("expected invalid chunk error")
+func TestBuildChunkTaskRejectsInvalidChunk(t *testing.T) {
+	for _, ch := range []Chunk{{}, {ID: "bad", LineStart: 3, LineEnd: 3}, {ID: "bad", LineStart: 0, LineEnd: 1}, {ID: "bad", LineStart: 2, LineEnd: 1}} {
+		if _, err := BuildChunkTask(ch, 2, false); err == nil {
+			t.Errorf("BuildChunkTask(%+v) should fail", ch)
+		}
 	}
 }
 
@@ -100,4 +67,20 @@ func promptFixture(t *testing.T) (*spec.Spec, Plan, Chunk) {
 	}
 	t.Fatalf("requirements chunk not found: %#v", plan.Chunks)
 	return nil, Plan{}, Chunk{}
+}
+
+func TestBuildChunkTaskWithLines(t *testing.T) {
+	s, _, ch := promptFixture(t)
+	task, err := BuildChunkTask(ch, s.LineCount, true)
+	if err != nil {
+		t.Fatalf("BuildChunkTask: %v", err)
+	}
+	for _, want := range []string{"too large to show in full", `<spec_lines file="SPEC.md">`, "L6: ## Requirements", "L8: The UAS SHALL return status 200", "Cite only lines L6-L9"} {
+		if !strings.Contains(task, want) {
+			t.Fatalf("task missing %q:\n%s", want, task)
+		}
+	}
+	if strings.Contains(task, "L1: # Spec") {
+		t.Fatalf("task carries lines outside the chunk:\n%s", task)
+	}
 }

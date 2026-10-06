@@ -32,7 +32,7 @@ calls, or the quality of what comes back.
 | 7 | Enforce the output schema at the provider | Speed, Tokens | Medium | Done |
 | 8 | Verify and re-anchor evidence locally | Accuracy | Medium | Done |
 | 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small | Done |
-| 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large |  |
+| 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large | Done |
 | 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium |  |
 | 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium |  |
 | 13 | Retry transient provider errors; keep completed chunks | Throughput | Small |  |
@@ -272,7 +272,20 @@ serial synthesis call), so measure it.
 
 ## 10. Give chunk reviewers the whole spec, cached; make the cache hit
 
-**Helps:** Accuracy, Tokens. **Effort:** Large.
+**Helps:** Accuracy, Tokens. **Effort:** Large. **Status:** Done.
+
+**As built, and measured on 2026-10-06.** Every call in a run shares one system prompt and one
+prefix (context files, numbered spec, preflight findings); only the task after it differs. Chunk
+summaries are gone, since synthesis now reads the spec itself. On a forced 16-call chunked review
+of a 127-line spec, Anthropic (`claude-opus-5-5`) read 103k prefix tokens from cache against 6.9k
+written. OpenAI (`gpt-6.1-sol`) at first read only the system prompt from cache: probes showed it
+caches the system message across requests but nothing of a user message that differs, however long
+the shared start. Putting the prefix in the system message worked (a forced 8-call run read 17k of
+25k input tokens from cache) but was reverted: it would give the spec's text the weight of
+instructions, and this tool is a gate a spec author might want to talk past. OpenAI requests carry a
+`prompt_cache_key`, which costs nothing and helps if the provider changes its policy. On OpenAI a
+multi-call run is therefore still billed mostly at the full input rate. The Gemini compatibility
+endpoint does not report cached tokens, so its effect is unmeasured.
 
 **Today, accuracy.** A chunk prompt holds its primary lines, 20 lines of overlap on each side,
 the table of contents, and sections whose heading contains "glossary" or "definition"

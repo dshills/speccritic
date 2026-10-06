@@ -43,6 +43,11 @@ type Request struct {
 	MaxTokens              int
 	// Model overrides the provider's configured model when non-empty.
 	Model string
+	// LongCache asks a provider with explicit prompt caching to keep the
+	// cached prefix for an hour instead of a few minutes. Writing it costs
+	// more, so it pays only when the same prefix is likely to be sent again
+	// after a pause, as when a large context file is reused across edits.
+	LongCache bool
 	// Schema describes the JSON the response must conform to. Nil leaves the
 	// output unconstrained and undescribed.
 	Schema *OutputSchema

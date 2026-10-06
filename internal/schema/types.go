@@ -47,8 +47,7 @@ type Meta struct {
 	Temperature float64 `json:"temperature,omitempty"`
 	// Effort is the reasoning effort requested with --effort. It is omitted
 	// when the provider's default was used.
-	Effort       string `json:"effort,omitempty"`
-	ChunkSummary string `json:"chunk_summary,omitempty"`
+	Effort string `json:"effort,omitempty"`
 	// DroppedFindings counts model findings that failed local validation and
 	// were left out of the report.
 	DroppedFindings int `json:"dropped_findings,omitempty"`

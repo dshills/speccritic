@@ -93,11 +93,15 @@ func TestCheckerKeepsOriginalSpecOutOfLLMRedaction(t *testing.T) {
 	if result.OriginalSpec != secretSpec {
 		t.Fatalf("original spec = %q, want unredacted input", result.OriginalSpec)
 	}
-	if len(provider.reqs) != 1 || strings.Contains(provider.reqs[0].UserPrompt, "supersecret") || strings.Contains(provider.reqs[0].UserPrompt, "sk-12345678901234567890") {
-		t.Fatalf("LLM prompt was not redacted: %#v", provider.reqs)
+	if len(provider.reqs) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.reqs))
 	}
-	if !strings.Contains(provider.reqs[0].UserPrompt, "[REDACTED]") {
-		t.Fatalf("LLM prompt missing redaction marker: %s", provider.reqs[0].UserPrompt)
+	sent := provider.reqs[0].UserPromptCachedPrefix + provider.reqs[0].UserPrompt
+	if strings.Contains(sent, "supersecret") || strings.Contains(sent, "sk-12345678901234567890") {
+		t.Fatalf("LLM prompt was not redacted: %s", sent)
+	}
+	if !strings.Contains(sent, "[REDACTED]") {
+		t.Fatalf("LLM prompt missing redaction marker: %s", sent)
 	}
 	if result.PatchDiff != "" || len(result.Report.Patches) != 0 {
 		t.Fatalf("patch diff should be suppressed and unsafe redacted patch filtered, diff %q patches %#v", result.PatchDiff, result.Report.Patches)
@@ -697,7 +701,7 @@ func TestCheckerPreflightWarnSendsKnownFindingsToProvider(t *testing.T) {
 	if len(provider.reqs) != 1 {
 		t.Fatalf("provider calls = %d, want 1", len(provider.reqs))
 	}
-	prompt := provider.reqs[0].UserPrompt
+	prompt := provider.reqs[0].UserPromptCachedPrefix + provider.reqs[0].UserPrompt
 	for _, want := range []string{"<known_preflight_findings>", "PREFLIGHT-TODO-001", "duplicates:<PREFLIGHT-ID>"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
@@ -788,10 +792,10 @@ func TestCheckerForcedChunkingUsesChunkPath(t *testing.T) {
 type placeholderEchoProvider struct{}
 
 func (placeholderEchoProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
-	if strings.Contains(req.UserPrompt, chunkIDAttr) && chunkStartLine(chunkIDFromPrompt(req.UserPrompt)) == 1 {
-		return &llm.Response{Content: `{"issues":[{"id":"ISSUE-0001","severity":"CRITICAL","category":"UNSPECIFIED_CONSTRAINT","title":"Placeholder text remains in spec","description":"d","evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"TODO define authentication behavior."}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, Model: "fake:chunk"}, nil
+	if chunkStartLine(req.UserPrompt) == 1 {
+		return &llm.Response{Content: `{"issues":[{"id":"ISSUE-0001","severity":"CRITICAL","category":"UNSPECIFIED_CONSTRAINT","title":"Placeholder text remains in spec","description":"d","evidence":[{"path":"SPEC.md","line_start":1,"line_end":1,"quote":"TODO define authentication behavior."}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}],"questions":[],"patches":[]}`, Model: "fake:chunk"}, nil
 	}
-	return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, Model: "fake:chunk"}, nil
+	return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[]}`, Model: "fake:chunk"}, nil
 }
 
 func TestCheckerChunkedReviewMergesPreflightDuplicateForAbsoluteSpecPath(t *testing.T) {
@@ -1157,52 +1161,37 @@ func (p *chunkAwareProvider) Complete(_ context.Context, req *llm.Request) (*llm
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	switch {
-	case strings.Contains(req.UserPromptCachedPrefix, "Analyze cross-section risks"):
+	case isSynthesisTask(req.UserPrompt):
 		p.synthCalls++
 		return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[]}`, Model: "fake:synthesis"}, nil
-	case strings.Contains(req.UserPrompt, chunkIDAttr):
+	case isChunkTask(req.UserPrompt):
 		p.chunkCalls++
 		if p.emptyChunks {
-			return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, Model: "fake:chunk"}, nil
+			return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[]}`, Model: "fake:chunk"}, nil
 		}
-		id := chunkIDFromPrompt(req.UserPrompt)
-		line := chunkStartLine(id)
-		return &llm.Response{Content: fmt.Sprintf(`{"issues":[{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Chunk finding","description":"d","evidence":[{"path":"SPEC.md","line_start":%d,"line_end":%d,"quote":"q"}],"impact":"i","recommendation":"r","blocking":false,"tags":["chunk:%s"]}],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, line, line, id), Model: "fake:chunk"}, nil
+		line := chunkStartLine(req.UserPrompt)
+		return &llm.Response{Content: fmt.Sprintf(`{"issues":[{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Chunk finding","description":"d","evidence":[{"path":"SPEC.md","line_start":%d,"line_end":%d,"quote":"q"}],"impact":"i","recommendation":"r","blocking":false,"tags":[]}],"questions":[],"patches":[]}`, line, line), Model: "fake:chunk"}, nil
 	default:
 		p.singleCalls++
 		return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[]}`, Model: "fake:single"}, nil
 	}
 }
 
-// chunkIDAttr opens the chunk element of a chunk review prompt.
-const chunkIDAttr = `<chunk id="`
+// chunkTaskStart opens the task of a chunk review.
+const chunkTaskStart = "\nReview lines L"
 
-func chunkIDFromPrompt(prompt string) string {
-	start := strings.Index(prompt, chunkIDAttr)
-	if start < 0 {
-		return "CHUNK-0001-L1-L1"
-	}
-	start += len(chunkIDAttr)
-	end := strings.Index(prompt[start:], `"`)
-	if end < 0 {
-		return "CHUNK-0001-L1-L1"
-	}
-	return prompt[start : start+end]
-}
+func isChunkTask(task string) bool { return strings.HasPrefix(task, chunkTaskStart) }
 
-func chunkStartLine(id string) int {
-	idx := strings.Index(id, "-L")
-	if idx < 0 {
-		return 1
-	}
-	idx += 2
-	end := strings.Index(id[idx:], "-L")
-	if end < 0 {
-		return 1
-	}
+func isSynthesisTask(task string) bool { return strings.Contains(task, "reviewed in chunks") }
+
+// chunkStartLine returns the first line a chunk task asks to review.
+func chunkStartLine(task string) int {
 	var line int
-	if _, err := fmt.Sscanf(id[idx:idx+end], "%d", &line); err != nil || line < 1 {
-		return 1
+	if !isChunkTask(task) {
+		return 0
+	}
+	if _, err := fmt.Sscanf(task[len(chunkTaskStart):], "%d", &line); err != nil {
+		return 0
 	}
 	return line
 }
@@ -1492,7 +1481,6 @@ func TestCheckerSendsTheReviewSchemaWithEveryCall(t *testing.T) {
 			if len(provider.schemas) == 0 {
 				t.Fatal("no LLM calls were made")
 			}
-			withSummary := 0
 			for i, schema := range provider.schemas {
 				if schema == nil {
 					t.Fatalf("call %d carried no schema", i)
@@ -1500,13 +1488,6 @@ func TestCheckerSendsTheReviewSchemaWithEveryCall(t *testing.T) {
 				if schema.Enforce != tc.wantEnforce {
 					t.Errorf("call %d enforce = %v, want %v", i, schema.Enforce, tc.wantEnforce)
 				}
-				if strings.Contains(string(schema.JSON), "chunk_summary") {
-					withSummary++
-				}
-			}
-			// Only chunk reviews return a summary, so only they use that variant.
-			if withSummary != inner.chunkCalls {
-				t.Errorf("%d call(s) used the chunk schema, want %d", withSummary, inner.chunkCalls)
 			}
 			wantEnforced := 0
 			if tc.wantEnforce {
@@ -1636,5 +1617,172 @@ func TestCheckerAutoChunkingIgnoresContextSize(t *testing.T) {
 	}
 	if provider.chunkCalls != 0 || provider.singleCalls != 1 {
 		t.Fatalf("chunk calls = %d single calls = %d, want one single call", provider.chunkCalls, provider.singleCalls)
+	}
+}
+
+// recordingProvider keeps every request and answers with fn.
+type recordingProvider struct {
+	mu   sync.Mutex
+	reqs []llm.Request
+	fn   func(req *llm.Request) string
+}
+
+func (p *recordingProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reqs = append(p.reqs, *req)
+	return &llm.Response{Content: p.fn(req), Model: "fake:model"}, nil
+}
+
+// Every call in a run, including a repair, starts with the same system prompt
+// and the same prefix holding the spec, so a caching provider bills the spec
+// once.
+func TestCheckerSharesOneCachedPrefixAcrossCalls(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	cases := map[string]struct {
+		configure func(*CheckRequest)
+		answer    func(calls int, req *llm.Request) string
+		wantCalls int
+	}{
+		"single call with a repair": {
+			configure: func(*CheckRequest) {},
+			answer: func(calls int, _ *llm.Request) string {
+				if calls == 1 {
+					return "not json"
+				}
+				return `{"issues":[],"questions":[],"patches":[]}`
+			},
+			wantCalls: 2,
+		},
+		"chunked with synthesis": {
+			configure: func(req *CheckRequest) {
+				req.SpecText = longSpec(300)
+				req.Chunking = "on"
+				req.ChunkLines = 60
+				req.SynthesisLineThreshold = 1
+			},
+			answer:    func(int, *llm.Request) string { return `{"issues":[],"questions":[],"patches":[]}` },
+			wantCalls: -1,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var calls int
+			provider := &recordingProvider{}
+			provider.fn = func(req *llm.Request) string { calls++; return tc.answer(calls, req) }
+			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+			var errw strings.Builder
+			req := usageCheckRequest(&errw)
+			req.ContextDocuments = []ContextDocument{{Name: "glossary.md", Text: "A widget is a part.\n"}}
+			tc.configure(&req)
+
+			if _, err := checker.Check(context.Background(), req); err != nil {
+				t.Fatalf("Check returned error: %v", err)
+			}
+			if tc.wantCalls > 0 && len(provider.reqs) != tc.wantCalls {
+				t.Fatalf("calls = %d, want %d", len(provider.reqs), tc.wantCalls)
+			}
+			if len(provider.reqs) < 2 {
+				t.Fatalf("calls = %d, want several", len(provider.reqs))
+			}
+			first := provider.reqs[0]
+			for _, want := range []string{"<context file=\"glossary.md\">", "<spec file=", "L1: "} {
+				if !strings.Contains(first.UserPromptCachedPrefix, want) {
+					t.Fatalf("prefix is missing %q", want)
+				}
+			}
+			tasks := map[string]bool{}
+			for i, r := range provider.reqs {
+				if r.SystemPrompt != first.SystemPrompt || r.UserPromptCachedPrefix != first.UserPromptCachedPrefix {
+					t.Errorf("call %d does not share the first call's system prompt and prefix", i)
+				}
+				if strings.Contains(r.UserPrompt, "L1: ") {
+					t.Errorf("call %d repeats the spec in its task", i)
+				}
+				tasks[r.UserPrompt] = true
+			}
+			if len(tasks) < 2 {
+				t.Errorf("all %d calls had the same task", len(provider.reqs))
+			}
+		})
+	}
+}
+
+func TestCheckerUsesTheLongCacheForLargeContext(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	for name, tc := range map[string]struct {
+		context string
+		want    bool
+	}{
+		"no context":    {"", false},
+		"small context": {strings.Repeat("word ", 100), false},
+		"large context": {strings.Repeat("word ", 8000), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := &recordingProvider{fn: func(*llm.Request) string { return `{"issues":[],"questions":[],"patches":[]}` }}
+			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+			var errw strings.Builder
+			req := usageCheckRequest(&errw)
+			if tc.context != "" {
+				req.ContextDocuments = []ContextDocument{{Name: "context.md", Text: tc.context}}
+			}
+			if _, err := checker.Check(context.Background(), req); err != nil {
+				t.Fatalf("Check returned error: %v", err)
+			}
+			if got := provider.reqs[0].LongCache; got != tc.want {
+				t.Errorf("LongCache = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A spec too large to send whole with every call is chunked with each call
+// seeing only its own lines; the shared prefix then leaves the spec out.
+func TestCheckerChunksAnOversizedSpecWithoutSharingIt(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	var b strings.Builder
+	b.WriteString("# Huge Spec\n")
+	line := strings.Repeat("The service must record every event in the audit log. ", 8)
+	for i := 0; b.Len() < maxSharedRequestTokens*4+1000; i++ {
+		if i%50 == 0 {
+			fmt.Fprintf(&b, "## Section %d\n", i/50)
+		}
+		b.WriteString(line + "\n")
+	}
+	provider := &recordingProvider{fn: func(*llm.Request) string { return `{"issues":[],"questions":[],"patches":[]}` }}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	var errw strings.Builder
+	req := usageCheckRequest(&errw)
+	req.SpecText = b.String()
+	req.ChunkLines = 100
+
+	if _, err := checker.Check(context.Background(), req); err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if len(provider.reqs) < 2 {
+		t.Fatalf("calls = %d, want a chunked review", len(provider.reqs))
+	}
+	for i, r := range provider.reqs {
+		if strings.Contains(r.UserPromptCachedPrefix, "<spec file=") {
+			t.Fatalf("call %d shares the whole spec", i)
+		}
+		if isSynthesisTask(r.UserPrompt) && !strings.Contains(r.UserPrompt, "too large to show in full") {
+			t.Fatalf("synthesis call %d refers to a spec it was not shown", i)
+		}
+		if isChunkTask(r.UserPrompt) && !strings.Contains(r.UserPrompt, "<spec_lines") {
+			t.Fatalf("chunk call %d does not carry its own lines", i)
+		}
+		if len(r.UserPromptCachedPrefix)+len(r.UserPrompt) > maxSharedRequestTokens*4 {
+			t.Fatalf("call %d is larger than the budget", i)
+		}
+	}
+	if !strings.Contains(errw.String(), "too large to send whole") {
+		t.Errorf("verbose log does not say why the spec was not shared:\n%s", errw.String())
 	}
 }

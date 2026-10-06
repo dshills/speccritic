@@ -188,9 +188,6 @@ func appendPart(acc, part *schema.Report) {
 			acc.Patches = append(acc.Patches, patch)
 		}
 	}
-	if acc.Meta.ChunkSummary == "" {
-		acc.Meta.ChunkSummary = part.Meta.ChunkSummary
-	}
 	acc.Meta.DroppedFindings += part.Meta.DroppedFindings
 }
 

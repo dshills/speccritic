@@ -6,18 +6,23 @@ import (
 	"io"
 	"sync"
 
-	ctxpkg "github.com/dshills/speccritic/internal/context"
 	"github.com/dshills/speccritic/internal/llm"
 	"github.com/dshills/speccritic/internal/schema"
 	"github.com/dshills/speccritic/internal/spec"
 )
 
 type ExecutorConfig struct {
-	SystemPrompt     string
-	ContextFiles     []ctxpkg.ContextFile
-	PreflightContext string
-	MaxTokens        int
-	Effort           string
+	SystemPrompt string
+	// Prefix is the shared user-message prefix from llm.BuildSpecPrefix. Every
+	// chunk call sends it unchanged, so it is cached after the first.
+	Prefix string
+	// LongCache is passed through to llm.Request.LongCache.
+	LongCache bool
+	// WithLines puts each chunk's numbered lines in its task, for a Prefix
+	// that leaves the spec out because it is too large to share.
+	WithLines bool
+	MaxTokens int
+	Effort    string
 	// EnforceSchema asks the provider to constrain responses to the review
 	// schema.
 	EnforceSchema bool
@@ -56,9 +61,28 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 	defer cancel()
 
 	results := make([]ChunkResult, len(plan.Chunks))
+	var logMu sync.Mutex
+
+	// Every chunk call starts with the same prefix. A provider can only serve
+	// it from cache once the first call has written it, so calls sent together
+	// at the start would each pay to write it. The first chunk goes alone; the
+	// rest follow in parallel and read the cached prefix.
+	first := 0
+	if concurrency > 1 && len(plan.Chunks) > 1 {
+		ch := plan.Chunks[0]
+		logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Starting chunk %s alone to fill the prompt cache", ch.ID)
+		result, err := reviewOneChunk(ctx, provider, s, ch, cfg, &logMu)
+		if err != nil {
+			return nil, err
+		}
+		logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Completed chunk %s", ch.ID)
+		results[0] = result
+		first = 1
+		concurrency = min(concurrency, len(plan.Chunks)-1)
+	}
+
 	jobs := make(chan int)
 	errs := make(chan error, 1)
-	var logMu sync.Mutex
 	var wg sync.WaitGroup
 	for worker := 0; worker < concurrency; worker++ {
 		wg.Add(1)
@@ -67,7 +91,7 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 			for idx := range jobs {
 				ch := plan.Chunks[idx]
 				logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Starting chunk %s", ch.ID)
-				result, err := reviewOneChunk(ctx, provider, s, plan, ch, cfg, &logMu)
+				result, err := reviewOneChunk(ctx, provider, s, ch, cfg, &logMu)
 				if err != nil {
 					select {
 					case errs <- err:
@@ -83,7 +107,7 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 	}
 	go func() {
 		defer close(jobs)
-		for i := range plan.Chunks {
+		for i := first; i < len(plan.Chunks); i++ {
 			select {
 			case <-ctx.Done():
 				return
@@ -103,24 +127,19 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 	return results, nil
 }
 
-func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, plan Plan, ch Chunk, cfg ExecutorConfig, logMu *sync.Mutex) (ChunkResult, error) {
-	prefix, tail, err := BuildUserPrompt(PromptInput{
-		Spec:             s,
-		Plan:             plan,
-		Chunk:            ch,
-		ContextFiles:     cfg.ContextFiles,
-		PreflightContext: cfg.PreflightContext,
-	})
+func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, ch Chunk, cfg ExecutorConfig, logMu *sync.Mutex) (ChunkResult, error) {
+	task, err := BuildChunkTask(ch, s.LineCount, cfg.WithLines)
 	if err != nil {
 		return ChunkResult{}, err
 	}
 	req := &llm.Request{
 		SystemPrompt:           cfg.SystemPrompt,
-		UserPromptCachedPrefix: prefix,
-		UserPrompt:             tail,
+		UserPromptCachedPrefix: cfg.Prefix,
+		UserPrompt:             task,
+		LongCache:              cfg.LongCache,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
-		Schema:                 llm.ReviewSchema(true, cfg.EnforceSchema),
+		Schema:                 llm.ReviewSchema(cfg.EnforceSchema),
 	}
 	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,

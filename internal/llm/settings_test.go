@@ -228,3 +228,54 @@ func TestDefaultModelForProvider(t *testing.T) {
 		}
 	}
 }
+
+func TestChatComplete_PromptCacheKey(t *testing.T) {
+	for name, tc := range map[string]struct {
+		provider string
+		prefix   string
+		want     bool
+	}{
+		"openai with a cacheable prefix": {"openai", "<spec>...</spec>", true},
+		"openai without a prefix":        {"openai", "", false},
+		"gemini does not take the key":   {"gemini", "<spec>...</spec>", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			url, bodies := recordingServer(t, chatOK, chatOK, chatOK)
+			provider := chatProviders(t, url)[tc.provider]
+			for _, task := range []string{"task one", "task two"} {
+				if _, err := provider.Complete(context.Background(), &Request{SystemPrompt: "sys", UserPromptCachedPrefix: tc.prefix, UserPrompt: task}); err != nil {
+					t.Fatalf("Complete: %v", err)
+				}
+			}
+			key, sent := (*bodies)[0]["prompt_cache_key"].(string)
+			if sent != tc.want {
+				t.Fatalf("prompt_cache_key sent = %v, want %v", sent, tc.want)
+			}
+			if tc.want && (key == "" || (*bodies)[1]["prompt_cache_key"] != key) {
+				t.Errorf("keys = %v and %v, want one non-empty key for calls sharing a prefix", key, (*bodies)[1]["prompt_cache_key"])
+			}
+		})
+	}
+	other := promptCacheKey(&Request{SystemPrompt: "sys", UserPromptCachedPrefix: "<spec>other</spec>"})
+	if other == promptCacheKey(&Request{SystemPrompt: "sys", UserPromptCachedPrefix: "<spec>...</spec>"}) {
+		t.Error("different prefixes must get different keys")
+	}
+}
+
+// The spec is material under review. It must never be sent as part of the
+// system message, where its text would carry the weight of instructions.
+func TestChatComplete_KeepsTheSpecOutOfTheSystemMessage(t *testing.T) {
+	for name := range chatProviders(t, "") {
+		t.Run(name, func(t *testing.T) {
+			url, bodies := recordingServer(t, chatOK)
+			req := &Request{SystemPrompt: "sys", UserPromptCachedPrefix: "<spec>\nL1: x\n</spec>\n", UserPrompt: "\nReview the spec.\n"}
+			if _, err := chatProviders(t, url)[name].Complete(context.Background(), req); err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			system, user := chatSystemText((*bodies)[0]), chatUserText((*bodies)[0])
+			if system != "sys" || user != req.UserPromptCachedPrefix+req.UserPrompt {
+				t.Errorf("system = %q user = %q, want the spec only in the user message", system, user)
+			}
+		})
+	}
+}

@@ -120,7 +120,7 @@ func TestPlanSpecSplitsOversizedSection(t *testing.T) {
 func TestValidateConfig(t *testing.T) {
 	tests := []Config{
 		{ChunkLines: 0, ChunkOverlap: 0, ChunkMinLines: 0, ChunkTokenThreshold: 0, ChunkConcurrency: 0},
-		WithDefaults(Config{ChunkOverlap: DefaultChunkLines}),
+		WithDefaults(Config{ChunkOverlap: -1}),
 		WithDefaults(Config{ChunkConcurrency: 17}),
 		WithDefaults(Config{ChunkTokenThreshold: -1}),
 		WithDefaults(Config{SynthesisLineThreshold: -1}),

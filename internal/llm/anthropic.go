@@ -68,6 +68,18 @@ type anthropicSystemBlock struct {
 // Sonnet/Opus, 2048 for Haiku).
 type anthropicCacheControl struct {
 	Type string `json:"type"`
+	// TTL is "1h" for the long cache. Empty means the default five minutes.
+	TTL string `json:"ttl,omitempty"`
+}
+
+// cacheControl returns the breakpoint for req. Both breakpoints of a request
+// use the same lifetime, since a longer-lived entry may not follow a shorter
+// one.
+func cacheControl(req *Request) *anthropicCacheControl {
+	if req.LongCache {
+		return &anthropicCacheControl{Type: "ephemeral", TTL: "1h"}
+	}
+	return &anthropicCacheControl{Type: "ephemeral"}
 }
 
 // anthropicMessage carries a role and either a plain string content or an
@@ -184,20 +196,23 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 // constrained to the request's schema; otherwise the schema's example is
 // appended to the system prompt.
 func (p *anthropicProvider) buildRequest(model string, maxTokens int, req *Request, enforce bool) anthropicRequest {
+	tail := req.UserPrompt
+	if req.Schema != nil && !enforce {
+		// The example goes after the task, not into the system prompt, so the
+		// system prompt and the cached spec stay identical across calls that
+		// expect different shapes.
+		tail += req.Schema.PromptFallback
+	}
 	body := anthropicRequest{
 		Model:     model,
 		MaxTokens: maxTokens,
-		Messages:  []anthropicMessage{{Role: "user", Content: buildAnthropicUserContent(req)}},
+		Messages:  []anthropicMessage{{Role: "user", Content: buildAnthropicUserContent(req, tail)}},
 	}
-	system := req.SystemPrompt
-	if req.Schema != nil && !enforce {
-		system += req.Schema.PromptFallback
-	}
-	if system != "" {
+	if req.SystemPrompt != "" {
 		body.System = []anthropicSystemBlock{{
 			Type:         "text",
-			Text:         system,
-			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+			Text:         req.SystemPrompt,
+			CacheControl: cacheControl(req),
 		}}
 	}
 	if req.Effort != "" || enforce {
@@ -275,21 +290,19 @@ func anthropicRefusalError(ar anthropicResponse) error {
 // form the API requires: a bare string when there's no cacheable prefix, and
 // an array of content blocks with cache_control on the prefix otherwise.
 //
-// A second breakpoint on the prefix complements the system-prompt breakpoint:
-// when callers pass --context files (e.g. a prior SPEC.md for feature work),
-// the grounding docs sit in the prefix and become cached alongside the
-// instructions, so only the variable spec block is billed at full rate on
-// each iteration.
-func buildAnthropicUserContent(req *Request) any {
+// The prefix holds the numbered spec and any context files, which every call
+// about the spec shares, so only the task in tail is billed at full rate after
+// the first call.
+func buildAnthropicUserContent(req *Request, tail string) any {
 	if req.UserPromptCachedPrefix == "" {
-		return req.UserPrompt
+		return tail
 	}
 	return []anthropicContentBlock{
 		{
 			Type:         "text",
 			Text:         req.UserPromptCachedPrefix,
-			CacheControl: &anthropicCacheControl{Type: "ephemeral"},
+			CacheControl: cacheControl(req),
 		},
-		{Type: "text", Text: req.UserPrompt},
+		{Type: "text", Text: tail},
 	}
 }

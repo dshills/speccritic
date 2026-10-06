@@ -32,13 +32,14 @@ func TestReviewChunksPreservesOrder(t *testing.T) {
 
 func TestReviewChunksHonorsConcurrency(t *testing.T) {
 	s, plan := executorFixture(t, 5)
-	provider := &blockingProvider{release: make(chan struct{})}
+	provider := &blockingProvider{release: make(chan struct{}), passFirst: true}
 	done := make(chan error, 1)
 	go func() {
 		_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 2, MaxTokens: 1000})
 		done <- err
 	}()
-	provider.waitForCalls(t, 2)
+	// The first chunk runs alone; then two of the remaining four run at once.
+	provider.waitForCalls(t, 3)
 	if provider.maxActiveValue() > 2 {
 		t.Fatalf("max active = %d, want <= 2", provider.maxActiveValue())
 	}
@@ -46,8 +47,37 @@ func TestReviewChunksHonorsConcurrency(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("ReviewChunks: %v", err)
 	}
-	if provider.maxActiveValue() > 2 {
-		t.Fatalf("max active = %d, want <= 2", provider.maxActiveValue())
+	if provider.maxActiveValue() != 2 {
+		t.Fatalf("max active = %d, want 2", provider.maxActiveValue())
+	}
+}
+
+// The first chunk call writes the shared prefix to the provider's cache; the
+// others are sent only once it has finished, so they can read it.
+func TestReviewChunksSendsTheFirstChunkAlone(t *testing.T) {
+	s, plan := executorFixture(t, 4)
+	provider := &blockingProvider{release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		_, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 3, MaxTokens: 1000, Prefix: "<spec>shared</spec>"})
+		done <- err
+	}()
+	provider.waitForCalls(t, 1)
+	time.Sleep(20 * time.Millisecond)
+	if got := provider.callCount(); got != 1 {
+		t.Fatalf("calls while the first chunk is running = %d, want 1", got)
+	}
+	close(provider.release)
+	if err := <-done; err != nil {
+		t.Fatalf("ReviewChunks: %v", err)
+	}
+	if provider.callCount() != 4 || provider.maxActiveValue() > 3 {
+		t.Fatalf("calls = %d, max active = %d; want 4 calls, at most 3 at once", provider.callCount(), provider.maxActiveValue())
+	}
+	for i, req := range provider.requests() {
+		if req.UserPromptCachedPrefix != "<spec>shared</spec>" {
+			t.Errorf("call %d prefix = %q, want the shared prefix", i, req.UserPromptCachedPrefix)
+		}
 	}
 }
 
@@ -85,9 +115,9 @@ func TestReviewChunksContinuesChunkCutOffAtOutputCap(t *testing.T) {
 		return fmt.Sprintf(`{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":%q,"description":"desc","evidence":[{"path":"SPEC.md","line_start":%d,"line_end":%d,"quote":"q"}],"impact":"impact","recommendation":"rec","blocking":false,"tags":["chunk:%s"]}`, title, line, line, ch.ID)
 	}
 	provider := &recordingSequentialProvider{responses: []string{
-		// Cut off inside a second issue, before the summary arrived.
+		// Cut off inside a second issue.
 		`{"issues":[` + issue("First", 1) + `,{"id":"ISSUE-0002","sev`,
-		`{"issues":[` + issue("Second", 2) + `],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`,
+		`{"issues":[` + issue("Second", 2) + `],"questions":[],"patches":[]}`,
 	}}
 	results, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000})
 	if err != nil {
@@ -102,9 +132,6 @@ func TestReviewChunksContinuesChunkCutOffAtOutputCap(t *testing.T) {
 	report := results[0].Report
 	if len(report.Issues) != 2 || report.Issues[0].Title != "First" || report.Issues[1].Title != "Second" {
 		t.Fatalf("issues = %#v, want the kept finding followed by the continued one", report.Issues)
-	}
-	if report.Meta.ChunkSummary != "summary" {
-		t.Fatalf("chunk summary = %q, want the one from the continuation", report.Meta.ChunkSummary)
 	}
 }
 
@@ -123,11 +150,15 @@ func (p *delayedProvider) Complete(_ context.Context, req *llm.Request) (*llm.Re
 	return &llm.Response{Content: responseForPrompt(req.UserPrompt), Model: "fake:model"}, nil
 }
 
+// blockingProvider holds every call until release is closed. With passFirst,
+// the first call returns at once.
 type blockingProvider struct {
 	mu        sync.Mutex
 	calls     int
 	active    int
 	maxActive int
+	reqs      []llm.Request
+	passFirst bool
 	release   chan struct{}
 }
 
@@ -135,11 +166,15 @@ func (p *blockingProvider) Complete(_ context.Context, req *llm.Request) (*llm.R
 	p.mu.Lock()
 	p.calls++
 	p.active++
+	p.reqs = append(p.reqs, *req)
+	first := p.calls == 1
 	if p.active > p.maxActive {
 		p.maxActive = p.active
 	}
 	p.mu.Unlock()
-	<-p.release
+	if !first || !p.passFirst {
+		<-p.release
+	}
 	p.mu.Lock()
 	p.active--
 	p.mu.Unlock()
@@ -158,6 +193,18 @@ func (p *blockingProvider) waitForCalls(t *testing.T, want int) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("calls did not reach %d", want)
+}
+
+func (p *blockingProvider) callCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.calls
+}
+
+func (p *blockingProvider) requests() []llm.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]llm.Request(nil), p.reqs...)
 }
 
 func (p *blockingProvider) maxActiveValue() int {
@@ -211,15 +258,13 @@ func executorFixture(t *testing.T, chunks int) (*spec.Spec, Plan) {
 	return s, plan
 }
 
-func responseForPrompt(prompt string) string {
-	id := "CHUNK-0001-L1-L2"
-	for _, part := range []string{"CHUNK-0001-L1-L2", "CHUNK-0002-L3-L4", "CHUNK-0003-L5-L6", "CHUNK-0004-L7-L8", "CHUNK-0005-L9-L10"} {
-		if strings.Contains(prompt, part) {
-			id = part
-			break
-		}
+// responseForPrompt answers a chunk task with one finding on its first line.
+func responseForPrompt(task string) string {
+	var line int
+	if _, err := fmt.Sscanf(strings.TrimPrefix(task, "\nReview lines L"), "%d", &line); err != nil {
+		line = 1
 	}
-	return responseForID(id)
+	return responseAtLine(line)
 }
 
 func responseForChunk(ch Chunk) string {
@@ -227,20 +272,17 @@ func responseForChunk(ch Chunk) string {
 }
 
 func responseForID(id string) string {
-	return fmt.Sprintf(`{"issues":[{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Ambiguous","description":"desc","evidence":[{"path":"SPEC.md","line_start":%d,"line_end":%d,"quote":"q"}],"impact":"impact","recommendation":"rec","blocking":false,"tags":["chunk:%s"]}],"questions":[],"patches":[],"meta":{"chunk_summary":"summary"}}`, lineStartForID(id), lineStartForID(id), id)
+	return responseAtLine(lineStartForID(id))
+}
+
+func responseAtLine(line int) string {
+	return fmt.Sprintf(`{"issues":[{"id":"ISSUE-0001","severity":"WARN","category":"AMBIGUOUS_BEHAVIOR","title":"Ambiguous","description":"desc","evidence":[{"path":"SPEC.md","line_start":%d,"line_end":%d,"quote":"q"}],"impact":"impact","recommendation":"rec","blocking":false,"tags":[]}],"questions":[],"patches":[]}`, line, line)
 }
 
 func lineStartForID(id string) int {
-	switch id {
-	case "CHUNK-0002-L3-L4":
-		return 3
-	case "CHUNK-0003-L5-L6":
-		return 5
-	case "CHUNK-0004-L7-L8":
-		return 7
-	case "CHUNK-0005-L9-L10":
-		return 9
-	default:
+	var chunk, line int
+	if _, err := fmt.Sscanf(id, "CHUNK-%d-L%d", &chunk, &line); err != nil {
 		return 1
 	}
+	return line
 }

@@ -28,6 +28,7 @@ func (p *openaiProvider) Complete(ctx context.Context, req *Request) (*Response,
 		url:              openaiAPIURL,
 		apiKey:           p.apiKey,
 		completionTokens: openaiUsesMaxCompletionTokens,
+		cacheKey:         true,
 	}
 	return completeChat(ctx, endpoint, &p.state, p.model, req)
 }

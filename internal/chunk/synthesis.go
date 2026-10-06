@@ -13,16 +13,22 @@ import (
 	"github.com/dshills/speccritic/internal/spec"
 )
 
-const maxSynthesisSummaries = 40
 const maxSynthesisFindings = 80
 const maxSynthesisQuestions = 80
-const maxSynthesisPreflight = 40
 const TagSynthesis = "synthesis"
 
 type SynthesisConfig struct {
 	SystemPrompt string
-	MaxTokens    int
-	Effort       string
+	// Prefix is the shared user-message prefix from llm.BuildSpecPrefix, the
+	// same one the chunk calls sent, so synthesis reads the spec from cache.
+	Prefix string
+	// LongCache is passed through to llm.Request.LongCache.
+	LongCache bool
+	// SpecShown reports that Prefix holds the whole spec. It is false when the
+	// spec was too large to share, and synthesis then works from the findings.
+	SpecShown bool
+	MaxTokens int
+	Effort    string
 	// EnforceSchema asks the provider to constrain the response to the review
 	// schema.
 	EnforceSchema bool
@@ -31,11 +37,9 @@ type SynthesisConfig struct {
 }
 
 type SynthesisInput struct {
-	Spec         *spec.Spec
-	Plan         Plan
-	ChunkResults []ChunkResult
-	Preflight    []schema.Issue
-	Merged       MergeResult
+	Merged MergeResult
+	// SpecShown reports that the shared prefix holds the whole spec.
+	SpecShown bool
 }
 
 func ShouldRunSynthesis(chunkingEnabled bool, lineCount int, findingCount int, threshold int) bool {
@@ -51,42 +55,37 @@ func ShouldRunSynthesis(chunkingEnabled bool, lineCount int, findingCount int, t
 	return true
 }
 
-func BuildSynthesisPrompt(input SynthesisInput) (cachedPrefix, variable string, err error) {
-	if input.Spec == nil {
-		return "", "", fmt.Errorf("spec is required")
-	}
-	var prefix strings.Builder
-	prefix.WriteString("Analyze cross-section risks in an already chunk-reviewed specification.\n")
-	prefix.WriteString("Return JSON matching the SpecCritic schema. Do not return prose or markdown fences.\n")
-	prefix.WriteString("Do not re-review the whole spec. Use the table of contents, existing findings, preflight findings, and chunk summaries only to identify cross-section defects that chunk-local reviews may miss.\n")
-	prefix.WriteString("You may identify duplicates, contradictions between findings, missing interfaces referenced across sections, terminology inconsistencies, ordering gaps, and blocking clarification questions.\n")
-	prefix.WriteString("Cite valid original spec line numbers. Do not emit score or verdict.\n")
-	prefix.WriteString("\n<spec_table_of_contents>\n")
-	prefix.WriteString(escapePromptBlock(TableOfContents(input.Plan)))
-	prefix.WriteString("</spec_table_of_contents>\n")
-
+// BuildSynthesisTask returns the task for the cross-section pass. It follows
+// the shared prefix, so synthesis reads the whole spec and the preflight
+// findings there; the task adds what the chunk reviews found.
+func BuildSynthesisTask(input SynthesisInput) (string, error) {
 	var tail strings.Builder
+	if input.SpecShown {
+		tail.WriteString("\nThe specification above was reviewed in chunks, each reviewer reporting only on its own lines. Their findings follow.\n")
+	} else {
+		tail.WriteString("\nA specification too large to show in full was reviewed in chunks, each reviewer seeing only its own lines. Their findings follow; they are all you have of the specification.\n")
+	}
+	tail.WriteString("Look for defects that span sections and so could not be seen from one chunk: contradictions between sections, interfaces used in one section and never defined, terms used inconsistently, ordering that depends on several sections, and blocking questions.\n")
+	tail.WriteString("Do not repeat the findings below. Cite specification line numbers. Do not emit score or verdict.\n")
 	for _, block := range []struct {
 		name  string
 		value any
 	}{
 		{name: "merged_chunk_findings", value: limitIssues(input.Merged.Issues, maxSynthesisFindings)},
 		{name: "merged_chunk_questions", value: limitQuestions(input.Merged.Questions, maxSynthesisQuestions)},
-		{name: "preflight_findings", value: limitIssues(input.Preflight, maxSynthesisPreflight)},
-		{name: "chunk_summaries", value: collectChunkSummaries(input.ChunkResults, maxSynthesisSummaries)},
 	} {
 		if emptyBlock(block.value) {
 			continue
 		}
 		if err := writeJSONBlock(&tail, block.name, block.value); err != nil {
-			return "", "", err
+			return "", err
 		}
 	}
-	tail.WriteString("\nReturn only the synthesis JSON report. If there are no additional cross-section findings or questions, return empty issues, questions, and patches arrays.\n")
-	return prefix.String(), tail.String(), nil
+	tail.WriteString("\nIf there are no additional cross-section findings or questions, return empty issues, questions, and patches arrays.\n")
+	return tail.String(), nil
 }
 
-func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan Plan, chunkResults []ChunkResult, preflight []schema.Issue, merged MergeResult, cfg SynthesisConfig) (*schema.Report, string, error) {
+func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, preflight []schema.Issue, merged MergeResult, cfg SynthesisConfig) (*schema.Report, string, error) {
 	if provider == nil {
 		return nil, "", fmt.Errorf("provider is required")
 	}
@@ -100,23 +99,18 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 	if !ShouldRunSynthesis(true, s.LineCount, findingCount, cfg.LineThreshold) {
 		return nil, "", nil
 	}
-	prefix, tail, err := BuildSynthesisPrompt(SynthesisInput{
-		Spec:         s,
-		Plan:         plan,
-		ChunkResults: chunkResults,
-		Preflight:    preflight,
-		Merged:       merged,
-	})
+	tail, err := BuildSynthesisTask(SynthesisInput{Merged: merged, SpecShown: cfg.SpecShown})
 	if err != nil {
 		return nil, "", err
 	}
 	req := &llm.Request{
 		SystemPrompt:           cfg.SystemPrompt,
-		UserPromptCachedPrefix: prefix,
+		UserPromptCachedPrefix: cfg.Prefix,
 		UserPrompt:             tail,
+		LongCache:              cfg.LongCache,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
-		Schema:                 llm.ReviewSchema(false, cfg.EnforceSchema),
+		Schema:                 llm.ReviewSchema(cfg.EnforceSchema),
 	}
 	return llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,
@@ -163,41 +157,6 @@ func ParseSynthesisResponse(raw string, lineCount int) (*schema.Report, error) {
 	return parsed.Report, nil
 }
 
-type chunkSummary struct {
-	ChunkID     string   `json:"chunk_id"`
-	LineStart   int      `json:"line_start"`
-	LineEnd     int      `json:"line_end"`
-	HeadingPath []string `json:"heading_path,omitempty"`
-	Summary     string   `json:"summary"`
-}
-
-func collectChunkSummaries(results []ChunkResult, limit int) []chunkSummary {
-	if limit <= 0 {
-		return nil
-	}
-	capacity := len(results)
-	if capacity > limit {
-		capacity = limit
-	}
-	summaries := make([]chunkSummary, 0, capacity)
-	for _, result := range results {
-		if result.Report == nil || strings.TrimSpace(result.Report.Meta.ChunkSummary) == "" {
-			continue
-		}
-		summaries = append(summaries, chunkSummary{
-			ChunkID:     result.Chunk.ID,
-			LineStart:   result.Chunk.LineStart,
-			LineEnd:     result.Chunk.LineEnd,
-			HeadingPath: append([]string(nil), result.Chunk.HeadingPath...),
-			Summary:     result.Report.Meta.ChunkSummary,
-		})
-		if len(summaries) == limit {
-			break
-		}
-	}
-	return summaries
-}
-
 func limitIssues(issues []schema.Issue, limit int) []schema.Issue {
 	if len(issues) <= limit {
 		return issues
@@ -238,11 +197,4 @@ func emptyBlock(value any) bool {
 	default:
 		return false
 	}
-}
-
-func escapePromptBlock(value string) string {
-	value = strings.ReplaceAll(value, "&", "&amp;")
-	value = strings.ReplaceAll(value, "<", "&lt;")
-	value = strings.ReplaceAll(value, ">", "&gt;")
-	return value
 }

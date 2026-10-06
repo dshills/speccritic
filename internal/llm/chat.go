@@ -3,6 +3,8 @@ package llm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +22,9 @@ type chatEndpoint struct {
 	// completionTokens reports whether model takes max_completion_tokens
 	// rather than max_tokens. It is nil for an API that only knows max_tokens.
 	completionTokens func(model string) bool
+	// cacheKey reports that the API takes prompt_cache_key, a hint that routes
+	// requests sharing a prefix to the same cache.
+	cacheKey bool
 }
 
 type chatRequest struct {
@@ -28,6 +33,7 @@ type chatRequest struct {
 	MaxTokens           int             `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
 	ReasoningEffort     string          `json:"reasoning_effort,omitempty"`
+	PromptCacheKey      string          `json:"prompt_cache_key,omitempty"`
 	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
 }
 
@@ -191,16 +197,24 @@ func completeChat(ctx context.Context, ep chatEndpoint, state *chatState, model 
 // sendChat makes one request. On an HTTP 400 it also reports which setting,
 // if any, the API objected to.
 func sendChat(ctx context.Context, ep chatEndpoint, model string, req *Request, settings chatSettings) (resp chatResponse, rejection chatRejection, err error) {
-	// Only include a system message when non-empty to avoid unnecessary tokens.
-	system := req.SystemPrompt
+	// The example goes after the task, not into the system prompt, so the
+	// start of the prompt stays identical across calls that expect different
+	// shapes and the provider's prefix cache can serve it.
+	//
+	// The spec and context files stay in the user message even where a
+	// provider would cache them only in the system message: they are material
+	// under review, and the system message would give their text the weight of
+	// instructions.
+	user := req.UserPromptCachedPrefix + req.UserPrompt
 	if req.Schema != nil && !settings.schema {
-		system += req.Schema.PromptFallback
+		user += req.Schema.PromptFallback
 	}
+	// Only include a system message when non-empty to avoid unnecessary tokens.
 	var messages []chatMessage
-	if system != "" {
-		messages = append(messages, chatMessage{Role: "system", Content: system})
+	if req.SystemPrompt != "" {
+		messages = append(messages, chatMessage{Role: "system", Content: req.SystemPrompt})
 	}
-	messages = append(messages, chatMessage{Role: "user", Content: req.UserPromptCachedPrefix + req.UserPrompt})
+	messages = append(messages, chatMessage{Role: "user", Content: user})
 
 	body := chatRequest{
 		Model:           model,
@@ -213,6 +227,9 @@ func sendChat(ctx context.Context, ep chatEndpoint, model string, req *Request, 
 			Type:       chatFormatJSONSchema,
 			JSONSchema: &chatJSONSchema{Name: req.Schema.Name, Strict: true, Schema: req.Schema.JSON},
 		}
+	}
+	if ep.cacheKey && req.UserPromptCachedPrefix != "" {
+		body.PromptCacheKey = promptCacheKey(req)
 	}
 	if req.MaxTokens > 0 {
 		if settings.completionTokens {
@@ -263,6 +280,15 @@ func sendChat(ctx context.Context, ep chatEndpoint, model string, req *Request, 
 		return resp, rejection, fmt.Errorf("%s: HTTP %d: %s", ep.name, httpResp.StatusCode, truncate(respStr, 200))
 	}
 	return resp, rejectedNothing, nil
+}
+
+// promptCacheKey names the cacheable start of a request. Requests that share a
+// system prompt and prefix get the same key, so the provider sends them to the
+// machine that already holds that prefix in cache. Without it, calls made in
+// parallel tend to land on machines that do not.
+func promptCacheKey(req *Request) string {
+	sum := sha256.Sum256([]byte(req.SystemPrompt + "\x00" + req.UserPromptCachedPrefix))
+	return "speccritic-" + hex.EncodeToString(sum[:12])
 }
 
 // classifyChatRejection reads a 400 response body for a setting the API will

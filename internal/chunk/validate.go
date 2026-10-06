@@ -9,8 +9,6 @@ import (
 	"github.com/dshills/speccritic/internal/schema/validate"
 )
 
-const maxChunkSummaryRunes = 600
-
 // chunkTagPrefix starts the tag that records which chunk produced an issue.
 const chunkTagPrefix = "chunk:"
 
@@ -30,8 +28,7 @@ func ParseChunkResponse(raw string, lineCount int, ch Chunk) (*schema.Report, er
 // parseChunkResponse reads a chunk review response that may have been cut
 // off. Findings that cite lines outside the chunk's primary range are dropped;
 // the neighbouring chunk reviews those lines. The chunk tag and evidence path
-// are set here rather than trusted from the model, and an over-long summary is
-// shortened. A missing summary is allowed: it only feeds synthesis.
+// are set here rather than trusted from the model.
 //
 // With specText set, quotes are checked against the spec first, so the range
 // rule applies to where a quote really is, not to the lines the model cited.
@@ -54,7 +51,6 @@ func parseChunkResponse(raw, specText string, lineCount int, ch Chunk) (llm.Pars
 	if err != nil {
 		return llm.Parsed{}, err
 	}
-	res.Report.Meta.ChunkSummary = truncateRunes(strings.TrimSpace(res.Report.Meta.ChunkSummary), maxChunkSummaryRunes)
 	return llm.Parsed{Report: res.Report, Incomplete: res.Incomplete, Dropped: res.Dropped}, nil
 }
 
@@ -78,14 +74,6 @@ func withChunkTag(tags []string, chunkID string) []string {
 		out = append(out, tag)
 	}
 	return append(out, chunkTagPrefix+chunkID)
-}
-
-func truncateRunes(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }
 
 func hasTag(tags []string, want string) bool {
