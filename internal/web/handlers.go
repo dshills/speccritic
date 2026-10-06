@@ -250,7 +250,7 @@ func (s *Server) handleCheckStub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
+		defer func() { _ = r.MultipartForm.RemoveAll() }()
 	}
 	if !s.validNonce(r) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
@@ -519,7 +519,7 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		return app.CheckRequest{}, fmt.Errorf("reading uploaded file: %w", fileErr)
 	}
 	if hasFile {
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		data, err := readUploadedSpec(file, s.config.MaxUploadBytes)
 		if err != nil {
 			return app.CheckRequest{}, err
@@ -737,7 +737,7 @@ func readOptionalUploadText(r *http.Request, field string, limit int64) (string,
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	data, err := readUploadedSpec(file, limit)
 	if err != nil {
 		return "", err

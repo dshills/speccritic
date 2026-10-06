@@ -133,6 +133,7 @@ Incremental reuse must be rejected or fall back to full review when:
 - severity threshold is less strict than the previous run and would require findings that may have been omitted from the previous report,
 - previous report lacks evidence line ranges,
 - previous report contains invalid issue/question/category/severity/id values,
+- previous report holds preflight findings only (`meta.model` is `preflight`), because it has no model review to reuse,
 - current review uses a different profile rule pack that changes prompt semantics.
 
 Provider/model differences do not automatically invalidate reuse, but the final metadata must identify the current provider/model used for newly reviewed sections.
@@ -232,7 +233,9 @@ When collisions occur:
 - prior reused issue IDs keep their original IDs,
 - new LLM issue IDs use `max(existing ISSUE-000N values) + 1` after scanning all reused and newly generated issue IDs; IDs of fixed or dropped findings must be retired and not reassigned,
 - question IDs use `max(existing Q-000N values) + 1` after scanning all reused and newly generated question IDs; IDs of fixed or dropped questions must be retired and not reassigned,
-- non-standard issue or question IDs make the previous report invalid for incremental reuse because stable SpecCritic IDs are required to preserve finding identity.
+- non-standard issue or question IDs make the previous report invalid for incremental reuse because stable SpecCritic IDs are required to preserve finding identity. A finding tagged `preflight` is the one exception: it may carry its rule ID (`PREFLIGHT-<GROUP>-<NNN>`), shared with other findings of the same rule, because preflight findings are never reused and are produced again on every run.
+
+Every report SpecCritic writes must load as a previous report. Evidence paths and `patches` in it are not validated. The evidence path is a display label, so reused findings take the current spec's evidence path, whatever path the previous run was given.
 
 Reused findings must include tag `incremental-reused`.
 

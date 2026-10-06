@@ -11,8 +11,12 @@ import (
 const TagReused = "incremental-reused"
 
 type ReuseInput struct {
-	Plan            Plan
-	Previous        *schema.Report
+	Plan     Plan
+	Previous *schema.Report
+	// SpecPath is the path of the current spec. Reused evidence is pointed at
+	// it, because the previous run may have named the same file differently
+	// and duplicate detection compares evidence paths.
+	SpecPath        string
 	CurrentRaw      string
 	CurrentRedacted string
 	Config          Config
@@ -50,8 +54,10 @@ func ReuseFindings(input ReuseInput) (ReuseResult, error) {
 		redacted = input.CurrentRaw
 	}
 	redactedLines := spec.Lines(redacted)
+	evidencePath := schema.EvidencePath(input.SpecPath)
 	var result ReuseResult
 	for _, issue := range input.Previous.Issues {
+		issue.Evidence = withPath(issue.Evidence, evidencePath)
 		reused, drop, candidate, failed := reuseIssue(issue, input.Plan, currentLines, redactedLines, cfg, input.PreflightIssues)
 		if candidate {
 			result.RemapCandidates++
@@ -66,6 +72,7 @@ func ReuseFindings(input ReuseInput) (ReuseResult, error) {
 		result.Issues = append(result.Issues, reused)
 	}
 	for _, question := range input.Previous.Questions {
+		question.Evidence = withPath(question.Evidence, evidencePath)
 		reused, drop, candidate, failed := reuseQuestion(question, input.Plan, currentLines, redactedLines, cfg)
 		if candidate {
 			result.RemapCandidates++
@@ -150,6 +157,20 @@ func remapEvidence(id string, evidence []schema.Evidence, plan Plan, currentLine
 		out = append(out, mapped)
 	}
 	return out, DroppedFinding{}, candidate, false
+}
+
+// withPath returns a copy of evidence that names path. An empty path leaves
+// the evidence as it is.
+func withPath(evidence []schema.Evidence, path string) []schema.Evidence {
+	if path == "" {
+		return evidence
+	}
+	out := make([]schema.Evidence, len(evidence))
+	for i, ev := range evidence {
+		ev.Path = path
+		out[i] = ev
+	}
+	return out
 }
 
 func inDeletedRange(ev schema.Evidence, plan Plan) bool {

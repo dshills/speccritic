@@ -272,6 +272,8 @@ Every preflight finding must include evidence with:
 
 Line bounds must be valid for the submitted spec.
 
+The path must be spelled the way it is on model findings: the spec path as given when it is a local relative path, otherwise its base name. Duplicate detection compares evidence paths, so the two kinds of finding must agree.
+
 For missing-section findings, evidence must point to:
 
 - line 1 when no better location exists, or

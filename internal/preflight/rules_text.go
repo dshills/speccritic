@@ -175,7 +175,7 @@ func isBoundary(s string, idx int) bool {
 	} else {
 		r, _ = utf8.DecodeRuneInString(s[idx:])
 	}
-	return !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r))
+	return r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
 }
 
 func isMarkdownHeading(line string) bool {

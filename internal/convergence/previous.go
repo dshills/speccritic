@@ -61,7 +61,7 @@ func LoadPreviousReport(path string) (*PreviousReport, error) {
 
 // ParsePreviousReport validates raw JSON from a previous SpecCritic report.
 func ParsePreviousReport(raw []byte) (*PreviousReport, error) {
-	report, err := validate.Parse(string(raw), 0)
+	report, err := validate.ParseReport(raw)
 	if err != nil {
 		return nil, err
 	}

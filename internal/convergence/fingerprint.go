@@ -127,9 +127,15 @@ func stableTags(tags []string) []string {
 	return out
 }
 
+// isVolatileTag reports whether tag records how one run produced or processed
+// a finding rather than what the finding is. Completion runs after convergence,
+// so completion-suggested is on a previous report's issues but never on the
+// current ones at comparison time. An incremental run sets incremental-review
+// on the findings it produces from a changed range; a full review of the same
+// spec never sets it, and a later reuse replaces it with incremental-reused.
 func isVolatileTag(tag string) bool {
 	switch tag {
-	case "incremental-reused", "llm-repaired", "provider-repaired", "repair":
+	case "incremental-reused", "incremental-review", "llm-repaired", "provider-repaired", "repair", "completion-suggested":
 		return true
 	}
 	return strings.HasPrefix(tag, "chunk:") || strings.HasPrefix(tag, "range:")

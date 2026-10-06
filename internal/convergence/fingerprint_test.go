@@ -25,6 +25,53 @@ func TestTrackIssuesFingerprintIgnoresIDAndVolatileTags(t *testing.T) {
 	}
 }
 
+// A previous report written with completion suggestions carries the
+// completion-suggested tag; the current findings never do when they are compared.
+func TestTrackIssuesFingerprintIgnoresCompletionSuggestedTag(t *testing.T) {
+	current := schema.Issue{
+		ID:       "PREFLIGHT-STRUCTURE-001",
+		Severity: schema.SeverityCritical,
+		Category: schema.CategoryUnspecifiedConstraint,
+		Title:    "Missing purpose or goals section",
+		Evidence: []schema.Evidence{{Quote: "# Bad Specification"}},
+		Tags:     []string{"missing-section", "preflight"},
+	}
+	previous := current
+	previous.Tags = []string{"completion-suggested", "missing-section", "preflight"}
+	trackedCurrent := ComputeFingerprints(TrackIssues([]schema.Issue{current}))[0]
+	trackedPrevious := ComputeFingerprints(TrackIssues([]schema.Issue{previous}))[0]
+	if trackedCurrent.Fingerprint != trackedPrevious.Fingerprint {
+		t.Fatalf("fingerprints differ:\n%s\n%s", trackedCurrent.Fingerprint, trackedPrevious.Fingerprint)
+	}
+}
+
+// A finding produced by an incremental range review carries incremental-review
+// in that run's report only: a reuse swaps the tag for incremental-reused and a
+// full review never sets it.
+func TestTrackIssuesFingerprintIgnoresIncrementalReviewTag(t *testing.T) {
+	reviewed := schema.Issue{
+		ID:       "ISSUE-0001",
+		Severity: schema.SeverityCritical,
+		Category: schema.CategoryContradiction,
+		Title:    "Authentication requirement contradicts itself",
+		Evidence: []schema.Evidence{{Quote: "Users must be authenticated."}},
+		Tags:     []string{"auth", "incremental-review", "range:SEC-003"},
+	}
+	want := ComputeFingerprints(TrackIssues([]schema.Issue{reviewed}))[0].Fingerprint
+	for name, tags := range map[string][]string{
+		"full review": {"auth"},
+		"reused":      {"auth", "incremental-reused"},
+		// A reused finding the range review produced again keeps both tags.
+		"reused and reviewed": {"auth", "incremental-reused", "incremental-review", "range:SEC-003"},
+	} {
+		other := reviewed
+		other.Tags = tags
+		if got := ComputeFingerprints(TrackIssues([]schema.Issue{other}))[0].Fingerprint; got != want {
+			t.Errorf("%s: fingerprint = %s, want %s", name, got, want)
+		}
+	}
+}
+
 func TestTrackQuestionsFingerprint(t *testing.T) {
 	q := schema.Question{
 		ID:       "Q-0001",
