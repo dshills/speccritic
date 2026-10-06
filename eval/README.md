@@ -93,19 +93,25 @@ A run directory holds `specs/` (what was reviewed), `reports/` (every full repor
 
 ## Reference run
 
-The last full run, on 2026-10-06 with `openai:gpt-6.1-sol`, default effort and 24 reviews, after the severity rubric was tuned. Compare a new run against it before trusting a change.
+The last full run, on 2026-10-06 with `openai:gpt-6.1-sol`, default effort and 24 reviews, after the severity rubric was tuned and the gaps in `export-service.md` were closed. Compare a new run against it before trusting a change.
 
 | Measure | Result |
 |---|---|
-| Defects found | 66/72 (92%) |
+| Defects found | 69/72 (96%) |
 | CRITICAL defects found and reported as CRITICAL | 49/60 (82%) |
-| Found defects reported at the labeled severity | 56/66 (85%) |
-| Model findings that match a label | 134/168 (80%) |
-| Clean runs that reported a CRITICAL | 2/12 (17%), both on `export-service` |
-| Runs with the verdict the case calls for | 22/24 (92%) |
-| Per review | 1.6 calls, about 3,100 uncached input, 3,000 cached input and 3,100 output tokens, 60 seconds |
+| Found defects reported at the labeled severity | 58/69 (84%) |
+| Model findings that match a label | 143/177 (81%) |
+| Clean runs that reported a CRITICAL | 1/12 (8%), on `export-service` |
+| Runs with the verdict the case calls for | 23/24 (96%) |
+| Per review | 1.6 calls, about 3,100 uncached input, 3,000 cached input and 3,200 output tokens, 57 seconds |
 
-Both clean-spec CRITICALs pointed at real gaps in `export-service.md`: no outcome for failed reads or a checksum mismatch, and no definition of a session token. A rerun then found a third, undefined record contents. The spec now covers all three. A rerun of the export-service cases alone afterwards (6 reviews) found every seeded defect and no CRITICAL on the clean spec in 3 runs.
+Known weak spots in this run:
+
+- The rate limiter's missing key-length bound (`key-unconstrained`, WARN) was not found in any run.
+- Three CRITICAL defects were found every time but never rated CRITICAL: `group-ordering-removed`, `code-uniqueness-unstated` and `concurrency-unspecified`. Ordering and invariant defects tend to be rated WARN.
+- The one clean-spec CRITICAL is a real but minor wording flaw: `ex-create-3` promises that exactly one of two simultaneous requests creates an export, which is false when both are rejected because an export is already running or the daily limit is reached. The other two runs rated it WARN.
+
+Earlier clean-spec CRITICALs on `export-service.md` pointed at real gaps: no outcome for failed reads or a checksum mismatch, no definition of a session token, and undefined record contents. The spec now covers all three.
 
 ## Adding a spec
 
