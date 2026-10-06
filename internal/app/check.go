@@ -24,6 +24,7 @@ import (
 	"github.com/dshills/speccritic/internal/schema"
 	"github.com/dshills/speccritic/internal/schema/validate"
 	"github.com/dshills/speccritic/internal/spec"
+	"github.com/dshills/speccritic/internal/verify"
 )
 
 type ErrorKind int
@@ -77,6 +78,12 @@ func useLongCache(contextFiles []ctxpkg.ContextFile) bool {
 	return tokens >= longCacheContextTokens
 }
 
+// Values of CheckRequest.Verify.
+const (
+	VerifyAuto = "auto"
+	VerifyOff  = "off"
+)
+
 // Values of CheckRequest.StructuredOutput.
 const (
 	StructuredOutputAuto = "auto"
@@ -110,6 +117,10 @@ type CheckRequest struct {
 	// Effort asks the model for more or less reasoning. Empty leaves the
 	// provider's default in place.
 	Effort string
+	// Verify is "auto" (the default when empty) to give every CRITICAL
+	// finding the model produced a second look before it decides the
+	// verdict, or "off" to skip it.
+	Verify string
 	// StructuredOutput is "auto" (the default when empty) to have the
 	// provider constrain responses to the review schema where the model
 	// allows it, or "off" to describe the schema in the prompt only.
@@ -277,6 +288,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 			return nil, appError(ErrorInput, err)
 		}
 		if handled {
+			c.verifyCriticals(ctx, provider, req, s, result.Report, sysPrompt, specPrefix, longCache, errw)
 			if err := c.applyConvergence(req, result.Report, convergence.CoverageIncremental, errw); err != nil {
 				return nil, appError(ErrorInput, err)
 			}
@@ -299,6 +311,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		if err != nil {
 			return nil, appError(ErrorModelOutput, err)
 		}
+		c.verifyCriticals(ctx, provider, req, s, report, sysPrompt, specPrefix, longCache, errw)
 		if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
 			return nil, appError(ErrorInput, err)
 		}
@@ -326,6 +339,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 
 	report = buildReport(req, s, report.Issues, report.Questions, report.Patches, responseModel)
 	report.Meta.DroppedFindings = dropped
+	c.verifyCriticals(ctx, provider, req, s, report, sysPrompt, specPrefix, longCache, errw)
 	if err := c.applyConvergence(req, report, convergence.CoverageFull, errw); err != nil {
 		return nil, appError(ErrorInput, err)
 	}
@@ -342,6 +356,47 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LineCount:    s.LineCount,
 		Model:        responseModel,
 	}, nil
+}
+
+// verifyCriticals gives the CRITICAL findings in report a second look and
+// recomputes the summary from the result. It does nothing when verification
+// is off, when no finding needs it, or when the spec is too large to send
+// whole in one more call.
+func (c *Checker) verifyCriticals(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, report *schema.Report, sysPrompt, specPrefix string, longCache bool, errw io.Writer) {
+	if req.Verify == VerifyOff || !verify.Candidates(report) {
+		return
+	}
+	if chunk.EstimateTokens(specPrefix)+req.MaxTokens > maxSharedRequestTokens {
+		logVerbose(errw, req.Verbose, "Spec is too large to verify CRITICAL findings in one call; they stand unchecked")
+		return
+	}
+	verify.Run(ctx, report, verify.Input{
+		Provider:      provider,
+		SystemPrompt:  sysPrompt,
+		Prefix:        specPrefix,
+		LongCache:     longCache,
+		MaxTokens:     req.MaxTokens,
+		Effort:        req.Effort,
+		EnforceSchema: enforceSchema(req),
+		Strict:        req.Strict,
+		SpecText:      s.Raw,
+		SpecPath:      schema.EvidencePath(s.Path),
+		Logf:          func(format string, args ...any) { logVerbose(errw, req.Verbose, format, args...) },
+	})
+	refreshSummary(report)
+}
+
+// refreshSummary recomputes the score, verdict and counts after findings
+// changed.
+func refreshSummary(report *schema.Report) {
+	critical, warn, info := review.Counts(report.Issues)
+	report.Summary = schema.Summary{
+		Verdict:       review.Verdict(report.Issues, report.Questions),
+		Score:         review.Score(report.Issues, report.Questions),
+		CriticalCount: critical,
+		WarnCount:     warn,
+		InfoCount:     info,
+	}
 }
 
 // applyRunMeta records how the LLM was called: what the calls used and the
@@ -1069,6 +1124,11 @@ func validateRequest(req CheckRequest) error {
 	}
 	if err := validateCompletionRequest(req); err != nil {
 		return err
+	}
+	switch req.Verify {
+	case "", VerifyAuto, VerifyOff:
+	default:
+		return fmt.Errorf("verify %q must be %s or %s", req.Verify, VerifyAuto, VerifyOff)
 	}
 	switch req.StructuredOutput {
 	case "", StructuredOutputAuto, StructuredOutputOff:

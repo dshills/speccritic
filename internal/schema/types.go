@@ -56,10 +56,13 @@ type Meta struct {
 	Usage *UsageMeta `json:"usage,omitempty"`
 	// Synthesis records what the cross-section pass of a chunked review did
 	// to the chunk findings. It is omitted when no synthesis ran.
-	Synthesis   *SynthesisMeta   `json:"synthesis,omitempty"`
-	Incremental *IncrementalMeta `json:"incremental,omitempty"`
-	Convergence *ConvergenceMeta `json:"convergence,omitempty"`
-	Completion  *CompletionMeta  `json:"completion,omitempty"`
+	Synthesis *SynthesisMeta `json:"synthesis,omitempty"`
+	// Verification records the second look given to CRITICAL findings. It is
+	// omitted when there was nothing to check or verification was off.
+	Verification *VerificationMeta `json:"verification,omitempty"`
+	Incremental  *IncrementalMeta  `json:"incremental,omitempty"`
+	Convergence  *ConvergenceMeta  `json:"convergence,omitempty"`
+	Completion   *CompletionMeta   `json:"completion,omitempty"`
 }
 
 // UsageMeta totals the LLM calls a review made. The three input token counts
@@ -97,6 +100,37 @@ type SynthesisMeta struct {
 	// finding was unknown or came from preflight, or the quoted answer is not
 	// in the spec.
 	IgnoredRetractions int `json:"ignored_retractions,omitempty"`
+}
+
+// Values of VerificationMeta.Status.
+const (
+	VerificationComplete = "complete"
+	VerificationFailed   = "failed"
+)
+
+// VerificationMeta records the second look given to CRITICAL findings.
+type VerificationMeta struct {
+	// Status is "complete", or "failed" when the call did not return
+	// usable verdicts; the findings then stand as they were.
+	Status string `json:"status"`
+	// Error explains a failed verification.
+	Error string `json:"error,omitempty"`
+	// Checked counts the findings put to the model.
+	Checked    int `json:"checked"`
+	Confirmed  int `json:"confirmed"`
+	Downgraded int `json:"downgraded"`
+	// Rejected lists findings removed, with the spec text that shows each is
+	// wrong. The quote was found in the spec before the finding was removed.
+	Rejected []RemovedFinding `json:"rejected,omitempty"`
+	// UnverifiedRejections counts rejections whose quote is not in the spec.
+	// Those findings were kept as CRITICAL.
+	UnverifiedRejections int `json:"unverified_rejections,omitempty"`
+	// Unanswered counts checked findings the model returned no verdict for.
+	// They keep their severity.
+	Unanswered int `json:"unanswered,omitempty"`
+	// Unchecked counts CRITICAL findings beyond the per-call limit, or all of
+	// them when the call failed. They keep their severity.
+	Unchecked int `json:"unchecked,omitempty"`
 }
 
 // RemovedFinding describes an issue or question taken out of a report, and

@@ -84,6 +84,7 @@ Flag	Description
 --effort <level>	Reasoning effort passed to the model; default is the provider's
 --temperature	Accepted and ignored; current models do not take a sampling temperature
 --structured-output <mode>	auto (default): the provider enforces the review JSON schema where the model allows it; off: the schema is only described in the prompt
+--verify <mode>	auto (default): one more call confirms, downgrades or rejects each CRITICAL finding from the model before the verdict is computed; a rejection is applied only when its quoted counter-evidence is in the spec; off: no verification
 --max-tokens	Hard cap for response
 --offline	Fail if no LLM configured
 --verbose	Execution tracing
@@ -162,7 +163,7 @@ Top-Level Structure
   }
 }
 
-meta.effort records the --effort level when one was set. meta may also carry two optional fields. dropped_findings counts model findings left out by local validation. usage totals the LLM calls behind the report: calls, repair_calls, continuation_calls, truncated_responses, schema_enforced_calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, call_duration_ms and wall_duration_ms. usage is omitted when the review made no LLM call.
+meta.effort records the --effort level when one was set. meta.verification records the second look at CRITICAL findings: status, counts of findings checked, confirmed and downgraded, and each rejected finding with the spec text that answers it. meta.synthesis records, for a chunked review, how many findings synthesis merged and each finding it retracted. meta may also carry two optional fields. dropped_findings counts model findings left out by local validation. usage totals the LLM calls behind the report: calls, repair_calls, continuation_calls, truncated_responses, schema_enforced_calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, call_duration_ms and wall_duration_ms. usage is omitted when the review made no LLM call.
 
 
 ⸻

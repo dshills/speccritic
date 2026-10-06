@@ -133,9 +133,12 @@ func stableTags(tags []string) []string {
 // current ones at comparison time. An incremental run sets incremental-review
 // on the findings it produces from a changed range; a full review of the same
 // spec never sets it, and a later reuse replaces it with incremental-reused.
+// The evidence and verification tags record what a check of one run's model
+// output found, which can differ between runs for the same finding.
 func isVolatileTag(tag string) bool {
 	switch tag {
-	case "incremental-reused", "incremental-review", "llm-repaired", "provider-repaired", "repair", "completion-suggested":
+	case "incremental-reused", "incremental-review", "llm-repaired", "provider-repaired", "repair", "completion-suggested",
+		"evidence-reanchored", "evidence-unverified", "severity-downgraded", "critical-confirmed", "critical-downgraded":
 		return true
 	}
 	return strings.HasPrefix(tag, "chunk:") || strings.HasPrefix(tag, "range:")

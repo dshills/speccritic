@@ -72,6 +72,28 @@ func TestTrackIssuesFingerprintIgnoresIncrementalReviewTag(t *testing.T) {
 	}
 }
 
+// Evidence checks and the second look at CRITICAL findings tag what one run's
+// model output was found to be. The same finding can be tagged differently in
+// the next run, so the tags must not change its fingerprint.
+func TestTrackIssuesFingerprintIgnoresCheckTags(t *testing.T) {
+	plain := schema.Issue{
+		ID:       "ISSUE-0001",
+		Severity: schema.SeverityWarn,
+		Category: schema.CategoryAmbiguousBehavior,
+		Title:    "Retry limit missing",
+		Evidence: []schema.Evidence{{Quote: "Retries are unlimited."}},
+		Tags:     []string{"cross-section"},
+	}
+	want := ComputeFingerprints(TrackIssues([]schema.Issue{plain}))[0].Fingerprint
+	for _, tag := range []string{"evidence-reanchored", "evidence-unverified", "severity-downgraded", "critical-confirmed", "critical-downgraded"} {
+		tagged := plain
+		tagged.Tags = []string{"cross-section", tag}
+		if got := ComputeFingerprints(TrackIssues([]schema.Issue{tagged}))[0].Fingerprint; got != want {
+			t.Errorf("tag %s changed the fingerprint", tag)
+		}
+	}
+}
+
 func TestTrackQuestionsFingerprint(t *testing.T) {
 	q := schema.Question{
 		ID:       "Q-0001",

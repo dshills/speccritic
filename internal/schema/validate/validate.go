@@ -308,6 +308,9 @@ func expectDelim(dec *json.Decoder, want json.Delim) error {
 	return nil
 }
 
+// StripFences removes a Markdown code fence wrapped around a JSON response.
+func StripFences(s string) string { return stripFences(s) }
+
 // stripFences removes leading/trailing markdown code fences (```json ... ``` or ``` ... ```).
 func stripFences(s string) string {
 	s = strings.TrimSpace(s)

@@ -84,8 +84,12 @@ func setTestEnv(t *testing.T) {
 }
 
 // runCheckFlags returns a checkFlags populated with safe defaults for testing.
+// runCheckFlags returns the flags most CLI tests run with. Verification of
+// CRITICAL findings is off: these tests script exact model responses and
+// count calls, and verification is covered by the checker's own tests.
 func runCheckFlags() checkFlags {
 	return checkFlags{
+		verify:                  "off",
 		format:                  "json",
 		profileName:             "general",
 		severityThreshold:       "info",

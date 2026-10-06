@@ -34,7 +34,7 @@ calls, or the quality of what comes back.
 | 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small | Done |
 | 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large | Done |
 | 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium | Done |
-| 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium |  |
+| 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium | Done |
 | 13 | Retry transient provider errors; keep completed chunks | Throughput | Small |  |
 | 14 | Cache results by content hash | Speed, Tokens | Medium |  |
 | 15 | Put the model output on a diet | Tokens, Speed | Medium |  |
@@ -354,7 +354,15 @@ several times smaller (estimate).
 
 ## 12. Verify CRITICAL findings before they decide the verdict
 
-**Helps:** Accuracy. **Effort:** Medium.
+**Helps:** Accuracy. **Effort:** Medium. **Status:** Done.
+
+**As built.** `--verify auto` (the default) or `off`. A rejection is applied only when its quoted
+counter-evidence is in the spec, and removes the finding, which is then listed in
+`meta.verification` with that evidence. In strict mode findings are never downgraded. Preflight
+findings and findings already tagged `critical-confirmed` are not checked. A failed call leaves every
+finding as it was. Whether verification improves precision without hurting CRITICAL recall is for
+the eval to show; on the one live run so far (`gpt-6.1-sol`, a clean eval spec) it confirmed both
+CRITICAL findings.
 
 **Today.** One CRITICAL makes the verdict INVALID and, under `--fail-on`, the exit code 2.
 Nothing checks it a second time.

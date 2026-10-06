@@ -58,7 +58,10 @@ type CheckOptions struct {
 	// StructuredOutput is "auto" (the default when empty) to have the
 	// provider enforce the review JSON schema where the model allows it, or
 	// "off" to describe the schema in the prompt only.
-	StructuredOutput                string
+	StructuredOutput string
+	// Verify is "auto" (the default when empty) to give each CRITICAL finding
+	// a second look before it decides the verdict, or "off".
+	Verify                          string
 	Offline                         bool
 	Debug                           bool
 	Verbose                         bool
@@ -157,6 +160,7 @@ func Check(ctx context.Context, opts CheckOptions) (*CheckResult, error) {
 		MaxTokens:                       opts.MaxTokens,
 		Effort:                          opts.Effort,
 		StructuredOutput:                opts.StructuredOutput,
+		Verify:                          opts.Verify,
 		Offline:                         opts.Offline,
 		Debug:                           opts.Debug,
 		Verbose:                         opts.Verbose,

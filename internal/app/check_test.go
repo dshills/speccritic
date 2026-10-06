@@ -304,6 +304,7 @@ func TestCheckerContinuesResponseCutOffAtOutputCap(t *testing.T) {
 		SeverityThreshold: "info",
 		MaxTokens:         1000,
 		Source:            SourceWeb,
+		Verify:            VerifyOff,
 	})
 	if err != nil {
 		t.Fatalf("Check returned error: %v", err)
@@ -349,6 +350,7 @@ func TestCheckerDropsInvalidFindingWithoutRetry(t *testing.T) {
 		SeverityThreshold: "info",
 		MaxTokens:         1000,
 		Source:            SourceWeb,
+		Verify:            VerifyOff,
 	})
 	if err != nil {
 		t.Fatalf("Check returned error: %v", err)
@@ -1834,5 +1836,70 @@ func TestCheckerAppliesSynthesisMerges(t *testing.T) {
 	}
 	if !strings.Contains(errw.String(), "finding(s) merged") {
 		t.Errorf("verbose log does not report the merge:\n%s", errw.String())
+	}
+}
+
+func TestCheckerVerifiesCriticalFindings(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	const review = `{"issues":[{"id":"ISSUE-0001","severity":"CRITICAL","category":"NON_TESTABLE_REQUIREMENT","title":"Not testable","description":"d","evidence":[{"line_start":1,"line_end":1,"quote":"The system must do one thing."}],"impact":"i","recommendation":"r","blocking":true,"tags":[]}],"questions":[],"patches":[]}`
+	cases := map[string]struct {
+		verify      string
+		verdict     string
+		wantCalls   int
+		wantVerdict schema.Verdict
+		wantMeta    bool
+	}{
+		"downgraded":   {verify: "", verdict: `{"verdicts":[{"id":"F1","reason":"r","decision":"downgrade","severity":"WARN","line_start":0,"line_end":0,"quote":""}]}`, wantCalls: 2, wantVerdict: schema.VerdictValidWithGaps, wantMeta: true},
+		"confirmed":    {verify: VerifyAuto, verdict: `{"verdicts":[{"id":"F1","reason":"r","decision":"confirm","severity":"CRITICAL","line_start":0,"line_end":0,"quote":""}]}`, wantCalls: 2, wantVerdict: schema.VerdictInvalid, wantMeta: true},
+		"switched off": {verify: VerifyOff, wantCalls: 1, wantVerdict: schema.VerdictInvalid},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			provider := &recordingProvider{fn: func(req *llm.Request) string {
+				if strings.Contains(req.UserPrompt, "<critical_findings>") {
+					return tc.verdict
+				}
+				return review
+			}}
+			checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+			var errw strings.Builder
+			req := usageCheckRequest(&errw)
+			req.Verify = tc.verify
+
+			result, err := checker.Check(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Check returned error: %v", err)
+			}
+			if len(provider.reqs) != tc.wantCalls {
+				t.Fatalf("calls = %d, want %d", len(provider.reqs), tc.wantCalls)
+			}
+			if got := result.Report.Summary.Verdict; got != tc.wantVerdict {
+				t.Errorf("verdict = %s, want %s", got, tc.wantVerdict)
+			}
+			if (result.Report.Meta.Verification != nil) != tc.wantMeta {
+				t.Errorf("meta.verification = %+v, want present = %v", result.Report.Meta.Verification, tc.wantMeta)
+			}
+			if tc.wantCalls == 2 {
+				if verifyReq := provider.reqs[1]; verifyReq.UserPromptCachedPrefix != provider.reqs[0].UserPromptCachedPrefix {
+					t.Error("the verification call does not share the review's cached prefix")
+				}
+				if result.Report.Meta.Usage.Calls != 2 {
+					t.Errorf("usage calls = %d, want the verification call counted", result.Report.Meta.Usage.Calls)
+				}
+			}
+		})
+	}
+}
+
+func TestCheckerRejectsUnknownVerifySetting(t *testing.T) {
+	var errw strings.Builder
+	req := usageCheckRequest(&errw)
+	req.Verify = "sometimes"
+	_, err := (&Checker{NewProvider: func(string) (llm.Provider, error) { return nil, errors.New("unused") }}).Check(context.Background(), req)
+	var appErr *Error
+	if !errors.As(err, &appErr) || appErr.Kind != ErrorInput || !strings.Contains(err.Error(), `verify "sometimes"`) {
+		t.Fatalf("error = %v, want an input error naming the setting", err)
 	}
 }

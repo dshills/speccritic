@@ -205,6 +205,8 @@ The table shows each provider's default model. They are pinned to a model genera
 
 **Prompt caching.** Every call about one spec starts with the same system prompt, context files and numbered spec, and ends with the task for that call. Providers that cache prompts bill the shared start in full once per run and at a discount afterwards. On Anthropic it is marked for caching explicitly, with a one-hour lifetime when the context files are larger than about 8,000 tokens, so a rerun after a pause still finds them cached. On OpenAI requests carry a `prompt_cache_key` so calls sharing the start reach the same cache, but `gpt-6.1-sol` was measured to cache across differing requests only what sits in the system message. The spec is deliberately kept out of the system message, where its text would carry the weight of instructions, so on OpenAI most of a multi-call run is billed at the full input rate. The system prompt tells the model that text in the spec or context files that reads like an instruction is material to audit, not an instruction.
 
+**Verifying CRITICAL findings.** One CRITICAL makes a spec INVALID, so after the review one more call puts every CRITICAL finding from the model to the model again, against the same cached spec. Each is confirmed (tag `critical-confirmed`), downgraded to WARN or INFO (tag `critical-downgraded`), or rejected. A rejection must quote the spec text that shows the finding is wrong, and is applied only if that text is in the spec; the finding is then removed and listed in `meta.verification.rejected` with that text. A rejection without such a quote leaves the finding as it was. In `--strict` mode findings are never downgraded. Preflight findings are not checked, and a finding already tagged `critical-confirmed`, as when reused by an incremental run, is not checked again. If the call fails, every finding stands and `meta.verification.status` is `failed`. `--verify off` (or `SPECCRITIC_VERIFY=off`) skips the call.
+
 **Refusals.** If a model declines to review a spec, SpecCritic reports that as an error naming the provider's reason rather than treating the reply as a review.
 
 ### Preflight
@@ -423,6 +425,7 @@ speccritic check <spec-file> [flags]
 | `--llm-model` | env/provider default | LLM model override |
 | `--effort` | provider default | Reasoning effort passed to the model: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Which levels exist depends on the provider and model |
 | `--structured-output` | `auto` | `auto` has the provider enforce the review JSON schema where the model allows it; `off` only describes the schema in the prompt |
+| `--verify` | `auto` | Give each CRITICAL finding from the model a second look before it decides the verdict: `auto` or `off` |
 | `--max-tokens` | `16384` | Maximum response tokens per call. A response that still hits the cap is continued, not regenerated: the findings already received are kept and only the rest is requested |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
 | `--verbose` | `false` | Print processing steps to stderr |
