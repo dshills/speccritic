@@ -286,3 +286,65 @@ func lineStartForID(id string) int {
 	}
 	return line
 }
+
+// flakyProvider fails the calls listed in failOn (by call number) with a
+// transient error, and answers the rest.
+type flakyProvider struct {
+	mu     sync.Mutex
+	calls  int
+	failOn map[int]error
+	tasks  []string
+}
+
+func (p *flakyProvider) Complete(_ context.Context, req *llm.Request) (*llm.Response, error) {
+	p.mu.Lock()
+	p.calls++
+	n := p.calls
+	p.tasks = append(p.tasks, req.UserPrompt)
+	p.mu.Unlock()
+	if err, ok := p.failOn[n]; ok {
+		return nil, err
+	}
+	return &llm.Response{Content: responseForPrompt(req.UserPrompt), Model: "fake:model"}, nil
+}
+
+func TestReviewChunksRetriesATransientFailureAfterTheOthers(t *testing.T) {
+	s, plan := executorFixture(t, 4)
+	provider := &flakyProvider{failOn: map[int]error{2: &llm.TransientError{Err: errors.New("rate limited")}}}
+	results, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000})
+	if err != nil {
+		t.Fatalf("ReviewChunks: %v", err)
+	}
+	if provider.calls != 5 {
+		t.Fatalf("calls = %d, want 4 chunks plus one retry", provider.calls)
+	}
+	for i, result := range results {
+		if result.Report == nil || result.Chunk.ID != plan.Chunks[i].ID {
+			t.Fatalf("result %d = %+v, want every chunk reviewed in plan order", i, result)
+		}
+	}
+	// The retry comes after the chunks that had not yet run.
+	if !strings.Contains(provider.tasks[4], "L3-L4") {
+		t.Errorf("last call = %q, want the retried chunk", provider.tasks[4])
+	}
+}
+
+func TestReviewChunksFailsWhenTheRetryFailsToo(t *testing.T) {
+	s, plan := executorFixture(t, 2)
+	transient := &llm.TransientError{Err: errors.New("rate limited")}
+	provider := &flakyProvider{failOn: map[int]error{1: transient, 3: transient}}
+	if _, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000}); !llm.IsTransient(err) {
+		t.Fatalf("error = %v, want the transient error", err)
+	}
+}
+
+func TestReviewChunksDoesNotRetryAPermanentFailure(t *testing.T) {
+	s, plan := executorFixture(t, 3)
+	provider := &flakyProvider{failOn: map[int]error{1: errors.New("invalid api key")}}
+	if _, err := ReviewChunks(context.Background(), provider, s, plan, ExecutorConfig{Concurrency: 1, MaxTokens: 1000}); err == nil || llm.IsTransient(err) {
+		t.Fatalf("error = %v, want the permanent error", err)
+	}
+	if provider.calls != 1 {
+		t.Errorf("calls = %d, want the review stopped at the first permanent failure", provider.calls)
+	}
+}

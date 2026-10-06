@@ -1,12 +1,10 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -146,13 +144,15 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 	}
 
 	enforce := req.Schema != nil && req.Schema.Enforce && !p.noSchema.has(model)
-	ar, rejectedSchema, err := p.send(ctx, p.buildRequest(model, maxTokens, req, enforce))
+	ar, rejectedSchema, retries, err := p.send(ctx, p.buildRequest(model, maxTokens, req, enforce))
 	if err != nil && rejectedSchema && enforce {
 		// The model does not take structured output. Describe the shape in
 		// the prompt instead, and stop asking this model.
 		p.noSchema.add(model)
 		enforce = false
-		ar, _, err = p.send(ctx, p.buildRequest(model, maxTokens, req, enforce))
+		var more int
+		ar, _, more, err = p.send(ctx, p.buildRequest(model, maxTokens, req, enforce))
+		retries += more
 	}
 	if err != nil {
 		return nil, err
@@ -189,6 +189,7 @@ func (p *anthropicProvider) Complete(ctx context.Context, req *Request) (*Respon
 			CacheWriteTokens: ar.Usage.CacheCreationInputTokens,
 		},
 		SchemaEnforced: enforce,
+		Retries:        retries,
 	}, nil
 }
 
@@ -224,48 +225,33 @@ func (p *anthropicProvider) buildRequest(model string, maxTokens int, req *Reque
 	return body
 }
 
-// send makes one request and decodes the reply. On an HTTP 400 it also
-// reports whether the API objected to the structured-output setting.
-func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar anthropicResponse, rejectedSchema bool, err error) {
+// send makes one request, retrying transient failures, and decodes the reply.
+// On an HTTP 400 it also reports whether the API objected to the
+// structured-output setting. retries counts requests resent.
+func (p *anthropicProvider) send(ctx context.Context, body anthropicRequest) (ar anthropicResponse, rejectedSchema bool, retries int, err error) {
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		return ar, false, fmt.Errorf("marshaling request: %w", err)
+		return ar, false, 0, fmt.Errorf("marshaling request: %w", err)
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicAPIURL, bytes.NewReader(bodyBytes))
+	res, err := postJSON(ctx, anthropicAPIURL, map[string]string{"x-api-key": p.apiKey, "anthropic-version": AnthropicVersion}, bodyBytes)
 	if err != nil {
-		return ar, false, fmt.Errorf("creating HTTP request: %w", err)
+		return ar, false, res.Retries, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", p.apiKey)
-	httpReq.Header.Set("anthropic-version", AnthropicVersion)
+	respStr := string(res.Body)
+	rejectedSchema = res.Status == http.StatusBadRequest && schemaRejected(respStr)
 
-	resp, err := sharedHTTPClient.Do(httpReq)
-	if err != nil {
-		return ar, false, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
-	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-	if err != nil {
-		return ar, false, fmt.Errorf("reading response body: %w", err)
-	}
-	respStr := string(respBytes)
-	rejectedSchema = resp.StatusCode == http.StatusBadRequest && schemaRejected(respStr)
-
-	if err := json.Unmarshal(respBytes, &ar); err != nil {
-		return ar, rejectedSchema, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", resp.StatusCode, truncate(respStr, 200), err)
+	if err := json.Unmarshal(res.Body, &ar); err != nil {
+		return ar, rejectedSchema, res.Retries, statusError(res.Status, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", res.Status, truncate(respStr, 200), err))
 	}
 
 	// Check status code first, then structured error field.
-	if resp.StatusCode != http.StatusOK {
+	if res.Status != http.StatusOK {
 		if ar.Error != nil {
-			return ar, rejectedSchema, fmt.Errorf("anthropic: %s: %s", ar.Error.Type, ar.Error.Message)
+			return ar, rejectedSchema, res.Retries, statusError(res.Status, fmt.Errorf("anthropic: %s: %s", ar.Error.Type, ar.Error.Message))
 		}
-		return ar, rejectedSchema, fmt.Errorf("anthropic: HTTP %d: %s", resp.StatusCode, truncate(respStr, 200))
+		return ar, rejectedSchema, res.Retries, statusError(res.Status, fmt.Errorf("anthropic: HTTP %d: %s", res.Status, truncate(respStr, 200)))
 	}
-	return ar, false, nil
+	return ar, false, res.Retries, nil
 }
 
 // anthropicRefusalError explains a request the model's safety classifiers

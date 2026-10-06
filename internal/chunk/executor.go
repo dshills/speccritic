@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"sync"
 
 	"github.com/dshills/speccritic/internal/llm"
@@ -67,16 +68,35 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 	// it from cache once the first call has written it, so calls sent together
 	// at the start would each pay to write it. The first chunk goes alone; the
 	// rest follow in parallel and read the cached prefix.
+	// A chunk that fails on a transient error, such as a rate limit that
+	// outlasted the provider's own retries, is tried once more after the
+	// others finish, when the load it met has passed. The chunks already
+	// reviewed are kept.
+	var retryMu sync.Mutex
+	var retry []int
+	deferRetry := func(idx int, err error) bool {
+		if !llm.IsTransient(err) {
+			return false
+		}
+		retryMu.Lock()
+		retry = append(retry, idx)
+		retryMu.Unlock()
+		logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Chunk %s failed on a transient error; it will be tried again after the others: %s", plan.Chunks[idx].ID, err)
+		return true
+	}
+
 	first := 0
 	if concurrency > 1 && len(plan.Chunks) > 1 {
 		ch := plan.Chunks[0]
 		logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Starting chunk %s alone to fill the prompt cache", ch.ID)
 		result, err := reviewOneChunk(ctx, provider, s, ch, cfg, &logMu)
-		if err != nil {
+		switch {
+		case err == nil:
+			logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Completed chunk %s", ch.ID)
+			results[0] = result
+		case !deferRetry(0, err):
 			return nil, err
 		}
-		logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Completed chunk %s", ch.ID)
-		results[0] = result
 		first = 1
 		concurrency = min(concurrency, len(plan.Chunks)-1)
 	}
@@ -92,6 +112,9 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 				ch := plan.Chunks[idx]
 				logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Starting chunk %s", ch.ID)
 				result, err := reviewOneChunk(ctx, provider, s, ch, cfg, &logMu)
+				if err != nil && deferRetry(idx, err) {
+					continue
+				}
 				if err != nil {
 					select {
 					case errs <- err:
@@ -123,6 +146,16 @@ func ReviewChunks(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	sort.Ints(retry)
+	for _, idx := range retry {
+		ch := plan.Chunks[idx]
+		logVerbose(&logMu, cfg.ErrWriter, cfg.Verbose, "Retrying chunk %s", ch.ID)
+		result, err := reviewOneChunk(ctx, provider, s, ch, cfg, &logMu)
+		if err != nil {
+			return nil, err
+		}
+		results[idx] = result
 	}
 	return results, nil
 }

@@ -35,7 +35,7 @@ calls, or the quality of what comes back.
 | 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large | Done |
 | 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium | Done |
 | 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium | Done |
-| 13 | Retry transient provider errors; keep completed chunks | Throughput | Small |  |
+| 13 | Retry transient provider errors; keep completed chunks | Throughput | Small | Done |
 | 14 | Cache results by content hash | Speed, Tokens | Medium |  |
 | 15 | Put the model output on a diet | Tokens, Speed | Medium |  |
 | 16 | Add a severity rubric and worked examples to the prompt | Accuracy | Small |  |
@@ -376,7 +376,11 @@ mostly cache reads. It adds output tokens, so judge it with the eval.
 
 ## 13. Retry transient provider errors; keep completed chunks
 
-**Helps:** Throughput. **Effort:** Small.
+**Helps:** Throughput. **Effort:** Small. **Status:** Done.
+
+**As built.** Retries live in one HTTP helper shared by all three providers rather than in the
+official SDKs, which would have meant rewriting the providers. A chunk that fails on a transient
+error after those retries is run once more after the others finish.
 
 **Today.** Nothing in `internal/llm` retries a 429, a 5xx, an overloaded response or a network
 error. The chunk fan-out cancels every worker on the first error

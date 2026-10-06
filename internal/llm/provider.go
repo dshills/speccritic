@@ -115,6 +115,9 @@ type Response struct {
 	// Usage is what the provider reported for this call. It is zero when the
 	// provider reported nothing.
 	Usage Usage
+	// Retries counts requests resent after a transient failure before this
+	// response arrived.
+	Retries int
 	// SchemaEnforced reports that the provider constrained this response to
 	// the request's Schema, rather than only describing the shape in the
 	// prompt.

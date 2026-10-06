@@ -1284,7 +1284,7 @@ func TestCheckerReportsUsageForSingleCall(t *testing.T) {
 	if usage.InputTokens != 100 || usage.OutputTokens != 10 || usage.CacheReadTokens != 5 || usage.CacheWriteTokens != 1 {
 		t.Errorf("tokens = %+v, want 100 input, 10 output, 5 cache read, 1 cache write", *usage)
 	}
-	if !strings.Contains(errw.String(), "INFO: LLM usage: 1 call(s) (0 repair, 0 continuation, 0 truncated, 0 schema-enforced); tokens: 100 input, 5 cache read, 1 cache write, 10 output;") {
+	if !strings.Contains(errw.String(), "INFO: LLM usage: 1 call(s) (0 repair, 0 continuation, 0 truncated, 0 schema-enforced, 0 request(s) resent); tokens: 100 input, 5 cache read, 1 cache write, 10 output;") {
 		t.Errorf("verbose log missing the usage line:\n%s", errw.String())
 	}
 }

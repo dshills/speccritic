@@ -19,6 +19,9 @@ type Totals struct {
 	// SchemaEnforcedCalls counts responses the provider constrained to the
 	// output schema.
 	SchemaEnforcedCalls int
+	// RetriedRequests counts requests resent after a transient failure, such
+	// as a rate limit, within calls that then succeeded.
+	RetriedRequests int
 	Usage
 	// CallDuration is the time spent inside calls, added up. With concurrent
 	// calls it exceeds WallDuration.
@@ -74,6 +77,7 @@ func (m *Meter) Complete(ctx context.Context, req *Request) (*Response, error) {
 		if resp.SchemaEnforced {
 			m.totals.SchemaEnforcedCalls++
 		}
+		m.totals.RetriedRequests += resp.Retries
 		m.totals.InputTokens += resp.Usage.InputTokens
 		m.totals.OutputTokens += resp.Usage.OutputTokens
 		m.totals.CacheReadTokens += resp.Usage.CacheReadTokens

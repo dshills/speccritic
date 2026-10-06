@@ -1,13 +1,11 @@
 package llm
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -149,8 +147,10 @@ func completeChat(ctx context.Context, ep chatEndpoint, state *chatState, model 
 	swappedTokenParameter := false
 
 	var resp chatResponse
+	retries := 0
 	for {
-		got, rejection, err := sendChat(ctx, ep, model, req, settings)
+		got, rejection, more, err := sendChat(ctx, ep, model, req, settings)
+		retries += more
 		if err == nil {
 			resp = got
 			break
@@ -191,12 +191,13 @@ func completeChat(ctx context.Context, ep chatEndpoint, state *chatState, model 
 		Truncated:      truncated,
 		Usage:          resp.usage(),
 		SchemaEnforced: settings.schema,
+		Retries:        retries,
 	}, nil
 }
 
 // sendChat makes one request. On an HTTP 400 it also reports which setting,
 // if any, the API objected to.
-func sendChat(ctx context.Context, ep chatEndpoint, model string, req *Request, settings chatSettings) (resp chatResponse, rejection chatRejection, err error) {
+func sendChat(ctx context.Context, ep chatEndpoint, model string, req *Request, settings chatSettings) (resp chatResponse, rejection chatRejection, retries int, err error) {
 	// The example goes after the task, not into the system prompt, so the
 	// start of the prompt stays identical across calls that expect different
 	// shapes and the provider's prefix cache can serve it.
@@ -241,45 +242,30 @@ func sendChat(ctx context.Context, ep chatEndpoint, model string, req *Request, 
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		return resp, rejectedNothing, fmt.Errorf("marshaling request: %w", err)
+		return resp, rejectedNothing, 0, fmt.Errorf("marshaling request: %w", err)
 	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.url, bytes.NewReader(bodyBytes))
+	res, err := postJSON(ctx, ep.url, map[string]string{"Authorization": "Bearer " + ep.apiKey}, bodyBytes)
 	if err != nil {
-		return resp, rejectedNothing, fmt.Errorf("creating HTTP request: %w", err)
+		return resp, rejectedNothing, res.Retries, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+ep.apiKey)
-
-	httpResp, err := sharedHTTPClient.Do(httpReq)
-	if err != nil {
-		return resp, rejectedNothing, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer func() { _ = httpResp.Body.Close() }()
-
-	const maxBodyBytes = 10 * 1024 * 1024 // 10 MiB
-	respBytes, err := io.ReadAll(io.LimitReader(httpResp.Body, maxBodyBytes))
-	if err != nil {
-		return resp, rejectedNothing, fmt.Errorf("reading response body: %w", err)
-	}
-	respStr := string(respBytes)
+	respStr := string(res.Body)
 
 	// A rejected setting is recognized from the raw body, because error bodies
 	// are not shaped the same way by every OpenAI-compatible API.
-	if httpResp.StatusCode == http.StatusBadRequest {
+	if res.Status == http.StatusBadRequest {
 		rejection = classifyChatRejection(respStr)
 	}
 
-	if err := json.Unmarshal(respBytes, &resp); err != nil {
-		return resp, rejection, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", httpResp.StatusCode, truncate(respStr, 200), err)
+	if err := json.Unmarshal(res.Body, &resp); err != nil {
+		return resp, rejection, res.Retries, statusError(res.Status, fmt.Errorf("parsing response JSON (HTTP %d, body: %s): %w", res.Status, truncate(respStr, 200), err))
 	}
-	if httpResp.StatusCode != http.StatusOK {
+	if res.Status != http.StatusOK {
 		if resp.Error != nil {
-			return resp, rejection, fmt.Errorf("%s: %s: %s", ep.name, resp.Error.Type, resp.Error.Message)
+			return resp, rejection, res.Retries, statusError(res.Status, fmt.Errorf("%s: %s: %s", ep.name, resp.Error.Type, resp.Error.Message))
 		}
-		return resp, rejection, fmt.Errorf("%s: HTTP %d: %s", ep.name, httpResp.StatusCode, truncate(respStr, 200))
+		return resp, rejection, res.Retries, statusError(res.Status, fmt.Errorf("%s: HTTP %d: %s", ep.name, res.Status, truncate(respStr, 200)))
 	}
-	return resp, rejectedNothing, nil
+	return resp, rejectedNothing, res.Retries, nil
 }
 
 // promptCacheKey names the cacheable start of a request. Requests that share a

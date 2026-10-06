@@ -207,6 +207,8 @@ The table shows each provider's default model. They are pinned to a model genera
 
 **Verifying CRITICAL findings.** One CRITICAL makes a spec INVALID, so after the review one more call puts every CRITICAL finding from the model to the model again, against the same cached spec. Each is confirmed (tag `critical-confirmed`), downgraded to WARN or INFO (tag `critical-downgraded`), or rejected. A rejection must quote the spec text that shows the finding is wrong, and is applied only if that text is in the spec; the finding is then removed and listed in `meta.verification.rejected` with that text. A rejection without such a quote leaves the finding as it was. In `--strict` mode findings are never downgraded. Preflight findings are not checked, and a finding already tagged `critical-confirmed`, as when reused by an incremental run, is not checked again. If the call fails, every finding stands and `meta.verification.status` is `failed`. `--verify off` (or `SPECCRITIC_VERIFY=off`) skips the call.
 
+**Transient errors.** A rate limit, an overloaded or failing provider (HTTP 408, 429, 5xx, 529) or a dropped connection is retried, up to four attempts in all, with jittered exponential backoff starting at one second. A `Retry-After` header is honored; if a provider asks to wait more than a minute, the call fails instead. `meta.usage.retried_requests` counts requests that were resent.
+
 **Refusals.** If a model declines to review a spec, SpecCritic reports that as an error naming the provider's reason rather than treating the reply as a review.
 
 ### Preflight
@@ -292,7 +294,7 @@ Implementation details:
 - Every call in a run (chunk reviews, synthesis, repairs) starts with the same system prompt and the same prefix holding the context files and the numbered spec, and only the task after it differs. The first chunk is sent alone so the others can read that prefix from the provider's prompt cache. `meta.usage.cache_read_tokens` shows the effect.
 - A chunk finding whose evidence falls outside the chunk's primary range is dropped; the rest of the chunk's findings are kept.
 - Chunk calls run with bounded concurrency.
-- If one chunk fails permanently after the built-in repair attempt, the check fails with model-output/provider error rather than returning partial results.
+- A chunk that fails on a transient error after the provider retries is tried once more after the other chunks finish, keeping the chunks already reviewed. If one chunk fails permanently, the check fails with model-output/provider error rather than returning partial results.
 - Synthesis runs when chunked review has findings or when the spec is at least `--synthesis-line-threshold` lines. A no-finding chunked review below that threshold skips synthesis.
 - Synthesis can fold chunk findings that report the same defect into one, so a gap seen by several chunk reviewers costs one deduction, and can retract a chunk finding the spec answers in another section. A retraction must quote the answering text, and is applied only if that text is in the spec; preflight findings are never retracted. `meta.synthesis` reports how many findings were merged and lists each retracted finding with the text that answers it.
 

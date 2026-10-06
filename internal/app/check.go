@@ -418,6 +418,7 @@ func usageMeta(t llm.Totals) *schema.UsageMeta {
 		ContinuationCalls:   t.ContinuationCalls,
 		TruncatedResponses:  t.TruncatedResponses,
 		SchemaEnforcedCalls: t.SchemaEnforcedCalls,
+		RetriedRequests:     t.RetriedRequests,
 		InputTokens:         t.InputTokens,
 		OutputTokens:        t.OutputTokens,
 		CacheReadTokens:     t.CacheReadTokens,
@@ -433,8 +434,8 @@ func logUsage(w io.Writer, verbose bool, t llm.Totals) {
 		return
 	}
 	logVerbose(w, verbose,
-		"LLM usage: %d call(s) (%d repair, %d continuation, %d truncated, %d schema-enforced); tokens: %d input, %d cache read, %d cache write, %d output; %s in calls, %s elapsed",
-		t.Calls, t.RepairCalls, t.ContinuationCalls, t.TruncatedResponses, t.SchemaEnforcedCalls,
+		"LLM usage: %d call(s) (%d repair, %d continuation, %d truncated, %d schema-enforced, %d request(s) resent); tokens: %d input, %d cache read, %d cache write, %d output; %s in calls, %s elapsed",
+		t.Calls, t.RepairCalls, t.ContinuationCalls, t.TruncatedResponses, t.SchemaEnforcedCalls, t.RetriedRequests,
 		t.InputTokens, t.CacheReadTokens, t.CacheWriteTokens, t.OutputTokens,
 		t.CallDuration.Round(time.Millisecond), t.WallDuration.Round(time.Millisecond),
 	)

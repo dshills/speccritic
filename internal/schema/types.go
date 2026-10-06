@@ -78,10 +78,13 @@ type UsageMeta struct {
 	// to the output schema. Fewer than Calls means the model or the
 	// --structured-output setting left some responses unconstrained.
 	SchemaEnforcedCalls int `json:"schema_enforced_calls"`
-	InputTokens         int `json:"input_tokens"`
-	OutputTokens        int `json:"output_tokens"`
-	CacheReadTokens     int `json:"cache_read_tokens"`
-	CacheWriteTokens    int `json:"cache_write_tokens"`
+	// RetriedRequests counts requests resent after a transient failure, such
+	// as a rate limit or an overloaded provider.
+	RetriedRequests  int `json:"retried_requests,omitempty"`
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
 	// CallDurationMS adds up the time spent inside calls; with concurrent
 	// chunk calls it exceeds WallDurationMS, which runs from the start of the
 	// first call to the end of the last.

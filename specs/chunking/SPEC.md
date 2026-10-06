@@ -195,7 +195,7 @@ Requirements:
 - Cancel outstanding chunk calls when the parent context is cancelled.
 - Validate chunk output one finding at a time. Drop a finding that fails validation and keep the rest; count dropped findings in `meta.dropped_findings`.
 - Retry a chunk once using the existing repair prompt pattern only when its response holds nothing usable.
-- Retry transient provider errors according to existing provider retry policy if available.
+- Transient provider errors (rate limits, 5xx and overloaded responses, dropped connections) are retried by the provider layer, up to four attempts with jittered exponential backoff that honors `Retry-After`. A chunk that still fails on a transient error is tried once more after the other chunks finish; the chunks already reviewed are kept.
 - If one chunk fails permanently, the whole check fails with provider/model-output error.
 - Log chunk start/end in verbose mode without printing spec text.
 
