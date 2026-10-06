@@ -36,6 +36,8 @@ A coding agent that skips spec validation is making silent assumptions. Those as
 
 The spec loop (steps 3–6) runs entirely before the agent touches any code. This is the invariant.
 
+Re-running in step 6 is cheap when nothing changed: a spec reviewed again with the same flags and context files is served from the review cache, with the same verdict and no model call (see [Re-runs and the Review Cache](#re-runs-and-the-review-cache)).
+
 ### Minimum Viable Integration
 
 Add this to your `CLAUDE.md` (or equivalent agent instruction file):
@@ -131,6 +133,8 @@ Every issue includes an `evidence` array with exact line numbers and quoted text
 ```
 
 Use `line_start`/`line_end` to locate the exact text in SPEC.md that needs revision. Do not guess—edit only the cited lines.
+
+Every quote has been checked against the spec. When the cited range is five lines or fewer, `quote` holds the full text of those lines. An issue whose quote could not be found in the spec is tagged `evidence-unverified`, and cannot be CRITICAL.
 
 ---
 
@@ -232,8 +236,10 @@ speccritic check SPEC.md --patch-out spec.patch
 The patch file uses diff-match-patch format. To apply patches as a starting point:
 
 1. Read each patch's `issue_id` to map it back to the corresponding issue
-2. Review the `before`/`after` fields in the JSON output for a human-readable diff
+2. Review the `before`/`after` fields in the JSON output for a human-readable diff. `before` is copied from SPEC.md by SpecCritic, not by the model, so it always matches the spec text exactly
 3. Apply changes to SPEC.md manually or use the patch file as a reference
+
+If the loop applies `recommendation` text and never reads patches, add `--patches off`. The model then writes no patches, which saves output tokens and time on every run.
 
 Patches are intentionally minimal (additive or substitutive only, never rewrites). If a patch feels like it's solving the wrong problem, the underlying requirement may need user clarification rather than a text substitution.
 
@@ -255,14 +261,33 @@ Note: `--severity-threshold` filters only the `issues` array in the output. The 
 
 ---
 
+## Re-runs and the Review Cache
+
+A finished review is stored in the user cache directory, keyed by everything that shapes it: the spec, the context files, the profile, the model and every review flag, and the speccritic build. Running the same check again returns the stored review:
+
+- the verdict, score and findings are identical, so the gate does not flip on unchanged input;
+- no model is called, so the run is free and takes well under a second;
+- `meta.cache.hit` is `true` and `meta.usage` is absent.
+
+Any edit to SPEC.md or a context file, or any change of flags or model, gets a fresh review. Reviews older than 30 days are not used.
+
+```bash
+# Was this review served from the cache?
+jq -r '.meta.cache.hit // false' .speccritic-review.json
+```
+
+Use `--no-cache` (or `SPECCRITIC_NO_CACHE=true`) only for a deliberate second opinion on an unchanged spec. Re-running unchanged input in the hope of a better verdict is not a fix: change the spec instead. `SPECCRITIC_CACHE_DIR` moves the cache, for example into a directory a CI job restores between runs.
+
+---
+
 ## Exit Codes in Scripts and Hooks
 
 | Code | Meaning | Agent action |
 |------|---------|--------------|
 | `0` | Spec acceptable | Proceed |
 | `2` | Verdict ≥ `--fail-on` threshold | Block; fix spec |
-| `3` | Bad input (invalid flags, missing file, missing `SPECCRITIC_MODEL`) | Fix configuration |
-| `4` | LLM provider error | Check API key and model name |
+| `3` | Bad input (invalid flags, missing file, or `SPECCRITIC_LLM_PROVIDER` / `SPECCRITIC_LLM_MODEL` unset with `--offline`) | Fix configuration |
+| `4` | LLM provider error. Rate limits, overloads and dropped connections were already retried, up to four attempts | Check API key and model name; after a rate limit, wait before retrying |
 | `5` | Model output invalid after retry | Retry or report |
 
 Use `--fail-on` to create a hard gate:
@@ -303,7 +328,7 @@ For any new feature or significant change:
 3. Read `.speccritic-review.json`:
    - If `summary.verdict` is `INVALID`: fix every CRITICAL issue using
      `issues[].recommendation` before writing any code.
-   - If `summary.questions` contains CRITICAL items: ask the user each
+   - If `questions[]` contains CRITICAL items: ask the user each
      question. Do not infer answers.
    - If `summary.verdict` is `VALID_WITH_GAPS`: document the WARN issues
      as known risks and proceed only with user approval.
@@ -311,8 +336,13 @@ For any new feature or significant change:
 
 4. Never begin an implementation plan until the spec gate passes.
 
+5. Re-running an unchanged spec returns the cached review with the same
+   verdict. Change the spec to change the result; use --no-cache only when
+   the user asks for a second opinion.
+
 Environment:
-  SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6
+  SPECCRITIC_LLM_PROVIDER=anthropic
+  SPECCRITIC_LLM_MODEL=claude-opus-5-5
   ANTHROPIC_API_KEY (must be set in environment)
 ```
 
@@ -368,7 +398,8 @@ jobs:
 
       - name: Run spec gate
         env:
-          SPECCRITIC_MODEL: anthropic:claude-sonnet-4-6
+          SPECCRITIC_LLM_PROVIDER: anthropic
+          SPECCRITIC_LLM_MODEL: claude-opus-5-5
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           speccritic check SPEC.md \
@@ -386,7 +417,9 @@ jobs:
           path: spec-review.json
 ```
 
-The `--offline` flag ensures the job fails immediately (exit 3) rather than silently falling back to the default model if `ANTHROPIC_API_KEY` or `SPECCRITIC_MODEL` is misconfigured.
+The `--offline` flag ensures the job fails immediately (exit 3) rather than silently falling back to the default model if `SPECCRITIC_LLM_PROVIDER` or `SPECCRITIC_LLM_MODEL` is unset. A missing or wrong `ANTHROPIC_API_KEY` surfaces as a provider error (exit 4).
+
+Each CI runner starts with an empty review cache, so every run calls the model. To reuse reviews across runs, point `SPECCRITIC_CACHE_DIR` at a directory the job saves and restores with `actions/cache`.
 
 ---
 
@@ -451,7 +484,7 @@ Agent:
 
 | Resource | Path |
 |----------|------|
-| Specification | `specs/SPEC.md` |
-| Implementation plan | `specs/PLAN.md` |
+| Specification | `specs/initial/SPEC.md` (features in `specs/*/SPEC.md`) |
+| Implementation plan | `specs/initial/PLAN.md` |
 | Usage guide | `README.md` |
 | Project guidance | `CLAUDE.md` |

@@ -57,12 +57,17 @@ speccritic check SPEC.md \
   --format json --out .speccritic-review.json
 ```
 
+Add `--patches off` when the loop applies `recommendation` text and never reads `.patches`. The model then writes no patches, which saves output tokens and time on every run.
+
 Required environment:
 
 ```bash
-SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6   # or openai:gpt-4o
-ANTHROPIC_API_KEY=...                          # or OPENAI_API_KEY
+SPECCRITIC_LLM_PROVIDER=anthropic   # or openai, gemini
+SPECCRITIC_LLM_MODEL=claude-opus-5-5
+ANTHROPIC_API_KEY=...               # or OPENAI_API_KEY, GEMINI_API_KEY
 ```
+
+The provider and model are two variables. An older `SPECCRITIC_MODEL=provider:model` setting is ignored: SpecCritic warns and falls back to its default model, and with `--offline` it exits with code 3.
 
 ## Reading the output
 
@@ -103,9 +108,11 @@ Loop:
 
 1. Apply every CRITICAL `issue.recommendation` to the cited lines in SPEC.md (do not edit lines outside the evidence range — that hides the trail).
 2. Surface every CRITICAL `question` to the user. Wait for an answer. Fold the answer into SPEC.md.
-3. Re-run speccritic.
+3. Re-run speccritic. A re-run of a spec that has not changed, with the same flags, is served from the review cache: the same verdict, no model call, and `meta.cache.hit` set to `true`. Any edit to SPEC.md or a context file is reviewed fresh.
 4. Repeat until `verdict == VALID` (or `VALID_WITH_GAPS` with all WARNs explicitly accepted).
 5. Only then hand off to plancritic.
+
+Add `--no-cache` only when the user asks for a second opinion on an unchanged spec. Re-running unchanged input to get a different verdict is not a fix.
 
 Patches in `.patches` are **advisory** — minimal textual suggestions, never wholesale rewrites. Review them against the underlying requirement before applying. A patch that makes the spec pass but misrepresents intent is worse than a failing spec.
 
@@ -131,8 +138,8 @@ Patches in `.patches` are **advisory** — minimal textual suggestions, never wh
 |---|---|---|
 | `0` | Verdict below `--fail-on` threshold | Proceed |
 | `2` | Verdict meets `--fail-on` threshold | Block; refine spec |
-| `3` | Bad input / `SPECCRITIC_MODEL` unset with `--offline` | Fix configuration |
-| `4` | LLM provider error | Check API key and model name |
+| `3` | Bad input, or `SPECCRITIC_LLM_PROVIDER` / `SPECCRITIC_LLM_MODEL` unset with `--offline` | Fix configuration |
+| `4` | LLM provider error. Rate limits, overloads and dropped connections were already retried | Check API key and model name; if it was a rate limit, wait before retrying |
 | `5` | Model output failed schema validation after retry | Retry once, then report to user |
 
 For CI or scripted gates, add `--fail-on INVALID` and `--offline`.

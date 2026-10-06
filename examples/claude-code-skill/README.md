@@ -12,6 +12,7 @@ When active, Claude Code will:
 - Parse `.speccritic-review.json` and decide on `summary.verdict` — not on issue counts.
 - Apply CRITICAL `issue.recommendation` edits to the cited line ranges in `SPEC.md`.
 - Surface CRITICAL `question` entries to you verbatim rather than guessing answers.
+- Re-run after each round of edits. An unchanged spec is served from the review cache with the same verdict and no model call; `--no-cache` forces a fresh review.
 - Loop until the verdict is `VALID` (or `VALID_WITH_GAPS` with documented WARNs) before handing off to the next gate.
 
 ## Prerequisites
@@ -23,8 +24,9 @@ When active, Claude Code will:
    ```
 3. **Model + API key** exported in the shell that runs Claude Code:
    ```sh
-   export SPECCRITIC_MODEL=anthropic:claude-sonnet-4-6   # or openai:gpt-4o, gemini:gemini-3.8-flash
-   export ANTHROPIC_API_KEY=...                          # or OPENAI_API_KEY / GEMINI_API_KEY
+   export SPECCRITIC_LLM_PROVIDER=anthropic   # or openai, gemini
+   export SPECCRITIC_LLM_MODEL=claude-opus-5-5
+   export ANTHROPIC_API_KEY=...               # or OPENAI_API_KEY / GEMINI_API_KEY
    ```
 
 ## Install
@@ -68,5 +70,5 @@ Common edits:
 ## Related
 
 - Main project: [`../../README.md`](../../README.md)
-- Spec format and invariants: [`../../specs/SPEC.md`](../../specs/SPEC.md)
+- Spec format and invariants: [`../../specs/initial/SPEC.md`](../../specs/initial/SPEC.md)
 - Workflow that chains speccritic with plancritic, realitycheck, prism, and clarion: [`../../WORKFLOW.md`](../../WORKFLOW.md)

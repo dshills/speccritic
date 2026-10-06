@@ -89,7 +89,23 @@ A run directory holds `specs/` (what was reviewed), `reports/` (every full repor
 - **Intervals are wide.** Twenty-four defects over three runs gives 72 observations, so overall recall is known to about plus or minus 10 points at best. The true uncertainty is larger, because three runs on the same defect are not independent observations. Per-category figures rest on a handful of defects each and are for spotting a category that is never found, not for comparing two settings.
 - **Precision is a lower bound.** A finding that matches no label counts against it, even when it is a real defect the labels do not list. Read the unmatched findings before quoting the figure.
 - **A failed review is not a review that found nothing.** A provider error, a timeout or invalid output goes to `errors.jsonl` and stays out of every rate.
-- **The eval measures the tool as shipped.** It calls the same entry point as library callers with the CLI's defaults, preflight included.
+- **The eval measures the tool as shipped.** It calls the same entry point as library callers with the CLI's defaults, preflight included. The one exception is the review cache, which the eval turns off: every review calls the model, so repeated runs measure the model's real spread rather than replaying a stored verdict.
+
+## Reference run
+
+The last full run, on 2026-10-06 with `openai:gpt-6.1-sol`, default effort and 24 reviews, after the severity rubric was tuned. Compare a new run against it before trusting a change.
+
+| Measure | Result |
+|---|---|
+| Defects found | 66/72 (92%) |
+| CRITICAL defects found and reported as CRITICAL | 49/60 (82%) |
+| Found defects reported at the labeled severity | 56/66 (85%) |
+| Model findings that match a label | 134/168 (80%) |
+| Clean runs that reported a CRITICAL | 2/12 (17%), both on `export-service` |
+| Runs with the verdict the case calls for | 22/24 (92%) |
+| Per review | 1.6 calls, about 3,100 uncached input, 3,000 cached input and 3,100 output tokens, 60 seconds |
+
+The two clean-spec CRITICALs have not been triaged. Read them before deciding whether `export-service.md` has a real gap or the model is wrong.
 
 ## Adding a spec
 
