@@ -37,7 +37,7 @@ const tailGroup = "tail"
 // with nothing after it (as in a YAML schema) does not pull in the line below.
 //
 // The value is, in order of preference:
-//   - a quoted value closed on the same line;
+//   - a quoted value closed on the same line (see quotedOnLine);
 //   - a quoted value closed on a later line, unless the closing quote runs
 //     straight into a letter or digit. That is what an apostrophe ("user's")
 //     or the opening quote of a later phrase looks like, and treating one as
@@ -47,11 +47,25 @@ const tailGroup = "tail"
 //   - an opening quote that is never closed that way, redacted to the end of
 //     its own line;
 //   - an unquoted value, which stops at whitespace and delimiters.
-const assignedValue = `[ \t]*[:=][ \t]*(?:` +
-	`"[^"\n]+"|` + "`[^`\n]+`" + `|'[^'\n]+'|` +
+var assignedValue = `[ \t]*[:=][ \t]*(?:` +
+	quotedOnLine(`"`, true) + `|` + quotedOnLine("`", false) + `|` + quotedOnLine(`'`, true) + `|` +
 	`(?:"[^"]+"|` + "`[^`]+`" + `|'[^']+')(?P<` + tailGroup + `>[^\pL\pN_]|\z)|` +
 	`"[^"\n]+|` + "`[^`\n]+" + `|'[^'\n]+|` +
 	`[^\s"',;{}[\]()]+)`
+
+// quotedOnLine matches a non-empty value opened and closed with the quote
+// character q on one line. A backslash-escaped q inside the value does not
+// close it, and neither does a doubled q when doubled is set: YAML, SQL and
+// CSV escape a quote inside a quoted value by doubling it, while a run of
+// backticks is not an escape. A backslash can also stand alone, so a value
+// that ends in one ("C:\dir\") still closes at the last quote on its line.
+func quotedOnLine(q string, doubled bool) string {
+	escaped := `\\[^\n]|`
+	if doubled {
+		escaped += q + q + `|`
+	}
+	return q + `(?:` + escaped + `[^` + q + `\n])+` + q
+}
 
 // quotedPhrase matches a value opened with the quote character q that holds a
 // space or tab, without leaving its line. A backslash-escaped or doubled q
@@ -84,12 +98,13 @@ var patterns = [numPatterns]redactPattern{
 	// Regex is case-insensitive, so triggers are lowercase and matched against
 	// a lowercased copy of the input.
 	{re: regexp.MustCompile(`(?i)Bearer\s+[A-Za-z0-9\-._~+/]{20,}=*`), triggers: []string{"bearer"}, fold: true},
-	// Inline password assignments (case-insensitive regex; lowercase triggers).
+	// Inline password assignments (case-insensitive regex; lowercase triggers) —
+	// optional closing quote handles JSON keys.
 	// The value is a run of non-whitespace, not cut at `,;{}[]()` — passwords
 	// legitimately contain those. A quoted value ("val", 'val', `val`) holding a
 	// space or tab is instead matched as a quotedPhrase, so a passphrase does
 	// not leak past its first word; one without is already covered whole by \S+.
-	{re: regexp.MustCompile(`(?i)password[ \t]*[:=][ \t]*(?:` + quotedPhrase(`"`) + `|` + quotedPhrase("`") + `|` + quotedPhrase(`'`) + `|\S+)`), triggers: []string{"password"}, fold: true},
+	{re: regexp.MustCompile(`(?i)password"?[ \t]*[:=][ \t]*(?:` + quotedPhrase(`"`) + `|` + quotedPhrase("`") + `|` + quotedPhrase(`'`) + `|\S+)`), triggers: []string{"password"}, fold: true},
 	// api_key / apiKey / api-key assignments — optional closing quote handles JSON keys.
 	{re: regexp.MustCompile(`(?i)api[-_]?key"?` + assignedValue), triggers: []string{"api_key", "apikey", "api-key"}, fold: true},
 	// client_secret / clientSecret / secret_key / private_key OAuth secret assignments.
