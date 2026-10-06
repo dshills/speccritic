@@ -109,7 +109,7 @@ Known weak spots in this run:
 
 - The rate limiter's missing key-length bound (`key-unconstrained`, WARN) was not found in any run.
 - Three CRITICAL defects were found every time but never rated CRITICAL: `group-ordering-removed`, `code-uniqueness-unstated` and `concurrency-unspecified`. Ordering and invariant defects tend to be rated WARN.
-- The one clean-spec CRITICAL is a real but minor wording flaw: `ex-create-3` promises that exactly one of two simultaneous requests creates an export, which is false when both are rejected because an export is already running or the daily limit is reached. The other two runs rated it WARN.
+- The one clean-spec CRITICAL is a real but minor wording flaw: `ex-create-3` promises that exactly one of two simultaneous requests creates an export, which is false when both are rejected because an export is already running or the daily limit is reached. The other two runs rated it WARN. The requirement has since been reworded to cover only requests that would each succeed alone; an export-service-only rerun (6 reviews) then found no CRITICAL on the clean spec and every seeded defect.
 
 Earlier clean-spec CRITICALs on `export-service.md` pointed at real gaps: no outcome for failed reads or a checksum mismatch, no definition of a session token, and undefined record contents. The spec now covers all three.
 

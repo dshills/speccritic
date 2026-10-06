@@ -59,7 +59,7 @@ Creates an export request.
 
 - **`ex-create-1`**: If the account has an export request in the state `queued` or `running`, the service MUST NOT create another one and MUST respond with status 409, the error code `export_in_progress` and the request id of the existing request.
 - **`ex-create-2`**: Otherwise the service MUST create an export request in the state `queued` and respond with status 202 and the body `{"request_id": "<request id>", "state": "queued"}`.
-- **`ex-create-3`**: The check in `ex-create-1` and the creation in `ex-create-2` MUST be atomic per account: of two simultaneous requests for one account, exactly one creates an export request.
+- **`ex-create-3`**: The check in `ex-create-1` and the creation in `ex-create-2` MUST be atomic per account: when two simultaneous requests for one account would each create an export request if sent alone, exactly one creates it and the other receives status 409 with the error code `export_in_progress`.
 - **`ex-create-4`**: An account MUST be limited to 3 created export requests in any period of 24 consecutive hours. A request over that limit MUST receive status 429 and the error code `export_limit_reached`.
 
 ### GET /accounts/{account_id}/exports/{request_id}
