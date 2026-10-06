@@ -18,10 +18,12 @@ This document specifies a service that lets an account owner request a copy of t
 
 ## Definitions
 
+- **Session token**: a token issued and validated by the platform's identity service, which this document does not specify. A session token is valid when the identity service accepts it. A valid session token gives one user id and, for each account, the roles that user holds there.
 - **Account owner**: the user whose session token carries the role `owner` for an account.
 - **Export request**: one request by an account owner to export one account. It is identified by a request id.
 - **Archive**: one file in ZIP format that holds the exported data of one export request.
 - **Data category**: one of `profile`, `messages`, `files` and `billing`.
+- **Record**: one entry stored in the account database under a data category. A record belongs to the account whose account id it carries. The fields of each kind of record are defined by the account database schema, which this document does not specify; an archive reproduces them as stored.
 - **Expiry**: the moment 7 days after an export request reaches the state `ready`. An archive expires at its expiry.
 - **Download link**: an address that returns the archive of one export request.
 - **Checksum**: the SHA-256 digest of the bytes of a file.
@@ -84,7 +86,7 @@ Every response with a status of 400 or above MUST have a body with the field `er
 
 - **`ex-arch-1`**: The archive MUST contain one directory per data category, named after the category.
 - **`ex-arch-2`**: Each directory MUST contain every record of that category that belonged to the account at the moment the request entered the state `running`. Records created later are not part of the archive.
-- **`ex-arch-3`**: Records of the categories `profile`, `messages` and `billing` MUST be written as one JSON (JavaScript Object Notation) document per record. Records of the category `files` MUST be written as the original bytes under the original file name.
+- **`ex-arch-3`**: Records of the categories `profile`, `messages` and `billing` MUST be written as one JSON (JavaScript Object Notation) document per record, holding every field of the record under its stored field name with its stored value. Records of the category `files` MUST be written as the original bytes under the original file name.
 - **`ex-arch-4`**: The archive MUST contain a file `manifest.json` at the top level that lists, for every other file in the archive, its path, its size in bytes and its checksum.
 - **`ex-arch-5`**: An archive MUST NOT exceed 50 gibibytes. If the exported data would exceed that size, the request MUST move to the state `failed` with the failure reason `too_large`.
 
@@ -95,6 +97,8 @@ Every response with a status of 400 or above MUST have a body with the field `er
 - **`ex-build-3`**: If a worker stops before the archive is complete, the request MUST move from `running` back to `queued`, and any partial archive MUST be deleted. A request MUST return to `queued` at most 2 times; the third time it MUST move to `failed` with the failure reason `worker_lost`.
 - **`ex-build-4`**: If writing the archive to the archive store fails, the worker MUST retry the write 3 times, waiting 10 seconds between tries, and then move the request to `failed` with the failure reason `storage_error`.
 - **`ex-build-5`**: A request MUST move to `ready` only after the archive and `manifest.json` are completely written and the checksums in the manifest have been verified against the stored files.
+- **`ex-build-6`**: If reading account data or reading a stored file back for verification fails, the worker MUST retry the read 3 times, waiting 10 seconds between tries, and then move the request to `failed` with the failure reason `read_error`.
+- **`ex-build-7`**: If a checksum computed from a stored file differs from the checksum in `manifest.json`, the worker MUST move the request to `failed` with the failure reason `checksum_mismatch` without retrying.
 
 ## Notifications
 
@@ -114,6 +118,7 @@ Every response with a status of 400 or above MUST have a body with the field `er
 - **`ex-perf-2`**: The download endpoint MUST send the first byte of the archive within 2 seconds at the 99th percentile.
 - **`ex-outage-1`**: If the request database is unreachable, every endpoint MUST respond with status 503 and the error code `unavailable`.
 - **`ex-outage-2`**: If the archive store is unreachable, the download endpoint MUST respond with status 503 and the error code `unavailable`.
+- **`ex-outage-3`**: If the identity service is unreachable, every endpoint MUST respond with status 503 and the error code `unavailable`.
 
 ## Acceptance criteria
 
@@ -124,4 +129,6 @@ Every response with a status of 400 or above MUST have a body with the field `er
 - A test advances the clock to the expiry, 7 days past `ready`, and observes that the download endpoint returns status 410. It then advances the clock 1 more hour and observes that the archive is gone from the archive store and the state is `expired`.
 - A test stops the worker during a build three times and observes the state `failed` with the failure reason `worker_lost`.
 - A test makes the archive store reject writes and observes the state `failed` with the failure reason `storage_error` after 3 retries.
+- A test makes reads of account data fail and observes the state `failed` with the failure reason `read_error` after 3 retries.
+- A test alters a stored file before verification and observes the state `failed` with the failure reason `checksum_mismatch`.
 - A load test meets `ex-perf-1` and `ex-perf-2`.

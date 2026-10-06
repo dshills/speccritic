@@ -105,7 +105,7 @@ The last full run, on 2026-10-06 with `openai:gpt-6.1-sol`, default effort and 2
 | Runs with the verdict the case calls for | 22/24 (92%) |
 | Per review | 1.6 calls, about 3,100 uncached input, 3,000 cached input and 3,100 output tokens, 60 seconds |
 
-The two clean-spec CRITICALs have not been triaged. Read them before deciding whether `export-service.md` has a real gap or the model is wrong.
+Both clean-spec CRITICALs pointed at real gaps in `export-service.md`: no outcome for failed reads or a checksum mismatch, and no definition of a session token. A rerun then found a third, undefined record contents. The spec now covers all three. A rerun of the export-service cases alone afterwards (6 reviews) found every seeded defect and no CRITICAL on the clean spec in 3 runs.
 
 ## Adding a spec
 
