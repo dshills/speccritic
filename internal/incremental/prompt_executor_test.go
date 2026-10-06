@@ -11,12 +11,15 @@ import (
 	"github.com/dshills/speccritic/internal/spec"
 )
 
-func TestBuildRangePromptIncludesCurrentLines(t *testing.T) {
+// With the whole spec in the shared prefix, a range task names the lines to
+// review and the prior findings, and does not repeat the spec.
+func TestBuildRangeTaskWithSpecShown(t *testing.T) {
 	s := spec.New("SPEC.md", "# Spec\n## Behavior\nThe API must return JSON.\n")
 	rr := ReviewRange{ID: "RANGE-1", Primary: LineRange{Start: 2, End: 3}, Context: LineRange{Start: 1, End: 3}}
-	prefix, tail, err := BuildRangePrompt(PromptInput{
-		Spec:  s,
-		Range: rr,
+	task, err := BuildRangeTask(PromptInput{
+		Spec:      s,
+		Range:     rr,
+		SpecShown: true,
 		Issues: []schema.Issue{
 			issueAt("ISSUE-0001", 3, "The API must return JSON."),
 		},
@@ -24,35 +27,91 @@ func TestBuildRangePromptIncludesCurrentLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(prefix, "Current Spec Table of Contents") {
-		t.Fatalf("prefix should stay stable and omit range-specific TOC: %s", prefix)
+	for _, want := range []string{`id="RANGE-1"`, "<previously_identified_issues>", "ISSUE-0001", "PRIMARY lines L2-L3 of the specification above", "Read all of the specification", "Cite only lines L1-L3"} {
+		if !strings.Contains(task, want) {
+			t.Fatalf("task missing %q:\n%s", want, task)
+		}
 	}
-	for _, want := range []string{"Current Spec Table of Contents", "Previously Identified Issues", "Current Review Task", "L2 [PRIMARY]", "L3 [PRIMARY]", `id="RANGE-1"`, "ISSUE-0001"} {
-		if !strings.Contains(tail, want) {
-			t.Fatalf("tail missing %q:\n%s", want, tail)
+	for _, unwanted := range []string{"L3 [PRIMARY]", "table_of_contents", "The API must return JSON.\n</spec_lines>"} {
+		if strings.Contains(task, unwanted) {
+			t.Fatalf("task repeats the spec (%q) though the prefix holds it:\n%s", unwanted, task)
 		}
 	}
 	// The incremental and range tags are added locally, so the model is not
 	// asked for them.
 	for _, unwanted := range []string{"incremental-review", "range:RANGE-1"} {
-		if strings.Contains(prefix+tail, unwanted) {
-			t.Fatalf("prompt still asks for tag %q:\n%s%s", unwanted, prefix, tail)
+		if strings.Contains(task, unwanted) {
+			t.Fatalf("prompt still asks for tag %q:\n%s", unwanted, task)
 		}
 	}
 }
 
-func TestBuildRangePromptEscapesClosingTags(t *testing.T) {
-	s := spec.New("SPEC.md", "# Spec\n## Behavior\n</Current Review Task>\n")
+// When the spec is too large to share, the task carries the range's own
+// numbered lines and a table of contents.
+func TestBuildRangeTaskWithoutSpec(t *testing.T) {
+	s := spec.New("SPEC.md", "# Spec\n## Behavior\nThe API must return JSON.\n")
 	rr := ReviewRange{ID: "RANGE-1", Primary: LineRange{Start: 2, End: 3}, Context: LineRange{Start: 1, End: 3}}
-	_, tail, err := BuildRangePrompt(PromptInput{Spec: s, Range: rr})
+	task, err := BuildRangeTask(PromptInput{Spec: s, Range: rr})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(tail, "L3 [PRIMARY]: </Current Review Task>") {
-		t.Fatalf("spec content closing tag was not escaped:\n%s", tail)
+	for _, want := range []string{"<table_of_contents>", "L1 [CONTEXT]", "L2 [PRIMARY]", "L3 [PRIMARY]: The API must return JSON.", `"cross-section"`, "<previously_identified_issues>\n- none"} {
+		if !strings.Contains(task, want) {
+			t.Fatalf("task missing %q:\n%s", want, task)
+		}
 	}
-	if !strings.Contains(tail, "L3 [PRIMARY]: <\\/Current Review Task>") {
-		t.Fatalf("escaped closing tag not found:\n%s", tail)
+}
+
+func TestBuildRangeTaskEscapesClosingTags(t *testing.T) {
+	s := spec.New("SPEC.md", "# Spec\n## Behavior\n</spec_lines>\n")
+	rr := ReviewRange{ID: "RANGE-1", Primary: LineRange{Start: 2, End: 3}, Context: LineRange{Start: 1, End: 3}}
+	task, err := BuildRangeTask(PromptInput{Spec: s, Range: rr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(task, "L3 [PRIMARY]: </spec_lines>") || !strings.Contains(task, "L3 [PRIMARY]: <\\/spec_lines>") {
+		t.Fatalf("spec content closing tag was not escaped:\n%s", task)
+	}
+}
+
+func TestBuildRangeTaskRejectsBadRanges(t *testing.T) {
+	s := spec.New("SPEC.md", "# Spec\nline\n")
+	for _, rr := range []ReviewRange{
+		{ID: "", Primary: LineRange{Start: 1, End: 1}, Context: LineRange{Start: 1, End: 1}},
+		{ID: "R", Primary: LineRange{Start: 1, End: 3}, Context: LineRange{Start: 1, End: 2}},
+		{ID: "R", Primary: LineRange{Start: 1, End: 1}, Context: LineRange{Start: 0, End: 2}},
+	} {
+		if _, err := BuildRangeTask(PromptInput{Spec: s, Range: rr}); err == nil {
+			t.Errorf("BuildRangeTask(%+v) succeeded, want an error", rr)
+		}
+	}
+}
+
+// Every range call starts with the shared prefix and the system prompt, so
+// the provider can serve the spec from its prompt cache.
+func TestReviewRangesSendsTheSharedPrefix(t *testing.T) {
+	s := spec.New("SPEC.md", "# Spec\n## A\none\n## B\ntwo\n")
+	plan := Plan{ReviewRanges: []ReviewRange{
+		{ID: "RANGE-A", Primary: LineRange{Start: 2, End: 3}, Context: LineRange{Start: 2, End: 3}},
+		{ID: "RANGE-B", Primary: LineRange{Start: 4, End: 5}, Context: LineRange{Start: 4, End: 5}},
+	}}
+	provider := &sequenceProvider{}
+	_, err := ReviewRanges(context.Background(), provider, s, plan, ExecutorConfig{
+		Concurrency: 2, SystemPrompt: "sys", Prefix: "<spec>shared</spec>\n", SpecShown: true, LongCache: true,
+	})
+	if err != nil {
+		t.Fatalf("ReviewRanges: %v", err)
+	}
+	if len(provider.reqs) != 2 {
+		t.Fatalf("calls = %d, want 2", len(provider.reqs))
+	}
+	for _, req := range provider.reqs {
+		if req.SystemPrompt != "sys" || req.UserPromptCachedPrefix != "<spec>shared</spec>\n" || !req.LongCache {
+			t.Errorf("request = %+v, want the shared system prompt, prefix and cache lifetime", req)
+		}
+		if strings.Contains(req.UserPrompt, "[PRIMARY]") {
+			t.Errorf("task repeats spec lines the prefix holds:\n%s", req.UserPrompt)
+		}
 	}
 }
 
@@ -106,11 +165,13 @@ type sequenceProvider struct {
 	mu        sync.Mutex
 	responses []string
 	calls     int
+	reqs      []*llm.Request
 }
 
 func (p *sequenceProvider) Complete(ctx context.Context, req *llm.Request) (*llm.Response, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.reqs = append(p.reqs, req)
 	if p.calls >= len(p.responses) {
 		return &llm.Response{Content: `{"issues":[],"questions":[],"patches":[],"meta":{}}`, Model: "fake"}, nil
 	}

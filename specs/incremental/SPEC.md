@@ -248,9 +248,9 @@ Findings dropped due to remap failure, severity filtering, or deduplication must
 Incremental LLM calls must receive:
 
 - global system prompt for the selected profile,
-- current spec table of contents,
-- changed section text with current spec line numbers,
-- bounded unchanged context around the changed section,
+- the same user-message prefix as a full or chunked review of the current spec: the `--context` files, the whole numbered current spec and the known preflight findings, so a range is judged against the same material as a full review and the provider can serve the prefix from its prompt cache,
+- when the whole spec is too large to share (the same limit as chunking), a prefix without the spec, plus a current spec table of contents and the changed section text with current spec line numbers in the task,
+- the changed primary range and bounded unchanged context around it, named by current line numbers,
 - relevant prior findings from neighboring unchanged sections,
 - a `Previously Identified Issues` block containing selected prior findings as context only,
 - a compact document-level summary of omitted findings by severity, including IDs and titles for omitted `CRITICAL` findings,
@@ -286,6 +286,7 @@ Rules:
 - If `--preflight-mode only`, incremental LLM review is skipped even when `--incremental-from` is set.
 - If `--preflight-mode gate` finds blocking defects, LLM review is skipped and prior LLM findings are not reused unless explicitly allowed by a later spec.
 - Duplicate handling between current preflight and reused LLM findings must follow existing preflight deduplication rules.
+- New range findings follow the full review's rules: a finding tagged `duplicates:<PREFLIGHT-ID>` naming a listed preflight finding, or matching one exactly, is tagged `preflight-confirmed` and replaces that preflight finding.
 
 ## 14. Chunking Interaction
 

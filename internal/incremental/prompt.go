@@ -16,45 +16,56 @@ type PromptInput struct {
 	Range     ReviewRange
 	Issues    []schema.Issue
 	Questions []schema.Question
+	// SpecShown says the shared prefix built by llm.BuildSpecPrefix holds the
+	// whole numbered spec, as it does for a full or chunked review. The task
+	// then names the lines to review. Without it the spec was too large to
+	// share, and the task carries the range's own numbered lines and a table
+	// of contents.
+	SpecShown bool
 }
 
-func BuildRangePrompt(input PromptInput) (cachedPrefix, variable string, err error) {
+// BuildRangeTask returns the task for reviewing one changed range. It follows
+// the prefix every call about the spec shares (context files, the numbered
+// spec and the known preflight findings), so a range review judges its lines
+// with the same material as a full review, and reads the spec from the
+// provider's prompt cache.
+func BuildRangeTask(input PromptInput) (string, error) {
 	if input.Spec == nil {
-		return "", "", fmt.Errorf("spec is required")
+		return "", fmt.Errorf("spec is required")
 	}
 	if input.Range.ID == "" {
-		return "", "", fmt.Errorf("review range is required")
+		return "", fmt.Errorf("review range is required")
 	}
 	lines := spec.Lines(input.Spec.Raw)
-	if !validRange(input.Range.Context.Start, input.Range.Context.End, len(lines)) {
-		return "", "", fmt.Errorf("range %s has invalid context bounds %d-%d", input.Range.ID, input.Range.Context.Start, input.Range.Context.End)
+	rr := input.Range
+	if !validRange(rr.Context.Start, rr.Context.End, len(lines)) || !validRange(rr.Primary.Start, rr.Primary.End, len(lines)) {
+		return "", fmt.Errorf("range %s has invalid bounds: primary %d-%d, context %d-%d", rr.ID, rr.Primary.Start, rr.Primary.End, rr.Context.Start, rr.Context.End)
 	}
-	var prefix strings.Builder
-	prefix.WriteString("Analyze changed sections of the current specification for defects.\n")
-	prefix.WriteString("Return JSON only using the SpecCritic schema. Do not include score or verdict.\n")
-	prefix.WriteString("Cite current spec line numbers only.\n")
-	prefix.WriteString("Previously identified issues are context only and must not be reported again as new findings.\n")
-
 	var tail strings.Builder
 	fmt.Fprintf(&tail, "\n<incremental_range id=%q primary=\"L%d-L%d\" context=\"L%d-L%d\">\n",
-		input.Range.ID,
-		input.Range.Primary.Start,
-		input.Range.Primary.End,
-		input.Range.Context.Start,
-		input.Range.Context.End,
-	)
-	tail.WriteString("\n<Current Spec Table of Contents>\n")
-	tail.WriteString(tableOfContents(input.Spec.Raw, input.Range))
-	tail.WriteString("</Current Spec Table of Contents>\n")
-	tail.WriteString("\n<Previously Identified Issues>\n")
-	tail.WriteString(formatPriorFindings(input.Issues, input.Questions, input.Range))
-	tail.WriteString("</Previously Identified Issues>\n")
-	tail.WriteString("\n<Current Review Task>\n")
-	tail.WriteString("Review the PRIMARY lines. Context lines may be cited only when the changed text creates or exposes the defect there.\n")
-	tail.WriteString(numberedRange(lines, input.Range))
-	tail.WriteString("\n</Current Review Task>\n")
+		rr.ID, rr.Primary.Start, rr.Primary.End, rr.Context.Start, rr.Context.End)
+	tail.WriteString("The specification changed since its last review. Only the changed lines are reviewed now; findings on the rest are kept from that review.\n")
+	tail.WriteString("\n<previously_identified_issues>\n")
+	tail.WriteString(formatPriorFindings(input.Issues, input.Questions, rr))
+	tail.WriteString("</previously_identified_issues>\n")
+	tail.WriteString("These are already known. Do not report them again as new findings.\n\n")
+	if input.SpecShown {
+		fmt.Fprintf(&tail, "Review the PRIMARY lines L%d-L%d of the specification above for defects. Read all of the specification, so that you do not report as missing something stated elsewhere.\n", rr.Primary.Start, rr.Primary.End)
+	} else {
+		tail.WriteString("The specification is too large to show in full. Its table of contents:\n")
+		tail.WriteString("<table_of_contents>\n")
+		tail.WriteString(tableOfContents(input.Spec.Raw, rr))
+		tail.WriteString("</table_of_contents>\n")
+		tail.WriteString("The lines to review, PRIMARY lines with CONTEXT lines around them:\n")
+		fmt.Fprintf(&tail, "<spec_lines file=%q>\n", input.Spec.Path)
+		tail.WriteString(numberedRange(lines, rr))
+		tail.WriteString("</spec_lines>\n")
+		fmt.Fprintf(&tail, "Review the PRIMARY lines L%d-L%d for defects. A term or rule you cannot find here may be defined elsewhere: say so in the finding and add the tag \"cross-section\" rather than asserting that it is missing.\n", rr.Primary.Start, rr.Primary.End)
+	}
+	fmt.Fprintf(&tail, "Cite only lines L%d-L%d in evidence. Lines outside L%d-L%d may be cited only when the changed text creates or exposes the defect there.\n",
+		rr.Context.Start, rr.Context.End, rr.Primary.Start, rr.Primary.End)
 	tail.WriteString("</incremental_range>\n")
-	return prefix.String(), tail.String(), nil
+	return tail.String(), nil
 }
 
 func tableOfContents(raw string, rr ReviewRange) string {

@@ -328,6 +328,7 @@ Important behavior:
 - `--incremental-base` is required when the current spec content differs from the previous report hash. The JSON report contains findings and metadata, not the old spec text needed for section diffing.
 - If the current spec hash matches the previous report hash, SpecCritic can reuse eligible findings without a base file.
 - Preflight still runs against the full current spec before any incremental LLM call.
+- Each changed range is reviewed with the same context files, whole spec and preflight findings as a full review, so the same text is judged the same way either way, and the spec is read from the provider's prompt cache. A spec too large to share whole gets the same treatment as in chunking: each range call sees only its own lines and a table of contents.
 - Reused findings are tagged `incremental-reused`; new findings from changed ranges are tagged `incremental-review`.
 - `--incremental-report` adds optional `meta.incremental` details to JSON output. Markdown output keeps the normal human-readable report shape.
 - The web UI exposes the same workflow with optional `Previous JSON result`, `Previous spec file`, and `Mode` controls. Uploaded previous results are used only for the current request.

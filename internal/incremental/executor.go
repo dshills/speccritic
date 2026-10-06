@@ -13,8 +13,17 @@ import (
 
 type ExecutorConfig struct {
 	SystemPrompt string
-	MaxTokens    int
-	Effort       string
+	// Prefix is the user-message prefix every call about the spec shares,
+	// built by llm.BuildSpecPrefix: context files, the numbered spec unless
+	// it is too large to share, and the known preflight findings.
+	Prefix string
+	// SpecShown says Prefix holds the whole spec. When false each range
+	// task carries its own numbered lines.
+	SpecShown bool
+	// LongCache asks for the longer prompt-cache lifetime.
+	LongCache bool
+	MaxTokens int
+	Effort    string
 	// EnforceSchema asks the provider to constrain responses to the review
 	// schema.
 	EnforceSchema bool
@@ -95,20 +104,22 @@ func ReviewRanges(ctx context.Context, provider llm.Provider, s *spec.Spec, plan
 }
 
 func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, plan Plan, rr ReviewRange, cfg ExecutorConfig) (RangeResult, error) {
-	prefix, tail, err := BuildRangePrompt(PromptInput{
+	task, err := BuildRangeTask(PromptInput{
 		Spec:      s,
 		Plan:      plan,
 		Range:     rr,
 		Issues:    cfg.Issues,
 		Questions: cfg.Questions,
+		SpecShown: cfg.SpecShown,
 	})
 	if err != nil {
 		return RangeResult{}, err
 	}
 	req := &llm.Request{
 		SystemPrompt:           cfg.SystemPrompt,
-		UserPromptCachedPrefix: prefix,
-		UserPrompt:             tail,
+		UserPromptCachedPrefix: cfg.Prefix,
+		UserPrompt:             task,
+		LongCache:              cfg.LongCache,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
 		Schema:                 llm.ReviewSchema(cfg.EnforceSchema, !cfg.NoPatches),

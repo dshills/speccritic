@@ -458,7 +458,15 @@ it caches. Keep it brief and explain the reasons; tune it against the eval.
 
 ## 17. Bring the incremental path to parity with full review
 
-**Helps:** Accuracy. **Effort:** Small.
+**Helps:** Accuracy. **Effort:** Small. **Status:** Done.
+
+**As built.** Range calls now start with the same system prompt and prefix as a full review
+(context files, the whole numbered spec, the known preflight findings), so the verification call
+that follows reads the same cached prefix. The fixed sentences moved into the per-range task,
+which names the lines to review. A spec too large to share falls back as chunking does: no spec
+in the prefix, and the task carries the range's numbered lines and a table of contents. Range
+findings tagged as duplicates of a preflight finding now confirm and replace it, as in a full
+review.
 
 **Today.** Incremental range prompts omit `--context` files and the known-preflight list
 (`internal/incremental/executor.go:14-21`, `internal/incremental/prompt.go:21-61`). The same

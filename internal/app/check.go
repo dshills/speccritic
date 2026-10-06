@@ -324,7 +324,14 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 	defer func() { logUsage(errw, req.Verbose, meter.Totals()) }()
 
 	if incremental {
-		result, handled, err := c.checkIncremental(ctx, provider, req, s, originalRaw, preflightIssues, sysPrompt, errw)
+		result, handled, err := c.checkIncremental(ctx, provider, req, s, originalRaw, preflightIssues, sharedPrompt{
+			system:            sysPrompt,
+			prefix:            specPrefix,
+			longCache:         longCache,
+			contextFiles:      contextFiles,
+			preflightContext:  preflightContext,
+			knownPreflightIDs: knownPreflightIDs,
+		}, errw)
 		if err != nil {
 			var appErr *Error
 			if errors.As(err, &appErr) {
@@ -669,7 +676,21 @@ func (c *Checker) applyCompletion(req CheckRequest, s *spec.Spec, report *schema
 	return nil
 }
 
-func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, originalRaw string, preflightIssues []schema.Issue, sysPrompt string, errw io.Writer) (*CheckResult, bool, error) {
+// sharedPrompt is what every LLM call about one spec starts with.
+type sharedPrompt struct {
+	system string
+	// prefix is the shared user-message prefix: context files, the numbered
+	// spec and the known preflight findings.
+	prefix           string
+	longCache        bool
+	contextFiles     []ctxpkg.ContextFile
+	preflightContext string
+	// knownPreflightIDs are the preflight findings listed in prefix, which a
+	// model finding may name as its duplicate.
+	knownPreflightIDs map[string]bool
+}
+
+func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, req CheckRequest, s *spec.Spec, originalRaw string, preflightIssues []schema.Issue, shared sharedPrompt, errw io.Writer) (*CheckResult, bool, error) {
 	cfg := incrementalConfigFromRequest(req)
 	if cfg.Mode == incremental.ModeOff {
 		return nil, false, nil
@@ -728,8 +749,19 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 	model := "incremental-reuse"
 	if len(plan.ReviewRanges) > 0 {
 		logVerbose(errw, req.Verbose, "Incremental review: %d range(s), %d reused issue(s)", len(plan.ReviewRanges), len(reuse.Issues))
+		// Range reviews share the prefix of a full review, so they judge the
+		// changed lines against the same context files, whole spec and
+		// preflight findings, and read them from the prompt cache.
+		prefix, specShown := shared.prefix, true
+		if chunk.EstimateTokens(prefix)+req.MaxTokens > maxSharedRequestTokens {
+			logVerbose(errw, req.Verbose, "Spec is too large to send whole with every range call; each range call gets only its own lines")
+			prefix, specShown = llm.BuildSpecPrefix(nil, shared.contextFiles, shared.preflightContext), false
+		}
 		rangeResults, err = incremental.ReviewRanges(ctx, provider, s, plan, incremental.ExecutorConfig{
-			SystemPrompt:  sysPrompt,
+			SystemPrompt:  shared.system,
+			Prefix:        prefix,
+			SpecShown:     specShown,
+			LongCache:     shared.longCache,
 			MaxTokens:     req.MaxTokens,
 			Effort:        req.Effort,
 			EnforceSchema: enforceSchema(req),
@@ -742,6 +774,7 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 			return nil, false, appError(ErrorModelOutput, err)
 		}
 		model = firstIncrementalModel(rangeResults)
+		preflightIssues = foldRangePreflightDuplicates(preflightIssues, rangeResults, shared.knownPreflightIDs)
 	}
 	meta := &schema.IncrementalMeta{
 		Enabled:          true,
@@ -1103,6 +1136,37 @@ func buildPreflightPromptContext(issues []schema.Issue) (string, map[string]bool
 	}
 	sb.WriteString("</known_preflight_findings>\n")
 	return sb.String(), known
+}
+
+// foldRangePreflightDuplicates does for incremental range findings what
+// mergeIssues does for a full review: a finding that duplicates a preflight
+// finding, by its duplicates: tag or by matching it exactly, is marked as
+// confirming it, and that preflight finding is left out. It returns the
+// preflight findings that remain.
+func foldRangePreflightDuplicates(preflightIssues []schema.Issue, results []incremental.RangeResult, knownPreflightIDs map[string]bool) []schema.Issue {
+	consumed := make(map[int]bool)
+	for _, result := range results {
+		if result.Report == nil {
+			continue
+		}
+		result.Report.Issues = cleanDuplicateTags(result.Report.Issues, knownPreflightIDs)
+		for i, issue := range result.Report.Issues {
+			if idx := duplicatePreflightIndex(issue, preflightIssues, knownPreflightIDs, consumed); idx >= 0 {
+				consumed[idx] = true
+				result.Report.Issues[i] = markPreflightConfirmed(issue, preflightIssues[idx])
+			}
+		}
+	}
+	if len(consumed) == 0 {
+		return preflightIssues
+	}
+	remaining := make([]schema.Issue, 0, len(preflightIssues)-len(consumed))
+	for i, issue := range preflightIssues {
+		if !consumed[i] {
+			remaining = append(remaining, issue)
+		}
+	}
+	return remaining
 }
 
 func cleanDuplicateTags(issues []schema.Issue, knownPreflightIDs map[string]bool) []schema.Issue {
