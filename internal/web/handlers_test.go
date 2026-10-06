@@ -792,3 +792,17 @@ func writeMultipartFile(t *testing.T, writer *multipart.Writer, field, name, tex
 		t.Fatalf("write %s file part: %v", field, err)
 	}
 }
+
+// The web UI writes nothing it was given to disk, so its checks must neither
+// read nor store cached reviews.
+func TestWebChecksBypassTheReviewCache(t *testing.T) {
+	checker := &fakeChecker{}
+	server, err := NewServerWithChecker(DefaultConfig(), checker)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	createStoredCheck(t, server)
+	if !checker.req.NoCache {
+		t.Fatal("web check request uses the review cache")
+	}
+}

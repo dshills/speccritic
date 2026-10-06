@@ -278,6 +278,8 @@ If async checks are implemented:
 
 The first version must not write uploaded specs, review results, prompts, or patches to disk unless the user explicitly uses an export endpoint.
 
+Web checks therefore bypass the CLI's on-disk review cache: they neither read a cached review nor store one.
+
 Retained checks must expire after a configurable TTL as well as a configurable maximum count.
 
 ## 15. Shared Engine Requirements

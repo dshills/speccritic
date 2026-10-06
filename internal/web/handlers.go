@@ -692,8 +692,11 @@ func (s *Server) parseCheckRequest(r *http.Request) (app.CheckRequest, error) {
 		CompletionTemplate:              completionTemplate,
 		CompletionMaxPatches:            completionMaxPatches,
 		CompletionOpenDecisions:         true,
-		Source:                          app.SourceWeb,
-		ErrWriter:                       io.Discard,
+		// The web UI writes nothing it was given to disk (web spec,
+		// Persistence), so it neither reads nor stores cached reviews.
+		NoCache:   true,
+		Source:    app.SourceWeb,
+		ErrWriter: io.Discard,
 	}, nil
 }
 
