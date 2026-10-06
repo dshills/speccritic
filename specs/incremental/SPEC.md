@@ -201,7 +201,7 @@ Rules:
 - Deleted sections are not reviewed, and prior findings attached only to deleted ranges are dropped.
 - Unchanged sections are reuse ranges.
 - Moved sections are reuse ranges only if evidence can be remapped; otherwise review ranges.
-- Adjacent changed sections should be coalesced when their context windows overlap, unless a conservative token estimate for the final prompt would exceed 80% of the configured chunk token threshold. The estimate must include system prompt, profile rules, context lines, prior-finding context, and section text.
+- Adjacent changed sections should be coalesced when their context windows overlap, unless a conservative token estimate for the final prompt would exceed 80% of the incremental range budget of 4,000 estimated tokens. This budget is separate from `--chunk-token-threshold`, which decides whether a full review is chunked. The estimate must include system prompt, profile rules, context lines, prior-finding context, and section text.
 - Review ranges must include `--incremental-context-lines` on both sides, bounded by spec limits.
 - Evidence emitted by new LLM calls may cite any current spec line included in the prompt. Findings that cite context-only lines must be deduplicated against existing and remapped prior findings before scoring.
 

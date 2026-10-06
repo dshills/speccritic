@@ -51,10 +51,10 @@ New flags:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--chunking` | `auto` | Chunking mode: `auto`, `on`, or `off`. |
-| `--chunk-lines` | `180` | Target maximum source lines per chunk before overlap. |
+| `--chunk-lines` | `600` | Target maximum source lines per chunk. |
 | `--chunk-overlap` | `20` | Number of neighboring lines included before and after each chunk for context. |
-| `--chunk-min-lines` | `120` | Minimum line count before `auto` may use chunking. |
-| `--chunk-token-threshold` | `4000` | Estimated prompt-token count before `auto` may use chunking. |
+| `--chunk-min-lines` | `1500` | Spec line count at which `auto` uses chunking. |
+| `--chunk-token-threshold` | `30000` | Estimated size of the spec alone, in tokens, at which `auto` uses chunking. |
 | `--chunk-concurrency` | `3` | Maximum number of concurrent chunk LLM calls. |
 | `--synthesis-line-threshold` | `240` | Minimum total spec line count before a no-finding chunked review may run synthesis. |
 | `--chunk-timeout` | same as normal provider timeout | Optional per-chunk timeout override. |
@@ -63,7 +63,7 @@ Mode behavior:
 
 - `--chunking off` always uses the existing single-call LLM path.
 - `--chunking on` always uses chunking when an LLM call is needed.
-- `--chunking auto` uses chunking only when the redacted spec has at least `--chunk-min-lines` lines or the estimated prompt size is at least `--chunk-token-threshold` tokens.
+- `--chunking auto` uses chunking only when the redacted spec has at least `--chunk-min-lines` lines or the estimated size of the numbered spec is at least `--chunk-token-threshold` tokens. Context files and prompt instructions are not counted.
 
 Token estimation:
 

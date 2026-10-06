@@ -120,7 +120,7 @@ func TestPlanSpecSplitsOversizedSection(t *testing.T) {
 func TestValidateConfig(t *testing.T) {
 	tests := []Config{
 		{ChunkLines: 0, ChunkOverlap: 0, ChunkMinLines: 0, ChunkTokenThreshold: 0, ChunkConcurrency: 0},
-		WithDefaults(Config{ChunkOverlap: 180}),
+		WithDefaults(Config{ChunkOverlap: DefaultChunkLines}),
 		WithDefaults(Config{ChunkConcurrency: 17}),
 		WithDefaults(Config{ChunkTokenThreshold: -1}),
 		WithDefaults(Config{SynthesisLineThreshold: -1}),
@@ -132,6 +132,21 @@ func TestValidateConfig(t *testing.T) {
 		if err := ValidateConfig(cfg); err == nil {
 			t.Fatalf("test %d expected invalid config %#v", i, cfg)
 		}
+	}
+}
+
+// A spec of a few hundred lines is reviewed in one call by default. Only a
+// spec too large for that is split.
+func TestShouldChunkDefaults(t *testing.T) {
+	cfg := WithDefaults(Config{})
+	if ShouldChunk(600, 12000, cfg) {
+		t.Fatal("a 600-line spec should not be chunked by default")
+	}
+	if !ShouldChunk(DefaultChunkMinLines, 1, cfg) {
+		t.Fatal("a spec at the line threshold should be chunked")
+	}
+	if !ShouldChunk(200, DefaultChunkTokenThreshold, cfg) {
+		t.Fatal("a spec at the token threshold should be chunked")
 	}
 }
 

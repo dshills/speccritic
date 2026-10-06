@@ -261,7 +261,7 @@ Modes:
 
 | Mode | Behavior |
 |------|----------|
-| `auto` | Use chunking when the spec has at least `--chunk-min-lines` lines or the estimated prompt is at least `--chunk-token-threshold` tokens. This is the default. |
+| `auto` | Use chunking when the spec has at least `--chunk-min-lines` lines (default 1,500) or is estimated at `--chunk-token-threshold` tokens or more (default 30,000). Context files do not count toward the estimate. This is the default. |
 | `on` | Force chunking whenever an LLM review is needed. |
 | `off` | Always use the original single-call LLM path. |
 
@@ -275,10 +275,10 @@ speccritic check SPEC.md --chunking on --chunk-concurrency 4
 speccritic check SPEC.md --chunking off --debug
 
 # Tune for a rate-limited provider.
-speccritic check SPEC.md --chunk-concurrency 1 --chunk-lines 140
+speccritic check SPEC.md --chunk-concurrency 1 --chunk-lines 400
 ```
 
-Chunking usually reduces wall-clock latency for large specs, but it may increase the total number of provider calls. Provider rate limits, low concurrency, and cross-section synthesis can reduce the speedup. Cross-section defects are still hard: chunk prompts receive a table of contents and summaries, and synthesis can catch contradictions across sections, but no chunking strategy is a substitute for a well-structured spec.
+Chunking is a latency tool for very large specs. A single call sees the whole spec and costs one request, so `auto` leaves specs of a few hundred lines to the single-call path. Chunking may reduce wall-clock time for a large spec, but it increases the total number of provider calls. Provider rate limits, low concurrency, and cross-section synthesis can reduce the speedup. Cross-section defects are still hard: chunk prompts receive a table of contents and summaries, and synthesis can catch contradictions across sections, but no chunking strategy is a substitute for a well-structured spec.
 
 Implementation details:
 
@@ -429,10 +429,10 @@ speccritic check <spec-file> [flags]
 | `--preflight-profile` | same as `--profile` | Override the preflight rule profile |
 | `--preflight-ignore` | (none) | Suppress a preflight rule ID; can be repeated |
 | `--chunking` | `auto` | Chunking mode: `auto`, `on`, or `off` |
-| `--chunk-lines` | `180` | Target maximum source lines per chunk before overlap |
+| `--chunk-lines` | `600` | Target maximum source lines per chunk |
 | `--chunk-overlap` | `20` | Neighboring lines included before and after each chunk for context |
-| `--chunk-min-lines` | `120` | Minimum line count before `auto` may use chunking |
-| `--chunk-token-threshold` | `4000` | Estimated prompt-token count before `auto` may use chunking |
+| `--chunk-min-lines` | `1500` | Spec line count at which `auto` chunks the review |
+| `--chunk-token-threshold` | `30000` | Estimated spec size, in tokens, at which `auto` chunks the review. Context files are not counted |
 | `--chunk-concurrency` | `3` | Maximum concurrent chunk LLM calls |
 | `--synthesis-line-threshold` | `240` | Minimum total line count before a no-finding chunked review may run synthesis |
 | `--incremental-from` | (none) | Previous SpecCritic JSON report used as the incremental baseline |

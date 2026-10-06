@@ -30,9 +30,11 @@ Pass options through `EVAL_FLAGS`:
 ```bash
 make eval EVAL_FLAGS="--runs 5 --effort high"
 make eval EVAL_FLAGS="--cases rate-limiter --runs 1"
-make eval EVAL_FLAGS="--chunking off"
+make eval EVAL_FLAGS="--chunking on --chunk-lines 40"
 make eval EVAL_FLAGS="--isolated"
 ```
+
+Every corpus spec is short enough for a single call, so the chunked path runs only when forced, as in the third line.
 
 `--isolated` adds one spec per single defect. It shows exactly which defect was missed, at about four times the cost. Run `go run ./cmd/speccritic-eval --help` for every option.
 
@@ -47,7 +49,7 @@ To compare two settings, run the eval once with each and compare the two `summar
 | `rate-limiter` | 71 | single call |
 | `link-shortener` | 79 | single call |
 | `job-queue` | 88 | single call |
-| `export-service` | 127 | chunked, with two defects that span sections |
+| `export-service` | 127 | single call, with two defects that span sections |
 
 Every spec is reviewed twice: unchanged (the clean case) and with all six of its mutations applied (the seeded case). That is 24 seeded defects across ten categories. None of them is caught by preflight, so the results measure the model.
 

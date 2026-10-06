@@ -1608,3 +1608,33 @@ func TestCheckerChecksEvidenceAgainstTheSpec(t *testing.T) {
 		})
 	}
 }
+
+// A large context file does not make a short spec any harder to review in one
+// call, so it must not trigger chunking.
+func TestCheckerAutoChunkingIgnoresContextSize(t *testing.T) {
+	t.Setenv("SPECCRITIC_LLM_PROVIDER", "fake")
+	t.Setenv("SPECCRITIC_LLM_MODEL", "model")
+
+	provider := &chunkAwareProvider{emptyChunks: true}
+	checker := &Checker{NewProvider: func(string) (llm.Provider, error) { return provider, nil }}
+	_, err := checker.Check(context.Background(), CheckRequest{
+		Version:             "test",
+		SpecName:            "SPEC.md",
+		SpecText:            "# Title\nThe system must do one thing.\n",
+		ContextDocuments:    []ContextDocument{{Name: "big.md", Text: strings.Repeat("context ", 4000)}},
+		Profile:             "general",
+		SeverityThreshold:   "info",
+		MaxTokens:           1000,
+		Chunking:            "auto",
+		ChunkMinLines:       1000,
+		ChunkTokenThreshold: 100,
+		ChunkConcurrency:    1,
+		Source:              SourceWeb,
+	})
+	if err != nil {
+		t.Fatalf("Check returned error: %v", err)
+	}
+	if provider.chunkCalls != 0 || provider.singleCalls != 1 {
+		t.Fatalf("chunk calls = %d single calls = %d, want one single call", provider.chunkCalls, provider.singleCalls)
+	}
+}

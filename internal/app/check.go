@@ -268,9 +268,9 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 
 	logVerbose(errw, req.Verbose, "Calling LLM: %s", modelStr)
 	chunkCfg := chunkConfigFromRequest(req)
-	estimatedPromptTokens := estimatePromptTokens(llmReq)
-	if chunk.ShouldChunk(s.LineCount, estimatedPromptTokens, chunkCfg) {
-		logVerbose(errw, req.Verbose, "Using chunked review: %d lines, estimated prompt tokens %d", s.LineCount, estimatedPromptTokens)
+	estimatedSpecTokens := chunk.EstimateTokens(s.Numbered)
+	if chunk.ShouldChunk(s.LineCount, estimatedSpecTokens, chunkCfg) {
+		logVerbose(errw, req.Verbose, "Using chunked review: %d lines, estimated spec tokens %d", s.LineCount, estimatedSpecTokens)
 		report, responseModel, err := c.checkChunked(ctx, provider, req, s, contextFiles, preflightIssues, sysPrompt, preflightContext, chunkCfg, errw)
 		if err != nil {
 			return nil, appError(ErrorModelOutput, err)
@@ -800,15 +800,6 @@ func firstChunkModel(results []chunk.ChunkResult) string {
 	return ""
 }
 
-func estimatePromptTokens(req *llm.Request) int {
-	if req == nil {
-		return 0
-	}
-	return chunk.EstimateTokens(req.SystemPrompt) +
-		chunk.EstimateTokens(req.UserPromptCachedPrefix) +
-		chunk.EstimateTokens(req.UserPrompt)
-}
-
 func mergeIssues(preflightIssues, llmIssues []schema.Issue, knownPreflightIDs map[string]bool) []schema.Issue {
 	if len(preflightIssues) == 0 {
 		return cleanDuplicateTags(llmIssues, knownPreflightIDs)
@@ -1116,9 +1107,6 @@ func incrementalConfigFromRequest(req CheckRequest) incremental.Config {
 	cfg.MaxChangeRatio = req.IncrementalMaxChangeRatio
 	cfg.MaxRemapFailureRatio = req.IncrementalMaxRemapFailureRatio
 	cfg.ContextLines = req.IncrementalContextLines
-	if req.ChunkTokenThreshold != 0 {
-		cfg.ChunkTokenThreshold = req.ChunkTokenThreshold
-	}
 	cfg.StrictReuse = req.IncrementalStrictReuse
 	cfg.ReportMetadata = req.IncrementalReport
 	cfg.Profile = req.Profile

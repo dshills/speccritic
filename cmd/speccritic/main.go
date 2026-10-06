@@ -145,10 +145,10 @@ func newCheckCmd() *cobra.Command {
 	f.StringVar(&flags.preflightProfile, "preflight-profile", "", "Override preflight rule profile")
 	f.StringArrayVar(&flags.preflightIgnore, "preflight-ignore", nil, "Preflight rule ID to suppress (may be repeated)")
 	f.StringVar(&flags.chunking, "chunking", "auto", "Chunking mode: auto, on, or off")
-	f.IntVar(&flags.chunkLines, "chunk-lines", 180, "Target maximum source lines per chunk before overlap")
+	f.IntVar(&flags.chunkLines, "chunk-lines", chunk.DefaultChunkLines, "Target maximum source lines per chunk")
 	f.IntVar(&flags.chunkOverlap, "chunk-overlap", 20, "Neighboring lines included before and after each chunk for context")
-	f.IntVar(&flags.chunkMinLines, "chunk-min-lines", 120, "Minimum line count before auto chunking may run")
-	f.IntVar(&flags.chunkTokenThreshold, "chunk-token-threshold", 4000, "Estimated prompt-token count before auto chunking may run")
+	f.IntVar(&flags.chunkMinLines, "chunk-min-lines", chunk.DefaultChunkMinLines, "Spec line count at which auto mode chunks the review")
+	f.IntVar(&flags.chunkTokenThreshold, "chunk-token-threshold", chunk.DefaultChunkTokenThreshold, "Estimated spec size, in tokens, at which auto mode chunks the review")
 	f.IntVar(&flags.chunkConcurrency, "chunk-concurrency", 3, "Maximum concurrent chunk LLM calls")
 	f.IntVar(&flags.synthesisLineThreshold, "synthesis-line-threshold", 240, "Minimum total line count before no-finding chunked review may run synthesis")
 	f.StringVar(&flags.incrementalFrom, "incremental-from", "", "Path to previous SpecCritic JSON report for incremental rerun")
@@ -358,9 +358,6 @@ func validateFlags(flags checkFlags) error {
 		incrementalCfg.MaxChangeRatio = flags.incrementalMaxChangeRatio
 		incrementalCfg.MaxRemapFailureRatio = flags.incrementalMaxRemapFailureRatio
 		incrementalCfg.ContextLines = flags.incrementalContextLines
-		if flags.chunkTokenThreshold != 0 {
-			incrementalCfg.ChunkTokenThreshold = flags.chunkTokenThreshold
-		}
 		if err := incremental.ValidateConfig(incrementalCfg); err != nil {
 			return err
 		}

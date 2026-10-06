@@ -8,11 +8,14 @@ import (
 	"github.com/dshills/speccritic/internal/spec"
 )
 
+// Chunking is a latency tool for large specs, not the normal path: a single
+// review sees the whole spec at once and costs one call. The defaults keep
+// auto mode off for anything a single call handles comfortably.
 const (
-	DefaultChunkLines             = 180
+	DefaultChunkLines             = 600
 	DefaultChunkOverlap           = 20
-	DefaultChunkMinLines          = 120
-	DefaultChunkTokenThreshold    = 4000
+	DefaultChunkMinLines          = 1500
+	DefaultChunkTokenThreshold    = 30000
 	DefaultChunkConcurrency       = 3
 	DefaultSynthesisLineThreshold = 240
 )
@@ -196,6 +199,9 @@ func EstimateTokens(text string) int {
 	return (len(text) + 3) / 4
 }
 
+// ShouldChunk reports whether a spec should be reviewed in chunks.
+// estimatedTokens is the estimated size of the spec alone: context files and
+// prompt instructions do not make a spec any harder to review in one call.
 func ShouldChunk(lineCount, estimatedTokens int, cfg Config) bool {
 	cfg = WithDefaults(cfg)
 	switch cfg.Mode {

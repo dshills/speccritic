@@ -31,7 +31,7 @@ calls, or the quality of what comes back.
 | 6 | Build an eval set before tuning prompts or chunking | Accuracy (measurement) | Medium | Done |
 | 7 | Enforce the output schema at the provider | Speed, Tokens | Medium | Done |
 | 8 | Verify and re-anchor evidence locally | Accuracy | Medium | Done |
-| 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small |  |
+| 9 | Raise the auto-chunking threshold and chunk size | Tokens, Accuracy | Small | Done |
 | 10 | Give chunk reviewers the whole spec, cached; make the cache hit | Accuracy, Tokens | Large |  |
 | 11 | Fix cross-chunk dedupe; let synthesis merge and retract | Accuracy, Tokens | Medium |  |
 | 12 | Verify CRITICAL findings before they decide the verdict | Accuracy | Medium |  |
@@ -242,7 +242,12 @@ convergence tracking gets stable inputs.
 
 ## 9. Raise the auto-chunking threshold and chunk size
 
-**Helps:** Tokens, Accuracy. **Effort:** Small (after item 6).
+**Helps:** Tokens, Accuracy. **Effort:** Small (after item 6). **Status:** Done.
+
+**As built.** Defaults are now 1,500 lines, 30,000 estimated spec tokens and 600-line chunks, the
+starting values below. The eval has not been run to tune them. The incremental path used to
+inherit `--chunk-token-threshold` as its range budget; it now keeps its own 4,000-token budget,
+since the two settings mean different things.
 
 **Today.** `auto` chunks any spec of 120 lines or more, or any prompt estimated at 4,000 tokens
 or more, into chunks of about 180 lines (`internal/chunk/chunk.go:12-17, 199-208`).
