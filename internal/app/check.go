@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dshills/speccritic/internal/buildinfo"
 	"github.com/dshills/speccritic/internal/cache"
 	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/completion"
@@ -209,6 +210,11 @@ func NewChecker() *Checker {
 func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, error) {
 	if err := validateRequest(req); err != nil {
 		return nil, appError(ErrorInput, err)
+	}
+	if req.Version == "" {
+		// Callers such as the web UI and library users need not pass a
+		// version: the one Go recorded in the binary is used.
+		req.Version = buildinfo.Version()
 	}
 	errw := req.ErrWriter
 	if errw == nil {
@@ -808,6 +814,7 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 	if !wantPatches(req) {
 		report.Patches = nil
 	}
+	report.Version = req.Version
 	redactedSpec := s.Raw != originalRaw
 	return &CheckResult{
 		Report:       report,

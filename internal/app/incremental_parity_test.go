@@ -48,6 +48,9 @@ func TestCheckerIncrementalRangesShareTheFullReviewPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check returned error: %v", err)
 	}
+	if result.Report.Version != "test" {
+		t.Errorf("report version = %q, want the request's version", result.Report.Version)
+	}
 	if len(provider.reqs) < 2 {
 		t.Fatalf("calls = %d, want a range review and a verification", len(provider.reqs))
 	}

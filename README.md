@@ -36,8 +36,10 @@ Or build from source:
 ```bash
 git clone https://github.com/dshills/speccritic.git
 cd speccritic
-go build -ldflags "-X main.version=$(git describe --tags --always)" -o speccritic ./cmd/speccritic/
+go build -o speccritic ./cmd/speccritic/
 ```
+
+`speccritic --version` and the `version` field of every report give the version Go recorded in the binary: the release tag for `go install ...@v0.3.0`, or a version derived from the commit for a build from a checkout, such as `v0.3.1-0.20261006171036-614e1bb3d067` or `v0.3.0+dirty`. The web UI and library callers that pass no version get the same. To set it explicitly, build with `-ldflags "-X main.version=..."`.
 
 ## Quick Start
 
@@ -604,7 +606,7 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
 ```json
 {
   "tool": "speccritic",
-  "version": "0.1.0",
+  "version": "v0.3.0",
   "input": {
     "spec_file": "SPEC.md",
     "spec_hash": "sha256:a3f1...",

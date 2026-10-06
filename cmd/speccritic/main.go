@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dshills/speccritic/internal/app"
+	"github.com/dshills/speccritic/internal/buildinfo"
 	"github.com/dshills/speccritic/internal/chunk"
 	"github.com/dshills/speccritic/internal/convergence"
 	"github.com/dshills/speccritic/internal/incremental"
@@ -20,7 +21,9 @@ import (
 	"github.com/dshills/speccritic/internal/schema"
 )
 
-// version is set at build time via -ldflags "-X main.version=x.y.z".
+// version may be set at build time via -ldflags "-X main.version=x.y.z".
+// Otherwise the version Go recorded in the binary is used: the release tag
+// for `go install ...@vX.Y.Z`, or a pseudo-version for a checkout build.
 var version = "dev"
 
 // exitErr carries a numeric exit code through the cobra error path.
@@ -93,6 +96,7 @@ func main() {
 		Use:           "speccritic",
 		Short:         "Evaluate software specifications for defects",
 		Long:          "SpecCritic evaluates SPEC.md files as formal contracts, identifying defects before implementation begins.",
+		Version:       buildinfo.Resolve(version),
 		SilenceErrors: true,
 	}
 
@@ -186,7 +190,7 @@ func runCheck(specPath string, flags checkFlags) error {
 	}
 
 	result, err := app.NewChecker().Check(cmdContext(), app.CheckRequest{
-		Version:                         version,
+		Version:                         buildinfo.Resolve(version),
 		SpecPath:                        specPath,
 		ContextPaths:                    flags.contextFiles,
 		Profile:                         flags.profileName,

@@ -124,7 +124,9 @@ type ModelsResponse struct {
 func DefaultCheckOptions() CheckOptions {
 	incrementalDefaults := incremental.DefaultConfig()
 	return CheckOptions{
-		Version:                         "api",
+		// Empty: the checker reports the SpecCritic module version Go
+		// recorded in the calling program.
+		Version:                         "",
 		Profile:                         "general",
 		SeverityThreshold:               "info",
 		MaxTokens:                       llm.DefaultMaxTokens,
