@@ -39,7 +39,9 @@ Anti-hallucination rules:
 Output rules:
 - Return JSON only — no prose, no markdown fences, no explanation
 - JSON must match the provided schema exactly
-- Do not include score or verdict — those are computed externally`
+- Do not include score or verdict — those are computed externally
+- Be brief. A title is under ten words; description, impact and recommendation are a sentence or two each. Do not restate the spec
+- An evidence quote is a short phrase copied exactly from the cited lines, enough to find them, not the whole passage. The full text is filled in from the spec`
 
 const strictModeText = `
 STRICT MODE ENABLED: Treat all silence as ambiguity. Any behavior not explicitly

@@ -501,7 +501,7 @@ func TestParseResponse_ChecksEvidenceAgainstTheSpec(t *testing.T) {
 	}
 
 	verified, moved, unverified := res.Report.Issues[0], res.Report.Issues[1], res.Report.Issues[2]
-	if got := verified.Evidence[0]; got.LineStart != 2 || got.Quote != "The service must answer within 200 milliseconds" || len(verified.Tags) != 0 || verified.Severity != schema.SeverityCritical {
+	if got := verified.Evidence[0]; got.LineStart != 2 || got.Quote != "The service must answer within 200 milliseconds." || len(verified.Tags) != 0 || verified.Severity != schema.SeverityCritical {
 		t.Errorf("verified issue = %+v, want the spec's own text and no tags", verified)
 	}
 	if got := moved.Evidence[0]; got.LineStart != 4 || got.LineEnd != 4 || !slices.Contains(moved.Tags, "evidence-reanchored") {
@@ -514,7 +514,7 @@ func TestParseResponse_ChecksEvidenceAgainstTheSpec(t *testing.T) {
 	if !slices.Equal(seenLines, []int{2, 4, 3}) {
 		t.Errorf("caller checks saw lines %v, want [2 4 3]", seenLines)
 	}
-	if got := res.Report.Questions[0].Evidence[0]; got.LineStart != 4 || got.Quote != "The cache is refreshed hourly" {
+	if got := res.Report.Questions[0].Evidence[0]; got.LineStart != 4 || got.Quote != "The cache is refreshed hourly." {
 		t.Errorf("question evidence = %+v, want it moved to line 4", got)
 	}
 }
@@ -528,5 +528,31 @@ func TestParseResponse_WithoutSpecTextEvidenceIsNotChecked(t *testing.T) {
 	}
 	if len(res.Report.Issues) != 2 || res.Report.Issues[0].Severity != schema.SeverityCritical || len(res.Report.Issues[0].Tags) != 0 {
 		t.Fatalf("issues = %+v, want both kept untouched", res.Report.Issues)
+	}
+}
+
+// A patch names the lines it replaces; the text it replaces is taken from the
+// spec the model was shown. A patch that copies that text itself keeps it,
+// and one whose lines are outside the spec is left out.
+func TestParseResponse_FillsPatchTextFromItsLines(t *testing.T) {
+	raw := `{"issues":[` + evidenceIssue("ISSUE-0001", "WARN", 3, "Retries are unlimited.") + `],"questions":[],"patches":[
+		{"issue_id":"ISSUE-0001","line_start":2,"line_end":3,"after":"The service must answer within 200 ms.\nRetries stop after five attempts."},
+		{"issue_id":"ISSUE-0001","before":"Retries are unlimited.","after":"Retries stop after three attempts."},
+		{"issue_id":"ISSUE-0001","line_start":4,"line_end":9,"after":"out of range"},
+		{"issue_id":"ISSUE-0001","line_start":3,"line_end":2,"after":"backwards"}
+	]}`
+	res, err := ParseResponse(raw, Options{LineCount: 4, SpecText: evidenceSpec})
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	want := []schema.Patch{
+		{IssueID: "ISSUE-0001", Before: "The service must answer within 200 milliseconds.\nRetries are unlimited.", After: "The service must answer within 200 ms.\nRetries stop after five attempts."},
+		{IssueID: "ISSUE-0001", Before: "Retries are unlimited.", After: "Retries stop after three attempts."},
+	}
+	if !slices.Equal(res.Report.Patches, want) {
+		t.Errorf("patches = %#v\nwant %#v", res.Report.Patches, want)
+	}
+	if res.Report.Meta.DroppedFindings != 0 {
+		t.Errorf("dropped = %d, want unusable patches left out without counting as findings", res.Report.Meta.DroppedFindings)
 	}
 }

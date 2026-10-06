@@ -31,7 +31,10 @@ type OutputSchema struct {
 	PromptFallback string
 }
 
-// evidenceSchema is the shape of one evidence entry.
+// evidenceSchema is the shape of one evidence entry. The quote is a short
+// anchor rather than the passage: SpecCritic finds it in the spec and fills
+// in the full text of the cited lines itself, so the model does not spend
+// output tokens copying them.
 const evidenceSchema = `{
             "type": "object",
             "additionalProperties": false,
@@ -39,19 +42,42 @@ const evidenceSchema = `{
             "properties": {
               "line_start": {"type": "integer", "description": "First line cited, taken from its L<number>: prefix."},
               "line_end": {"type": "integer", "description": "Last line cited. Equal to line_start for a single line."},
-              "quote": {"type": "string", "description": "Text copied exactly from the cited lines."}
+              "quote": {"type": "string", "description": "A short phrase, about 4 to 12 words, copied exactly from the cited lines. Not the whole passage: the full text is filled in from the spec."}
             }
           }`
 
+// patchesProperty is the schema of the patches list. A patch names the lines
+// it replaces instead of copying them: SpecCritic takes the text it replaces
+// from the spec.
+const patchesProperty = `,
+    "patches": {
+      "type": "array",
+      "description": "Minimal corrections. Empty when none is safe to suggest.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["issue_id", "line_start", "line_end", "after"],
+        "properties": {
+          "issue_id": {"type": "string", "description": "The id of the issue this corrects."},
+          "line_start": {"type": "integer", "description": "First line replaced."},
+          "line_end": {"type": "integer", "description": "Last line replaced. Keep the range to the lines that change."},
+          "after": {"type": "string", "description": "The full new text of those lines, as they should read."}
+        }
+      }
+    }`
+
 // reviewSchemaTemplate is the schema of a review. Properties are listed in
 // the order a careful reviewer works: say what is wrong and where before
-// judging how severe it is. Its verbs are, in order: extra required
-// top-level names, the category enum, the evidence schema (twice) and extra
-// top-level properties.
+// judging how severe it is. Prose fields ask for a sentence or two: output
+// tokens cost several times input tokens and set the latency of every call.
+//
+// Placeholders: {{required}} extra required top-level names, {{categories}}
+// the category enum, {{evidence}} the evidence schema and {{properties}}
+// extra top-level properties.
 const reviewSchemaTemplate = `{
   "type": "object",
   "additionalProperties": false,
-  "required": ["issues", "questions", "patches"%s],
+  "required": ["issues", "questions"{{required}}],
   "properties": {
     "issues": {
       "type": "array",
@@ -62,16 +88,16 @@ const reviewSchemaTemplate = `{
         "required": ["id", "category", "title", "description", "evidence", "impact", "recommendation", "severity", "blocking", "tags"],
         "properties": {
           "id": {"type": "string", "description": "ISSUE-0001, ISSUE-0002 and so on, in order."},
-          "category": {"type": "string", "enum": [%s]},
-          "title": {"type": "string", "description": "Short title naming the defect."},
-          "description": {"type": "string", "description": "What is wrong."},
+          "category": {"type": "string", "enum": [{{categories}}]},
+          "title": {"type": "string", "description": "Names the defect in under ten words."},
+          "description": {"type": "string", "description": "What is wrong, in one or two sentences."},
           "evidence": {
             "type": "array",
             "description": "Where the defect is. At least one entry.",
-            "items": %s
+            "items": {{evidence}}
           },
-          "impact": {"type": "string", "description": "What goes wrong if this is not fixed."},
-          "recommendation": {"type": "string", "description": "The smallest change to the specification that fixes it. Not an architecture."},
+          "impact": {"type": "string", "description": "What goes wrong if this is not fixed, in one sentence."},
+          "recommendation": {"type": "string", "description": "The smallest change to the specification that fixes it, in one or two sentences. Not an architecture."},
           "severity": {"type": "string", "enum": ["CRITICAL", "WARN", "INFO"]},
           "blocking": {"type": "boolean", "description": "true when implementation cannot begin until this is resolved."},
           "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional labels. Usually empty."}
@@ -84,50 +110,36 @@ const reviewSchemaTemplate = `{
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "question", "why_needed", "evidence", "blocks", "severity"],
+        "required": ["question", "why_needed", "evidence", "blocks", "severity"],
         "properties": {
-          "id": {"type": "string", "description": "Q-0001, Q-0002 and so on, in order."},
           "question": {"type": "string", "description": "One specific question."},
-          "why_needed": {"type": "string", "description": "Why implementation cannot proceed without the answer."},
+          "why_needed": {"type": "string", "description": "Why implementation cannot proceed without the answer, in one sentence."},
           "evidence": {
             "type": "array",
             "description": "The lines that raise the question.",
-            "items": %s
+            "items": {{evidence}}
           },
           "blocks": {"type": "array", "items": {"type": "string"}, "description": "Requirement identifiers from the specification that the question blocks. Empty if it names none."},
           "severity": {"type": "string", "enum": ["CRITICAL", "WARN", "INFO"]}
         }
       }
-    },
-    "patches": {
-      "type": "array",
-      "description": "Minimal corrections. Empty when none is safe to suggest.",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["issue_id", "before", "after"],
-        "properties": {
-          "issue_id": {"type": "string", "description": "The id of the issue this corrects."},
-          "before": {"type": "string", "description": "Text copied exactly from the specification, long enough to occur only once."},
-          "after": {"type": "string", "description": "The replacement text."}
-        }
-      }
-    }%s
+    }{{properties}}
   }
 }`
 
 // schemaExample shows the shape of a review to a model whose output cannot be
-// constrained.
+// constrained. {{patches}} and {{extra}} take the patches list and any extra
+// fields.
 const schemaExample = `{
   "issues": [
     {
       "id": "ISSUE-0001",
       "category": "NON_TESTABLE_REQUIREMENT",
-      "title": "Short title describing the defect",
-      "description": "Detailed explanation of the defect",
-      "evidence": [{"line_start": 10, "line_end": 12, "quote": "exact text from spec"}],
-      "impact": "What goes wrong if this is not fixed",
-      "recommendation": "Minimal corrective action",
+      "title": "Response time has no number",
+      "description": "One or two sentences on what is wrong.",
+      "evidence": [{"line_start": 10, "line_end": 12, "quote": "short exact phrase from those lines"}],
+      "impact": "One sentence on what goes wrong if this is not fixed.",
+      "recommendation": "The smallest change to the spec that fixes it.",
       "severity": "CRITICAL",
       "blocking": true,
       "tags": []
@@ -135,22 +147,20 @@ const schemaExample = `{
   ],
   "questions": [
     {
-      "id": "Q-0001",
       "question": "Specific question that must be answered before implementation",
-      "why_needed": "Why this question blocks implementation",
-      "evidence": [{"line_start": 10, "line_end": 12, "quote": "exact text"}],
+      "why_needed": "One sentence on why this blocks implementation",
+      "evidence": [{"line_start": 10, "line_end": 12, "quote": "short exact phrase"}],
       "blocks": ["REQ-001"],
       "severity": "CRITICAL"
     }
-  ],
-  "patches": [
-    {
-      "issue_id": "ISSUE-0001",
-      "before": "exact text from spec to be replaced",
-      "after": "corrected minimal replacement text"
-    }
-  ]%s
+  ]{{patches}}{{extra}}
 }`
+
+// patchesExample adds the patches list to the prompt example.
+const patchesExample = `,
+  "patches": [
+    {"issue_id": "ISSUE-0001", "line_start": 11, "line_end": 11, "after": "full new text of line 11"}
+  ]`
 
 // synthesisProperties are the fields the cross-section pass returns besides
 // new findings: which chunk findings to fold together and which the spec
@@ -165,7 +175,7 @@ const synthesisProperties = `,
         "required": ["issue_ids", "reason"],
         "properties": {
           "issue_ids": {"type": "array", "items": {"type": "string"}, "description": "Two or more ISSUE ids from the task."},
-          "reason": {"type": "string", "description": "Why these are one defect."}
+          "reason": {"type": "string", "description": "Why these are one defect, in one sentence."}
         }
       }
     },
@@ -181,7 +191,7 @@ const synthesisProperties = `,
           "line_start": {"type": "integer", "description": "First line of the text that answers it."},
           "line_end": {"type": "integer", "description": "Last line of the text that answers it."},
           "quote": {"type": "string", "description": "The answering text, copied exactly from those lines."},
-          "reason": {"type": "string", "description": "How that text answers the finding."}
+          "reason": {"type": "string", "description": "How that text answers the finding, in one sentence."}
         }
       }
     }`
@@ -191,19 +201,50 @@ const synthesisExample = `,
   "merge": [{"issue_ids": ["ISSUE-0002", "ISSUE-0007"], "reason": "Both report the undefined retry limit"}],
   "retract": [{"id": "ISSUE-0004", "line_start": 31, "line_end": 31, "quote": "exact answering text from spec", "reason": "Line 31 defines the term"}]`
 
-var (
-	reviewSchemaJSON    = buildReviewSchema("", "")
-	synthesisSchemaJSON = buildReviewSchema(`, "merge", "retract"`, synthesisProperties)
-)
+// schemaKind selects one of the precomputed schemas.
+type schemaKind struct{ synthesis, patches bool }
 
-func buildReviewSchema(extraRequired, extraProperties string) json.RawMessage {
+// builtSchema is a schema document and its prompt example.
+type builtSchema struct {
+	json    json.RawMessage
+	example string
+}
+
+var builtSchemas = func() map[schemaKind]builtSchema {
+	out := map[schemaKind]builtSchema{}
+	for _, synthesis := range []bool{false, true} {
+		for _, patches := range []bool{false, true} {
+			out[schemaKind{synthesis, patches}] = buildReviewSchema(synthesis, patches)
+		}
+	}
+	return out
+}()
+
+func buildReviewSchema(synthesis, patches bool) builtSchema {
 	categories := schema.Categories()
 	quoted := make([]string, len(categories))
 	for i, category := range categories {
 		quoted[i] = fmt.Sprintf("%q", category)
 	}
-	pretty := fmt.Sprintf(reviewSchemaTemplate, extraRequired, strings.Join(quoted, ", "), evidenceSchema, evidenceSchema, extraProperties)
-	return compactJSON(pretty)
+	var required, properties, examplePatches, exampleExtra string
+	if patches {
+		required += `, "patches"`
+		properties += patchesProperty
+		examplePatches = patchesExample
+	}
+	if synthesis {
+		required += `, "merge", "retract"`
+		properties += synthesisProperties
+		exampleExtra = synthesisExample
+	}
+	pretty := strings.NewReplacer(
+		"{{required}}", required,
+		"{{categories}}", strings.Join(quoted, ", "),
+		"{{evidence}}", evidenceSchema,
+		"{{properties}}", properties,
+	).Replace(reviewSchemaTemplate)
+	example := strings.NewReplacer("{{patches}}", examplePatches, "{{extra}}", exampleExtra).Replace(schemaExample)
+	return builtSchema{json: compactJSON(pretty), example: example}
 }
 
 // compactJSON strips the indentation that makes a schema template readable;
@@ -217,24 +258,27 @@ func compactJSON(pretty string) json.RawMessage {
 }
 
 // ReviewSchema returns the schema of a review response. enforce is passed
-// through to OutputSchema.Enforce.
-func ReviewSchema(enforce bool) *OutputSchema {
+// through to OutputSchema.Enforce. patches says whether the review asks for
+// patches; leaving them out saves the output tokens they cost.
+func ReviewSchema(enforce, patches bool) *OutputSchema {
+	built := builtSchemas[schemaKind{patches: patches}]
 	return &OutputSchema{
 		Name:           "spec_review",
-		JSON:           reviewSchemaJSON,
+		JSON:           built.json,
 		Enforce:        enforce,
-		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + fmt.Sprintf(schemaExample, ""),
+		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + built.example,
 	}
 }
 
 // SynthesisSchema returns the schema of a cross-section synthesis response: a
 // review plus the merge and retract lists.
-func SynthesisSchema(enforce bool) *OutputSchema {
+func SynthesisSchema(enforce, patches bool) *OutputSchema {
+	built := builtSchemas[schemaKind{synthesis: true, patches: patches}]
 	return &OutputSchema{
 		Name:           "spec_synthesis",
-		JSON:           synthesisSchemaJSON,
+		JSON:           built.json,
 		Enforce:        enforce,
-		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + fmt.Sprintf(schemaExample, synthesisExample),
+		PromptFallback: "\n\nReturn your findings as JSON with this structure:\n" + built.example,
 	}
 }
 

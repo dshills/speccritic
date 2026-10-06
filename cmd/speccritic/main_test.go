@@ -334,6 +334,22 @@ func TestRunCheck_PatchOut(t *testing.T) {
 	if len(patchData) == 0 {
 		t.Error("patch file is empty")
 	}
+
+	// --patches off leaves the model's patches out of the report and the file.
+	flags.patches = "off"
+	flags.out = filepath.Join(tmp, "out.json")
+	if err := runCheck(specPath("bad_spec.md"), flags); err != nil {
+		var ee *exitErr
+		if !asExitErr(err, &ee) || ee.code != 0 {
+			t.Fatalf("runCheck with --patches off: %v", err)
+		}
+	}
+	if report := readJSONReport(t, flags.out); len(report.Patches) != 0 {
+		t.Errorf("patches = %#v with --patches off, want none", report.Patches)
+	}
+	if data, _ := os.ReadFile(flags.patchOut); len(data) != 0 {
+		t.Errorf("patch file = %q with --patches off, want it empty", data)
+	}
 }
 
 func TestRunCheck_Debug_DoesNotFail(t *testing.T) {

@@ -18,9 +18,11 @@ type ExecutorConfig struct {
 	// EnforceSchema asks the provider to constrain responses to the review
 	// schema.
 	EnforceSchema bool
-	Concurrency   int
-	Issues        []schema.Issue
-	Questions     []schema.Question
+	// NoPatches leaves patches out of the requested output.
+	NoPatches   bool
+	Concurrency int
+	Issues      []schema.Issue
+	Questions   []schema.Question
 }
 
 type RangeResult struct {
@@ -109,7 +111,7 @@ func reviewOneRange(ctx context.Context, provider llm.Provider, s *spec.Spec, pl
 		UserPrompt:             tail,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
-		Schema:                 llm.ReviewSchema(cfg.EnforceSchema),
+		Schema:                 llm.ReviewSchema(cfg.EnforceSchema, !cfg.NoPatches),
 	}
 	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,

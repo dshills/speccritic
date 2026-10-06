@@ -62,6 +62,9 @@ type CheckOptions struct {
 	// Verify is "auto" (the default when empty) to give each CRITICAL finding
 	// a second look before it decides the verdict, or "off".
 	Verify string
+	// Patches is "on" (the default when empty) to ask the model for patches
+	// that correct its findings, or "off" to leave them out.
+	Patches string
 	// UseCache stores the finished review in the review cache (the user
 	// cache directory, or SPECCRITIC_CACHE_DIR) and serves an unchanged
 	// request from it without calling a model. DefaultCheckOptions turns it
@@ -167,6 +170,7 @@ func Check(ctx context.Context, opts CheckOptions) (*CheckResult, error) {
 		Effort:                          opts.Effort,
 		StructuredOutput:                opts.StructuredOutput,
 		Verify:                          opts.Verify,
+		Patches:                         opts.Patches,
 		NoCache:                         !opts.UseCache,
 		Offline:                         opts.Offline,
 		Debug:                           opts.Debug,

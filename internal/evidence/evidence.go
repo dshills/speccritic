@@ -57,7 +57,8 @@ const (
 	// stand for.
 	maxGap = 2000
 	// maxFilledLines is the largest cited range whose text is copied in as the
-	// quote when the model gave none.
+	// quote of a finding when the model gave none, or gave a short anchor
+	// that was found there.
 	maxFilledLines = 5
 	// minQuoteBytes is the least normalized text a quote needs before its
 	// absence, or a nearby match, means anything. A word or two turns up by
@@ -90,6 +91,15 @@ func NewIndex(specText string) *Index {
 		}
 	}
 	return ix
+}
+
+// Text returns lines start through end (1-based, inclusive) of the spec as it
+// was given, joined by newlines. ok is false for a range outside the spec.
+func (ix *Index) Text(start, end int) (text string, ok bool) {
+	if start < 1 || end < start || end > len(ix.lines) {
+		return "", false
+	}
+	return strings.Join(ix.lines[start-1:end], "\n"), true
 }
 
 // fold appends the normalized form of r, if it has one.
@@ -285,14 +295,37 @@ func (ix *Index) Anchor(ev schema.Evidence) (schema.Evidence, Outcome) {
 	return ev, Unverified
 }
 
+// expand replaces the quote of a located evidence entry with the full text of
+// its lines, when they are few. Models are asked for a short anchor rather
+// than the whole passage, which saves output tokens; the reader of a report
+// still gets the passage. Different runs that anchor on different words of
+// the same lines also end up with the same quote.
+func (ix *Index) expand(ev schema.Evidence) schema.Evidence {
+	if ev.LineStart >= 1 && ev.LineEnd >= ev.LineStart && ev.LineEnd <= len(ix.lines) && ev.LineEnd-ev.LineStart < maxFilledLines {
+		ev.Quote = strings.Join(ix.lines[ev.LineStart-1:ev.LineEnd], "\n")
+	}
+	return ev
+}
+
+// checkFinding anchors one evidence entry of a finding and, when its quote was
+// located, expands the quote to its lines.
+func (ix *Index) checkFinding(ev schema.Evidence) (schema.Evidence, Outcome) {
+	corrected, outcome := ix.Anchor(ev)
+	if outcome == Verified || outcome == Moved {
+		corrected = ix.expand(corrected)
+	}
+	return corrected, outcome
+}
+
 // CheckIssue checks every evidence entry of issue and records the result in
 // its tags. An issue none of whose quotes is in the spec is tagged unverified,
 // and if it was CRITICAL it is lowered to WARN: a finding that cannot point at
-// real text should not be able to fail a spec on its own.
+// real text should not be able to fail a spec on its own. Located quotes are
+// expanded to the full text of short line ranges.
 func (ix *Index) CheckIssue(issue *schema.Issue) {
 	quoted, located, moved := 0, 0, false
 	for i, ev := range issue.Evidence {
-		corrected, outcome := ix.Anchor(ev)
+		corrected, outcome := ix.checkFinding(ev)
 		issue.Evidence[i] = corrected
 		switch outcome {
 		case Verified:
@@ -325,7 +358,7 @@ func (ix *Index) CheckIssue(issue *schema.Issue) {
 // evidence is corrected where it can be and otherwise left alone.
 func (ix *Index) CheckQuestion(question *schema.Question) {
 	for i, ev := range question.Evidence {
-		question.Evidence[i], _ = ix.Anchor(ev)
+		question.Evidence[i], _ = ix.checkFinding(ev)
 	}
 }
 

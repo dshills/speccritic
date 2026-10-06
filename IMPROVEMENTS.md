@@ -414,7 +414,16 @@ same verdict, which the model alone cannot promise now that current models do no
 
 ## 15. Put the model output on a diet
 
-**Helps:** Tokens, Speed. **Effort:** Medium.
+**Helps:** Tokens, Speed. **Effort:** Medium. **Status:** Done.
+
+**As built.** Evidence quotes are short anchors; a located anchor is expanded to the full text of
+its lines when the range is five lines or fewer, so different runs quote the same text. Patches
+are a line range plus `after`; the parser copies `before` from the spec, and a `before` sent by a
+model whose output is not constrained is still accepted. Questions no longer carry a model id.
+Prose fields ask for a sentence or two. `--patches off` drops patches from the schema. Issue ids
+stay in the schema because patches refer to them. Retraction and rejection quotes are still
+copied in full, since they are the counter-evidence itself. Convergence fingerprints include
+quotes, so a baseline report written before this change matches findings less well once.
 
 Output tokens cost about five times input tokens and set the latency of every call.
 

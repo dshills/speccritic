@@ -430,6 +430,7 @@ speccritic check <spec-file> [flags]
 | `--effort` | provider default | Reasoning effort passed to the model: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Which levels exist depends on the provider and model |
 | `--structured-output` | `auto` | `auto` has the provider enforce the review JSON schema where the model allows it; `off` only describes the schema in the prompt |
 | `--verify` | `auto` | Give each CRITICAL finding from the model a second look before it decides the verdict: `auto` or `off` |
+| `--patches` | `on` | Ask the model for patches that correct its findings: `on` or `off`. `off` saves the output tokens they cost; completion patches are not affected |
 | `--no-cache` | `false` | Neither read the review from the [review cache](#model-selection) nor store it there |
 | `--max-tokens` | `16384` | Maximum response tokens per call. A response that still hits the cap is continued, not regenerated: the findings already received are kept and only the rest is requested |
 | `--offline` | `false` | Exit 3 if LLM provider/model env vars are not set (CI enforcement) |
@@ -649,7 +650,7 @@ Score is clamped at 0. Both score and verdict are computed before `--severity-th
 
 Every quote a model gives is looked up in the spec it was shown, ignoring differences in case, spacing, typographic punctuation and Markdown emphasis.
 
-- A quote found at the cited lines is kept, and replaced by the spec's exact text.
+- A quote found at the cited lines is kept, and replaced by the spec's exact text. Models are asked for a short phrase rather than the whole passage, which saves output tokens; when the cited range is five lines or fewer, the quote in the report is the full text of those lines.
 - A quote found only on other lines moves the evidence there. The issue is tagged `evidence-reanchored`.
 - When no quote of an issue is anywhere in the spec, the issue is tagged `evidence-unverified`. If it was CRITICAL it is lowered to WARN and also tagged `severity-downgraded`: a finding that cannot point at real text does not fail a spec on its own. The finding stays in the report.
 - An issue with no evidence at all is dropped and counted in `meta.dropped_findings`.
@@ -693,6 +694,8 @@ When the LLM suggests corrections, they are included in the `patches` array and 
 ```bash
 speccritic check SPEC.md --patch-out spec.patch
 ```
+
+The model names the lines a patch replaces and gives their new text; SpecCritic copies the old text from the spec into `before`, so the model never spends output tokens copying it and cannot copy it wrong. A patch whose `before` does not occur exactly once in the spec is left out. `--patches off` (or `SPECCRITIC_PATCHES=off`) asks for no patches at all.
 
 Patches are advisory—they are minimal textual corrections, never wholesale rewrites. Completion patches are also advisory and are labeled separately in Markdown, web output, and patch comments when written with `--patch-out`.
 

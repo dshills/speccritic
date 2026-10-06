@@ -72,6 +72,7 @@ func TestCheckerCacheKeyCoversWhatShapesTheReview(t *testing.T) {
 		"profile":    func(r *CheckRequest) { r.Profile = "backend-api" },
 		"strict":     func(r *CheckRequest) { r.Strict = true },
 		"verify":     func(r *CheckRequest) { r.Verify = VerifyAuto },
+		"patches":    func(r *CheckRequest) { r.Patches = PatchesOff },
 	}
 	for name, change := range changes {
 		before := len(provider.reqs)

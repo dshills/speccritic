@@ -1542,7 +1542,7 @@ func TestCheckerChecksEvidenceAgainstTheSpec(t *testing.T) {
 	}{
 		"line number off by two": {
 			issues:      finding("ISSUE-0001", "Not testable", 5, "the service must be dependable"),
-			wantVerdict: schema.VerdictInvalid, wantLine: 3, wantQuote: "The service must be dependable",
+			wantVerdict: schema.VerdictInvalid, wantLine: 3, wantQuote: "The service must be dependable.",
 			wantSeverity: schema.SeverityCritical, wantTags: []string{"evidence-reanchored"},
 		},
 		"quote that the spec does not contain": {

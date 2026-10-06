@@ -27,9 +27,11 @@ type ExecutorConfig struct {
 	// EnforceSchema asks the provider to constrain responses to the review
 	// schema.
 	EnforceSchema bool
-	Concurrency   int
-	Verbose       bool
-	ErrWriter     io.Writer
+	// NoPatches leaves patches out of the requested output.
+	NoPatches   bool
+	Concurrency int
+	Verbose     bool
+	ErrWriter   io.Writer
 }
 
 type ChunkResult struct {
@@ -172,7 +174,7 @@ func reviewOneChunk(ctx context.Context, provider llm.Provider, s *spec.Spec, ch
 		LongCache:              cfg.LongCache,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
-		Schema:                 llm.ReviewSchema(cfg.EnforceSchema),
+		Schema:                 llm.ReviewSchema(cfg.EnforceSchema, !cfg.NoPatches),
 	}
 	report, model, err := llm.CompleteReport(ctx, provider, llm.ReportCall{
 		Request: req,

@@ -81,6 +81,7 @@ Flag	Description
 --fail-on <level>	Exit non-zero if verdict ≥ level
 --severity-threshold	Minimum issue severity to emit
 --patch-out <file>	Emit suggested minimal spec edits as diff
+--patches <mode>	on (default): ask the model for patches; off: leave them out
 --effort <level>	Reasoning effort passed to the model; default is the provider's
 --temperature	Accepted and ignored; current models do not take a sampling temperature
 --structured-output <mode>	auto (default): the provider enforces the review JSON schema where the model allows it; off: the schema is only described in the prompt
@@ -264,6 +265,8 @@ Rules:
 	•	Patches must be additive or minimally substitutive
 	•	Every patch must reference a specific issue
 	•	Patches are advisory, not authoritative
+	•	The model gives the line range a patch replaces and the new text of those lines; the replaced text (before) is copied from the spec locally. A before supplied by the model is still accepted
+	•	--patches off (also SPECCRITIC_PATCHES) leaves patches out of the requested output and the report; completion patches are unaffected
 
 ⸻
 
@@ -330,7 +333,8 @@ Validation
 	•	Strict JSON parse
 	•	Schema validation, applied one finding at a time: a finding that fails is dropped, the rest are kept, and the number dropped is reported in meta.dropped_findings
 	•	Evidence line bounds validation
-	•	Evidence quote verification: each quote is looked up in the spec; evidence is moved to where its quote is (tag evidence-reanchored); an issue none of whose quotes is in the spec is tagged evidence-unverified and, if CRITICAL, lowered to WARN (tag severity-downgraded); an issue with no evidence is dropped; quotes are replaced by the exact spec text
+	•	Evidence quote verification: each quote is looked up in the spec; evidence is moved to where its quote is (tag evidence-reanchored); an issue none of whose quotes is in the spec is tagged evidence-unverified and, if CRITICAL, lowered to WARN (tag severity-downgraded); an issue with no evidence is dropped; quotes are replaced by the exact spec text; the model is asked for a short anchor phrase, and a located quote on a range of five lines or fewer is replaced by the full text of those lines
+	•	Output brevity: titles under ten words; description, impact, recommendation and why_needed a sentence or two each; question ids are not requested from the model
 	•	Issue and question IDs, bookkeeping tags and the evidence path are assigned locally, not taken from the model
 	•	One retry allowed with repair prompt, used only when a response holds nothing usable
 	•	A response cut off at the output cap after at least one complete finding is continued, not retried: the complete findings are kept and only the remainder is requested, up to three continuation calls

@@ -91,6 +91,17 @@ const (
 	StructuredOutputOff  = "off"
 )
 
+// Values of CheckRequest.Patches.
+const (
+	PatchesOn  = "on"
+	PatchesOff = "off"
+)
+
+// wantPatches reports whether the model is asked for patches.
+func wantPatches(req CheckRequest) bool {
+	return req.Patches != PatchesOff
+}
+
 // enforceSchema reports whether providers are asked to constrain responses to
 // the review schema.
 func enforceSchema(req CheckRequest) bool {
@@ -125,6 +136,10 @@ type CheckRequest struct {
 	// NoCache skips the review cache: the review is neither read from it nor
 	// stored in it.
 	NoCache bool
+	// Patches is "on" (the default when empty) to ask the model for patches
+	// that correct its findings, or "off" to leave them out and save the
+	// output tokens they cost. Completion patches are not affected.
+	Patches string
 	// StructuredOutput is "auto" (the default when empty) to have the
 	// provider constrain responses to the review schema where the model
 	// allows it, or "off" to describe the schema in the prompt only.
@@ -265,7 +280,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) (*CheckResult, er
 		LongCache:              longCache,
 		MaxTokens:              req.MaxTokens,
 		Effort:                 req.Effort,
-		Schema:                 llm.ReviewSchema(enforceSchema(req)),
+		Schema:                 llm.ReviewSchema(enforceSchema(req), wantPatches(req)),
 	}
 
 	if req.Debug {
@@ -400,6 +415,7 @@ type cacheMaterial struct {
 	Effort            string
 	MaxTokens         int
 	StructuredOutput  bool
+	Patches           bool
 	Verify            bool
 	SystemPrompt      string
 	Prefix            string
@@ -431,6 +447,7 @@ func (c *Checker) cacheKey(req CheckRequest, s *spec.Spec, model, sysPrompt, spe
 		Effort:            req.Effort,
 		MaxTokens:         req.MaxTokens,
 		StructuredOutput:  enforceSchema(req),
+		Patches:           wantPatches(req),
 		Verify:            req.Verify != VerifyOff,
 		SystemPrompt:      sysPrompt,
 		Prefix:            specPrefix,
@@ -716,6 +733,7 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 			MaxTokens:     req.MaxTokens,
 			Effort:        req.Effort,
 			EnforceSchema: enforceSchema(req),
+			NoPatches:     !wantPatches(req),
 			Concurrency:   req.ChunkConcurrency,
 			Issues:        reuse.Issues,
 			Questions:     reuse.Questions,
@@ -753,6 +771,9 @@ func (c *Checker) checkIncremental(ctx context.Context, provider llm.Provider, r
 	})
 	if err != nil {
 		return nil, false, err
+	}
+	if !wantPatches(req) {
+		report.Patches = nil
 	}
 	redactedSpec := s.Raw != originalRaw
 	return &CheckResult{
@@ -907,6 +928,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		MaxTokens:     req.MaxTokens,
 		Effort:        req.Effort,
 		EnforceSchema: enforceSchema(req),
+		NoPatches:     !wantPatches(req),
 		Concurrency:   cfg.ChunkConcurrency,
 		Verbose:       req.Verbose,
 		ErrWriter:     errw,
@@ -928,6 +950,7 @@ func (c *Checker) checkChunked(ctx context.Context, provider llm.Provider, req C
 		MaxTokens:     req.MaxTokens,
 		Effort:        req.Effort,
 		EnforceSchema: enforceSchema(req),
+		NoPatches:     !wantPatches(req),
 		LineThreshold: cfg.SynthesisLineThreshold,
 		Enabled:       true,
 	})
@@ -1210,6 +1233,10 @@ func appendUnique(tags []string, values ...string) []string {
 }
 
 func buildReport(req CheckRequest, s *spec.Spec, issues []schema.Issue, questions []schema.Question, patches []schema.Patch, model string) *schema.Report {
+	if !wantPatches(req) {
+		// A model whose output is not constrained may send patches anyway.
+		patches = nil
+	}
 	score := review.Score(issues, questions)
 	verdict := review.Verdict(issues, questions)
 	critical, warn, info := review.Counts(issues)
@@ -1261,6 +1288,11 @@ func validateRequest(req CheckRequest) error {
 	case "", VerifyAuto, VerifyOff:
 	default:
 		return fmt.Errorf("verify %q must be %s or %s", req.Verify, VerifyAuto, VerifyOff)
+	}
+	switch req.Patches {
+	case "", PatchesOn, PatchesOff:
+	default:
+		return fmt.Errorf("patches %q must be %s or %s", req.Patches, PatchesOn, PatchesOff)
 	}
 	switch req.StructuredOutput {
 	case "", StructuredOutputAuto, StructuredOutputOff:

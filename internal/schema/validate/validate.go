@@ -155,9 +155,27 @@ func (c *collector) question(idx int, question schema.Question) {
 	c.report.Questions = append(c.report.Questions, question)
 }
 
-// patch keeps a patch that names an issue and an edit. Patches are advisory,
-// so an unusable one is left out without counting as a dropped finding.
-func (c *collector) patch(patch schema.Patch) {
+// modelPatch is a patch as a model writes it. The schema asks for the lines
+// it replaces rather than a copy of them, which the model would spend output
+// tokens on and could get wrong; Before is still read from models whose
+// output is not constrained and from older fixtures.
+type modelPatch struct {
+	IssueID   string `json:"issue_id"`
+	LineStart int    `json:"line_start"`
+	LineEnd   int    `json:"line_end"`
+	Before    string `json:"before"`
+	After     string `json:"after"`
+}
+
+// patch keeps a patch that names an issue and an edit. A patch given as a line
+// range takes the text it replaces from the spec the model was shown; a
+// patch that also copies that text keeps its copy. Patches are advisory, so
+// an unusable one is left out without counting as a dropped finding.
+func (c *collector) patch(mp modelPatch) {
+	patch := schema.Patch{IssueID: mp.IssueID, Before: mp.Before, After: mp.After}
+	if strings.TrimSpace(patch.Before) == "" && c.index != nil {
+		patch.Before, _ = c.index.Text(mp.LineStart, mp.LineEnd)
+	}
 	if strings.TrimSpace(patch.IssueID) == "" || strings.TrimSpace(patch.Before) == "" || patch.After == "" {
 		return
 	}
@@ -228,7 +246,7 @@ func decodeFindings(cleaned string, c *collector) (incomplete, err error) {
 			})
 		case "patches":
 			err = decodeArray(dec, func(int) error {
-				var patch schema.Patch
+				var patch modelPatch
 				if err := dec.Decode(&patch); err != nil {
 					return c.wrongType("", err)
 				}

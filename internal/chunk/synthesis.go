@@ -37,6 +37,8 @@ type SynthesisConfig struct {
 	// EnforceSchema asks the provider to constrain the response to the review
 	// schema.
 	EnforceSchema bool
+	// NoPatches leaves patches out of the requested output.
+	NoPatches     bool
 	LineThreshold int
 	Enabled       bool
 }
@@ -175,7 +177,7 @@ func RunSynthesis(ctx context.Context, provider llm.Provider, s *spec.Spec, pref
 		LongCache:              cfg.LongCache,
 		MaxTokens:              cfg.MaxTokens,
 		Effort:                 cfg.Effort,
-		Schema:                 llm.SynthesisSchema(cfg.EnforceSchema),
+		Schema:                 llm.SynthesisSchema(cfg.EnforceSchema, !cfg.NoPatches),
 	}
 	// A response that is cut off and continued arrives in parts. Each part's
 	// merge and retract lists are kept, since they refer to the chunk findings

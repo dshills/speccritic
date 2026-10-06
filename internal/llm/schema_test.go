@@ -54,7 +54,7 @@ func checkStrict(t *testing.T, path string, n *schemaNode) {
 }
 
 func TestReviewSchema(t *testing.T) {
-	out := ReviewSchema(true)
+	out := ReviewSchema(true, true)
 	if !out.Enforce || out.Name == "" {
 		t.Fatalf("schema = %+v, want a named schema with Enforce set", out)
 	}
@@ -104,8 +104,43 @@ func TestReviewSchema(t *testing.T) {
 	if !json.Valid([]byte(out.PromptFallback[strings.Index(out.PromptFallback, "{"):])) {
 		t.Errorf("the example in the prompt fallback is not valid JSON:\n%s", out.PromptFallback)
 	}
-	if ReviewSchema(false).Enforce {
+	if ReviewSchema(false, true).Enforce {
 		t.Error("Enforce must follow the argument")
+	}
+
+	// Patches name the lines they replace; the tool copies the old text.
+	patch := root.Properties["patches"].Items
+	for _, field := range []string{"issue_id", "line_start", "line_end", "after"} {
+		if patch.Properties[field] == nil {
+			t.Errorf("patches must have %s", field)
+		}
+	}
+	if patch.Properties["before"] != nil {
+		t.Error("patches must not ask the model to copy the text they replace")
+	}
+	// Question ids are assigned locally and nothing in a response refers to
+	// them, so the model is not asked for them.
+	if root.Properties["questions"].Items.Properties["id"] != nil {
+		t.Error("questions must not ask for an id")
+	}
+}
+
+// With patches off the schema and its example leave the patches list out, so
+// the model spends no output on them.
+func TestReviewSchema_WithoutPatches(t *testing.T) {
+	for name, out := range map[string]*OutputSchema{"review": ReviewSchema(true, false), "synthesis": SynthesisSchema(true, false)} {
+		var root schemaNode
+		if err := json.Unmarshal(out.JSON, &root); err != nil {
+			t.Fatalf("%s: schema is not valid JSON: %v", name, err)
+		}
+		checkStrict(t, "$", &root)
+		if root.Properties["patches"] != nil || slices.Contains(root.Required, "patches") {
+			t.Errorf("%s: schema asks for patches", name)
+		}
+		example := out.PromptFallback[strings.Index(out.PromptFallback, "{"):]
+		if !json.Valid([]byte(example)) || strings.Contains(example, `"patches"`) {
+			t.Errorf("%s: example is not valid JSON without patches:\n%s", name, example)
+		}
 	}
 }
 
@@ -147,8 +182,8 @@ func systemText(t *testing.T, body map[string]any) string {
 }
 
 func TestAnthropicComplete_Schema(t *testing.T) {
-	review := ReviewSchema(true)
-	described := ReviewSchema(false)
+	review := ReviewSchema(true, true)
+	described := ReviewSchema(false, true)
 
 	t.Run("enforced", func(t *testing.T) {
 		url, bodies := recordingServer(t, anthropicOK)
@@ -282,8 +317,8 @@ func chatSystemText(body map[string]any) string {
 }
 
 func TestChatComplete_Schema(t *testing.T) {
-	review := ReviewSchema(true)
-	described := ReviewSchema(false)
+	review := ReviewSchema(true, true)
+	described := ReviewSchema(false, true)
 
 	for name := range chatProviders(t, "") {
 		t.Run(name+"/enforced", func(t *testing.T) {
@@ -365,7 +400,7 @@ func TestOpenAIComplete_AdjustsTokenParameterAndSchemaInOneCall(t *testing.T) {
 	SetOpenAIAPIURL(url)
 	t.Cleanup(func() { SetOpenAIAPIURL(original) })
 
-	resp, err := (&openaiProvider{model: "some-model", apiKey: "k"}).Complete(context.Background(), &Request{UserPrompt: "spec", MaxTokens: 100, Schema: ReviewSchema(true)})
+	resp, err := (&openaiProvider{model: "some-model", apiKey: "k"}).Complete(context.Background(), &Request{UserPrompt: "spec", MaxTokens: 100, Schema: ReviewSchema(true, true)})
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -408,7 +443,7 @@ func TestAnthropicComplete_CacheLifetime(t *testing.T) {
 }
 
 func TestSynthesisSchema(t *testing.T) {
-	out := SynthesisSchema(true)
+	out := SynthesisSchema(true, true)
 	var root schemaNode
 	if err := json.Unmarshal(out.JSON, &root); err != nil {
 		t.Fatalf("schema is not valid JSON: %v", err)
@@ -431,7 +466,7 @@ func TestSynthesisSchema(t *testing.T) {
 	if !json.Valid([]byte(example)) || !strings.Contains(example, `"retract"`) {
 		t.Errorf("the example is not valid JSON with the synthesis fields:\n%s", example)
 	}
-	if strings.Contains(ReviewSchema(true).PromptFallback, `"retract"`) || strings.Contains(string(ReviewSchema(true).JSON), `"merge"`) {
+	if strings.Contains(ReviewSchema(true, true).PromptFallback, `"retract"`) || strings.Contains(string(ReviewSchema(true, true).JSON), `"merge"`) {
 		t.Error("the plain review schema must not carry the synthesis fields")
 	}
 }

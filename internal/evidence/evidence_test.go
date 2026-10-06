@@ -263,8 +263,8 @@ func TestCheckIssue(t *testing.T) {
 func TestCheckIssue_CorrectsItsEvidenceInPlace(t *testing.T) {
 	issue := schema.Issue{Severity: schema.SeverityWarn, Evidence: []schema.Evidence{{LineStart: 2, LineEnd: 2, Quote: "amounts are integers in minor units"}}}
 	NewIndex(specText).CheckIssue(&issue)
-	if got := issue.Evidence[0]; got.LineStart != 8 || got.Quote != "Amounts are integers in minor units" {
-		t.Errorf("evidence = %+v, want it moved to line 8 with the spec's own text", got)
+	if got := issue.Evidence[0]; got.LineStart != 8 || got.Quote != "- **`pay-3`**: Amounts are integers in minor units." {
+		t.Errorf("evidence = %+v, want it moved to line 8 and quoting the whole line", got)
 	}
 }
 
@@ -274,10 +274,55 @@ func TestCheckQuestion(t *testing.T) {
 		{LineStart: 6, LineEnd: 6, Quote: "Charges are retried three times before failing."},
 	}}
 	NewIndex(specText).CheckQuestion(&question)
-	if got := question.Evidence[0]; got.LineStart != 8 || got.Quote != "Amounts are integers in minor units" {
+	if got := question.Evidence[0]; got.LineStart != 8 || got.Quote != "- **`pay-3`**: Amounts are integers in minor units." {
 		t.Errorf("first evidence = %+v, want it moved to line 8", got)
 	}
 	if got := question.Evidence[1]; got.LineStart != 6 || question.Severity != schema.SeverityCritical {
 		t.Errorf("second evidence = %+v severity = %s, want both left as they were", got, question.Severity)
+	}
+}
+
+// Models are asked for a short anchor. A located anchor becomes the full text
+// of a short cited range; a long range keeps the located text, and an anchor
+// that was not found is left as the model wrote it.
+func TestCheckIssue_ExpandsLocatedAnchorsToTheirLines(t *testing.T) {
+	cases := map[string]struct {
+		ev   schema.Evidence
+		want string
+	}{
+		"single line": {
+			ev:   schema.Evidence{LineStart: 6, LineEnd: 6, Quote: "same Idempotency-Key"},
+			want: "- **`pay-1`**: A charge MUST be   idempotent when the client sends the same `Idempotency-Key`.",
+		},
+		"short range": {
+			ev:   schema.Evidence{LineStart: 19, LineEnd: 20, Quote: "follow ISO 4217"},
+			want: "Currency codes follow ISO 4217.\nRounding is half to even.",
+		},
+		"long range keeps the anchor": {
+			ev:   schema.Evidence{LineStart: 18, LineEnd: 24, Quote: "Ledger entries are append-only"},
+			want: "Ledger entries are append-only",
+		},
+		"not found": {
+			ev:   schema.Evidence{LineStart: 6, LineEnd: 6, Quote: "charges are never refunded twice"},
+			want: "charges are never refunded twice",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			issue := schema.Issue{Severity: schema.SeverityWarn, Evidence: []schema.Evidence{tc.ev}}
+			NewIndex(specText).CheckIssue(&issue)
+			if got := issue.Evidence[0].Quote; got != tc.want {
+				t.Errorf("quote = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Anchor on its own returns the located text, not the whole line: retraction
+// and rejection quotes are the answering text, not a finding's evidence.
+func TestAnchor_DoesNotExpand(t *testing.T) {
+	got, outcome := NewIndex(specText).Anchor(schema.Evidence{LineStart: 6, LineEnd: 6, Quote: "when the client sends"})
+	if outcome != Verified || got.Quote != "when the client sends" {
+		t.Errorf("Anchor = %q (%v), want only the located text", got.Quote, outcome)
 	}
 }
